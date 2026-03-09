@@ -1,0 +1,6 @@
+2026-03-07 08:47:37,216 INFO __main__: Application startup begin.
+2026-03-07 08:47:37,217 INFO __main__: Settings loaded.
+2026-03-07 08:47:37,218 INFO __main__: Data directories ensured at: C:\Users\Hansotto\Desktop\code\viewer\photo_app_data
+2026-03-07 08:47:37,218 INFO __main__: Running Alembic migrations...
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
