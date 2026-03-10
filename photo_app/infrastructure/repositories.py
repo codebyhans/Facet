@@ -4,6 +4,8 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import and_, exists, func, nulls_last, select
+from sqlalchemy.orm import Session
+from sqlalchemy.engine import Engine
 
 from photo_app.domain.models import (
     Album,
@@ -153,53 +155,61 @@ def _to_cluster_embedding(entity: ClusterEmbeddingModel) -> ClusterEmbedding:
 class SqlAlchemyImageRepository:
     """Image repository implementation."""
 
-    def __init__(self, session: Session) -> None:
-        self._session = session
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def add_many(self, images: Sequence[Image]) -> None:
-        rows = [
-            ImageModel(
-                file_path=image.file_path,
-                capture_date=image.capture_date,
-                year=image.year,
-                month=image.month,
-                hash=image.hash,
-                width=image.width,
-                height=image.height,
-                indexed_at=image.indexed_at,
-            )
-            for image in images
-        ]
-        self._session.bulk_save_objects(rows)
+        with Session(self._engine) as session:
+            rows = [
+                ImageModel(
+                    file_path=image.file_path,
+                    capture_date=image.capture_date,
+                    year=image.year,
+                    month=image.month,
+                    hash=image.hash,
+                    width=image.width,
+                    height=image.height,
+                    indexed_at=image.indexed_at,
+                )
+                for image in images
+            ]
+            session.bulk_save_objects(rows)
+            session.commit()
 
     def exists_by_path(self, file_path: str) -> bool:
-        stmt = select(exists().where(ImageModel.file_path == file_path))
-        return bool(self._session.scalar(stmt))
+        with Session(self._engine) as session:
+            stmt = select(exists().where(ImageModel.file_path == file_path))
+            return bool(session.scalar(stmt))
 
     def get_by_path(self, file_path: str) -> Image | None:
-        stmt = select(ImageModel).where(ImageModel.file_path == file_path)
-        row = self._session.scalar(stmt)
-        return None if row is None else _to_image(row)
+        with Session(self._engine) as session:
+            stmt = select(ImageModel).where(ImageModel.file_path == file_path)
+            row = session.scalar(stmt)
+            return None if row is None else _to_image(row)
 
     def get_by_id(self, image_id: int) -> Image | None:
         """Get a single image by ID."""
-        stmt = select(ImageModel).where(ImageModel.id == image_id)
-        row = self._session.scalar(stmt)
-        return None if row is None else _to_image(row)
+        with Session(self._engine) as session:
+            stmt = select(ImageModel).where(ImageModel.id == image_id)
+            row = session.scalar(stmt)
+            return None if row is None else _to_image(row)
 
     def list_unprocessed_for_faces(self, limit: int) -> list[Image]:
-        subq = select(FaceModel.image_id)
-        stmt = select(ImageModel).where(~ImageModel.id.in_(subq)).limit(limit)
-        return [_to_image(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            subq = select(FaceModel.image_id)
+            stmt = select(ImageModel).where(~ImageModel.id.in_(subq)).limit(limit)
+            return [_to_image(row) for row in session.scalars(stmt)]
 
     def list_all(self) -> list[Image]:
-        stmt = select(ImageModel)
-        return [_to_image(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            stmt = select(ImageModel)
+            return [_to_image(row) for row in session.scalars(stmt)]
 
     def list_paginated(self, *, offset: int, limit: int) -> list[Image]:
         """Paginated query to avoid loading all images into memory."""
-        stmt = select(ImageModel).order_by(ImageModel.id.asc()).offset(offset).limit(limit)
-        return [_to_image(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            stmt = select(ImageModel).order_by(ImageModel.id.asc()).offset(offset).limit(limit)
+            return [_to_image(row) for row in session.scalars(stmt)]
 
     def list_by_filters(
         self,
@@ -240,364 +250,395 @@ class SqlAlchemyImageRepository:
         quality_min: float | None = None,
         camera_models: Sequence[str] = (),
     ) -> list[int]:
-        stmt = select(ImageModel.id)
-        
-        # Filter by people
-        if person_ids:
-            person_clause = exists(
-                select(FaceModel.id).where(
-                    FaceModel.image_id == ImageModel.id,
-                    FaceModel.excluded.is_(False),
-                    FaceModel.person_id.in_(person_ids),
+        with Session(self._engine) as session:
+            stmt = select(ImageModel.id)
+            
+            # Filter by people
+            if person_ids:
+                person_clause = exists(
+                    select(FaceModel.id).where(
+                        FaceModel.image_id == ImageModel.id,
+                        FaceModel.excluded.is_(False),
+                        FaceModel.person_id.in_(person_ids),
+                    )
                 )
+                stmt = stmt.where(person_clause)
+            
+            # Filter by clusters
+            if cluster_ids:
+                cluster_clause = exists(
+                    select(FaceModel.id)
+                    .join(
+                        FaceClusterMembershipModel,
+                        FaceClusterMembershipModel.face_id == FaceModel.id,
+                    )
+                    .where(
+                        FaceModel.image_id == ImageModel.id,
+                        FaceModel.excluded.is_(False),
+                        FaceClusterMembershipModel.cluster_id.in_(cluster_ids),
+                    )
+                )
+                stmt = stmt.where(cluster_clause)
+            
+            # Filter by tags
+            if tag_names:
+                tag_clause = exists(
+                    select(ImageTagModel.id).where(
+                        ImageTagModel.image_id == ImageModel.id,
+                        ImageTagModel.tag_name.in_(tag_names),
+                    )
+                )
+                stmt = stmt.where(tag_clause)
+            
+            # Filter by rating
+            if rating_min is not None:
+                stmt = stmt.where(ImageModel.rating >= rating_min)
+            
+            # Filter by quality score
+            if quality_min is not None:
+                stmt = stmt.where(ImageModel.quality_score >= quality_min)
+            
+            # Filter by camera model
+            if camera_models:
+                stmt = stmt.where(ImageModel.camera_model.in_(camera_models))
+            
+            # Filter by date range
+            clauses = []
+            if date_from is not None:
+                clauses.append(ImageModel.capture_date >= date_from)
+            if date_to is not None:
+                clauses.append(ImageModel.capture_date <= date_to)
+            if clauses:
+                stmt = stmt.where(and_(*clauses))
+            
+            stmt = stmt.order_by(
+                nulls_last(ImageModel.capture_date.asc()),
+                ImageModel.id.asc(),
             )
-            stmt = stmt.where(person_clause)
-        
-        # Filter by clusters
-        if cluster_ids:
-            cluster_clause = exists(
-                select(FaceModel.id)
-                .join(
-                    FaceClusterMembershipModel,
-                    FaceClusterMembershipModel.face_id == FaceModel.id,
-                )
-                .where(
-                    FaceModel.image_id == ImageModel.id,
-                    FaceModel.excluded.is_(False),
-                    FaceClusterMembershipModel.cluster_id.in_(cluster_ids),
-                )
-            )
-            stmt = stmt.where(cluster_clause)
-        
-        # Filter by tags
-        if tag_names:
-            tag_clause = exists(
-                select(ImageTagModel.id).where(
-                    ImageTagModel.image_id == ImageModel.id,
-                    ImageTagModel.tag_name.in_(tag_names),
-                )
-            )
-            stmt = stmt.where(tag_clause)
-        
-        # Filter by rating
-        if rating_min is not None:
-            stmt = stmt.where(ImageModel.rating >= rating_min)
-        
-        # Filter by quality score
-        if quality_min is not None:
-            stmt = stmt.where(ImageModel.quality_score >= quality_min)
-        
-        # Filter by camera model
-        if camera_models:
-            stmt = stmt.where(ImageModel.camera_model.in_(camera_models))
-        
-        # Filter by date range
-        clauses = []
-        if date_from is not None:
-            clauses.append(ImageModel.capture_date >= date_from)
-        if date_to is not None:
-            clauses.append(ImageModel.capture_date <= date_to)
-        if clauses:
-            stmt = stmt.where(and_(*clauses))
-        
-        stmt = stmt.order_by(
-            nulls_last(ImageModel.capture_date.asc()),
-            ImageModel.id.asc(),
-        )
-        rows = self._session.scalars(stmt).unique().all()
-        return [int(row) for row in rows]
+            rows = session.scalars(stmt).unique().all()
+            return [int(row) for row in rows]
 
     def list_by_ids(self, image_ids: Sequence[int]) -> list[Image]:
-        if not image_ids:
-            return []
-        stmt = select(ImageModel).where(ImageModel.id.in_(image_ids))
-        by_id = {row.id: _to_image(row) for row in self._session.scalars(stmt)}
-        ordered: list[Image] = []
-        for image_id in image_ids:
-            image = by_id.get(image_id)
-            if image is not None:
-                ordered.append(image)
-        return ordered
+        with Session(self._engine) as session:
+            if not image_ids:
+                return []
+            stmt = select(ImageModel).where(ImageModel.id.in_(image_ids))
+            by_id = {row.id: _to_image(row) for row in session.scalars(stmt)}
+            ordered: list[Image] = []
+            for image_id in image_ids:
+                image = by_id.get(image_id)
+                if image is not None:
+                    ordered.append(image)
+            return ordered
 
 
 class SqlAlchemyFaceRepository:
     """Face repository implementation."""
 
-    def __init__(self, session: Session) -> None:
-        self._session = session
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def add_many(self, faces: Sequence[Face]) -> None:
-        rows = [
-            FaceModel(
-                image_id=face.image_id,
-                bbox_x=face.bbox.x,
-                bbox_y=face.bbox.y,
-                bbox_w=face.bbox.w,
-                bbox_h=face.bbox.h,
-                embedding=face.embedding,
-                person_id=face.person_id,
-                manual_assignment=face.manual_assignment,
-                excluded=face.excluded,
-            )
-            for face in faces
-        ]
-        self._session.bulk_save_objects(rows)
+        with Session(self._engine) as session:
+            rows = [
+                FaceModel(
+                    image_id=face.image_id,
+                    bbox_x=face.bbox.x,
+                    bbox_y=face.bbox.y,
+                    bbox_w=face.bbox.w,
+                    bbox_h=face.bbox.h,
+                    embedding=face.embedding,
+                    person_id=face.person_id,
+                    manual_assignment=face.manual_assignment,
+                    excluded=face.excluded,
+                )
+                for face in faces
+            ]
+            session.bulk_save_objects(rows)
+            session.commit()
 
     def list_all(self) -> list[Face]:
-        stmt = select(FaceModel)
-        return [_to_face(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            stmt = select(FaceModel)
+            return [_to_face(row) for row in session.scalars(stmt)]
 
     def list_all_active(self) -> list[Face]:
-        stmt = select(FaceModel).where(FaceModel.excluded.is_(False))
-        return [_to_face(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            stmt = select(FaceModel).where(FaceModel.excluded.is_(False))
+            return [_to_face(row) for row in session.scalars(stmt)]
 
     def list_without_cluster_membership(self, limit: int | None = None) -> list[Face]:
-        stmt = (
-            select(FaceModel)
-            .outerjoin(
-                FaceClusterMembershipModel,
-                FaceClusterMembershipModel.face_id == FaceModel.id,
+        with Session(self._engine) as session:
+            stmt = (
+                select(FaceModel)
+                .outerjoin(
+                    FaceClusterMembershipModel,
+                    FaceClusterMembershipModel.face_id == FaceModel.id,
+                )
+                .where(
+                    FaceModel.excluded.is_(False),
+                    FaceClusterMembershipModel.id.is_(None),
+                )
             )
-            .where(
-                FaceModel.excluded.is_(False),
-                FaceClusterMembershipModel.id.is_(None),
-            )
-        )
-        if limit is not None:
-            stmt = stmt.limit(limit)
-        return [_to_face(row) for row in self._session.scalars(stmt)]
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            return [_to_face(row) for row in session.scalars(stmt)]
 
     def list_by_image(self, image_id: int) -> list[Face]:
-        stmt = select(FaceModel).where(
-            FaceModel.image_id == image_id,
-            FaceModel.excluded.is_(False),
-        )
-        return [_to_face(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            stmt = select(FaceModel).where(
+                FaceModel.image_id == image_id,
+                FaceModel.excluded.is_(False),
+            )
+            return [_to_face(row) for row in session.scalars(stmt)]
 
     def get(self, face_id: int) -> Face | None:
         """Get a single face by ID."""
-        stmt = select(FaceModel).where(FaceModel.id == face_id)
-        row = self._session.scalar(stmt)
-        return None if row is None else _to_face(row)
+        with Session(self._engine) as session:
+            stmt = select(FaceModel).where(FaceModel.id == face_id)
+            row = session.scalar(stmt)
+            return None if row is None else _to_face(row)
 
     def assign_person_auto(self, face_ids: Sequence[int], person_id: int) -> None:
-        if not face_ids:
-            return
-        stmt = select(FaceModel).where(FaceModel.id.in_(face_ids))
-        for face in self._session.scalars(stmt):
-            if face.excluded or face.manual_assignment:
-                continue
-            face.person_id = person_id
+        with Session(self._engine) as session:
+            if not face_ids:
+                return
+            stmt = select(FaceModel).where(FaceModel.id.in_(face_ids))
+            for face in session.scalars(stmt):
+                if face.excluded or face.manual_assignment:
+                    continue
+                face.person_id = person_id
+            session.commit()
 
     def assign_person_manual(self, face_ids: Sequence[int], person_id: int) -> None:
-        if not face_ids:
-            return
-        stmt = select(FaceModel).where(FaceModel.id.in_(face_ids))
-        for face in self._session.scalars(stmt):
-            if face.excluded:
-                continue
-            face.person_id = person_id
-            face.manual_assignment = True
+        with Session(self._engine) as session:
+            if not face_ids:
+                return
+            stmt = select(FaceModel).where(FaceModel.id.in_(face_ids))
+            for face in session.scalars(stmt):
+                if face.excluded:
+                    continue
+                face.person_id = person_id
+                face.manual_assignment = True
+            session.commit()
 
     def exclude(self, face_ids: Sequence[int]) -> None:
-        if not face_ids:
-            return
-        stmt = select(FaceModel).where(FaceModel.id.in_(face_ids))
-        for face in self._session.scalars(stmt):
-            face.excluded = True
-            face.person_id = None
-            face.manual_assignment = True
+        with Session(self._engine) as session:
+            if not face_ids:
+                return
+            stmt = select(FaceModel).where(FaceModel.id.in_(face_ids))
+            for face in session.scalars(stmt):
+                face.excluded = True
+                face.person_id = None
+                face.manual_assignment = True
+            session.commit()
 
     def delete_by_image(self, image_id: int) -> None:
-        stmt = select(FaceModel).where(FaceModel.image_id == image_id)
-        for face in self._session.scalars(stmt):
-            membership = self._session.scalar(
-                select(FaceClusterMembershipModel).where(
-                    FaceClusterMembershipModel.face_id == face.id
+        with Session(self._engine) as session:
+            stmt = select(FaceModel).where(FaceModel.image_id == image_id)
+            for face in session.scalars(stmt):
+                membership = session.scalar(
+                    select(FaceClusterMembershipModel).where(
+                        FaceClusterMembershipModel.face_id == face.id
+                    )
                 )
-            )
-            if membership is not None:
-                self._session.delete(membership)
-            self._session.delete(face)
+                if membership is not None:
+                    session.delete(membership)
+                session.delete(face)
+            session.commit()
 
 
 class SqlAlchemyPersonRepository:
     """Person repository implementation."""
 
-    def __init__(self, session: Session) -> None:
-        self._session = session
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def create(self, person: Person) -> Person:
-        row = PersonModel(
-            name=person.name,
-            created_at=person.created_at,
-            birth_date=person.birth_date,
-            identity_cluster_id=person.identity_cluster_id,
-        )
-        self._session.add(row)
-        self._session.flush()
-        return Person(
-            id=row.id,
-            name=row.name,
-            created_at=row.created_at,
-            birth_date=row.birth_date,
-            identity_cluster_id=row.identity_cluster_id,
-        )
+        with Session(self._engine) as session:
+            row = PersonModel(
+                name=person.name,
+                created_at=person.created_at,
+                birth_date=person.birth_date,
+                identity_cluster_id=person.identity_cluster_id,
+            )
+            session.add(row)
+            session.flush()
+            return Person(
+                id=row.id,
+                name=row.name,
+                created_at=row.created_at,
+                birth_date=row.birth_date,
+                identity_cluster_id=row.identity_cluster_id,
+            )
 
     def get(self, person_id: int) -> Person | None:
-        stmt = select(PersonModel).where(PersonModel.id == person_id)
-        row = self._session.scalar(stmt)
-        if row is None:
-            return None
-        return Person(
-            id=row.id,
-            name=row.name,
-            created_at=row.created_at,
-            birth_date=row.birth_date,
-            identity_cluster_id=row.identity_cluster_id,
-        )
+        with Session(self._engine) as session:
+            stmt = select(PersonModel).where(PersonModel.id == person_id)
+            row = session.scalar(stmt)
+            if row is None:
+                return None
+            return Person(
+                id=row.id,
+                name=row.name,
+                created_at=row.created_at,
+                birth_date=row.birth_date,
+                identity_cluster_id=row.identity_cluster_id,
+            )
 
     def get_by_name(self, name: str) -> Person | None:
-        cleaned = name.strip()
-        if not cleaned:
-            return None
-        stmt = select(PersonModel).where(
-            func.lower(PersonModel.name) == cleaned.lower()
-        )
-        row = self._session.scalar(stmt)
-        if row is None:
-            return None
-        return Person(
-            id=row.id,
-            name=row.name,
-            created_at=row.created_at,
-            birth_date=row.birth_date,
-            identity_cluster_id=row.identity_cluster_id,
-        )
+        with Session(self._engine) as session:
+            cleaned = name.strip()
+            if not cleaned:
+                return None
+            stmt = select(PersonModel).where(
+                func.lower(PersonModel.name) == cleaned.lower()
+            )
+            row = session.scalar(stmt)
+            if row is None:
+                return None
+            return Person(
+                id=row.id,
+                name=row.name,
+                created_at=row.created_at,
+                birth_date=row.birth_date,
+                identity_cluster_id=row.identity_cluster_id,
+            )
 
     def update_name(self, person_id: int, name: str) -> None:
-        stmt = select(PersonModel).where(PersonModel.id == person_id)
-        row = self._session.scalar(stmt)
-        if row is not None:
-            row.name = name
+        with Session(self._engine) as session:
+            stmt = select(PersonModel).where(PersonModel.id == person_id)
+            row = session.scalar(stmt)
+            if row is not None:
+                row.name = name
+            session.commit()
 
     def find_by_cluster_id(self, cluster_id: int) -> Person | None:
-        stmt = select(PersonModel).where(PersonModel.identity_cluster_id == cluster_id)
-        row = self._session.scalar(stmt)
-        if row is None:
-            return None
-        return Person(
-            id=row.id,
-            name=row.name,
-            created_at=row.created_at,
-            birth_date=row.birth_date,
-            identity_cluster_id=row.identity_cluster_id,
-        )
+        with Session(self._engine) as session:
+            stmt = select(PersonModel).where(PersonModel.identity_cluster_id == cluster_id)
+            row = session.scalar(stmt)
+            if row is None:
+                return None
+            return Person(
+                id=row.id,
+                name=row.name,
+                created_at=row.created_at,
+                birth_date=row.birth_date,
+                identity_cluster_id=row.identity_cluster_id,
+            )
 
     def bind_cluster(self, person_id: int, cluster_id: int) -> None:
-        stmt = select(PersonModel).where(PersonModel.id == person_id)
-        row = self._session.scalar(stmt)
-        if row is not None:
-            row.identity_cluster_id = cluster_id
+        with Session(self._engine) as session:
+            stmt = select(PersonModel).where(PersonModel.id == person_id)
+            row = session.scalar(stmt)
+            if row is not None:
+                row.identity_cluster_id = cluster_id
+            session.commit()
 
 
 class SqlAlchemyAlbumRepository:
     """Album repository implementation."""
 
-    def __init__(self, session: Session) -> None:
-        self._session = session
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def create(self, album: Album) -> Album:
-        query_payload: dict[str, object] = {
-            "person_ids": list(album.query_definition.person_ids),
-            "cluster_ids": list(album.query_definition.cluster_ids),
-            "date_from": (
-                album.query_definition.date_from.isoformat()
-                if album.query_definition.date_from
-                else None
-            ),
-            "date_to": (
-                album.query_definition.date_to.isoformat()
-                if album.query_definition.date_to
-                else None
-            ),
-            "tag_names": list(album.query_definition.tag_names),
-            "rating_min": album.query_definition.rating_min,
-            "quality_min": album.query_definition.quality_min,
-            "camera_models": list(album.query_definition.camera_models),
-            "location_name": album.query_definition.location_name,
-            "gps_radius_km": album.query_definition.gps_radius_km,
-        }
-        row = AlbumModel(
-            name=album.name,
-            query_definition=query_payload,
-            query_version=album.query_version,
-            created_at=album.created_at,
-        )
-        self._session.add(row)
-        self._session.flush()
-        return Album(
-            id=row.id,
-            name=row.name,
-            query_definition=album.query_definition,
-            query_version=row.query_version,
-            created_at=row.created_at,
-        )
+        with Session(self._engine) as session:
+            query_payload: dict[str, object] = {
+                "person_ids": list(album.query_definition.person_ids),
+                "cluster_ids": list(album.query_definition.cluster_ids),
+                "date_from": (
+                    album.query_definition.date_from.isoformat()
+                    if album.query_definition.date_from
+                    else None
+                ),
+                "date_to": (
+                    album.query_definition.date_to.isoformat()
+                    if album.query_definition.date_to
+                    else None
+                ),
+                "tag_names": list(album.query_definition.tag_names),
+                "rating_min": album.query_definition.rating_min,
+                "quality_min": album.query_definition.quality_min,
+                "camera_models": list(album.query_definition.camera_models),
+                "location_name": album.query_definition.location_name,
+                "gps_radius_km": album.query_definition.gps_radius_km,
+            }
+            row = AlbumModel(
+                name=album.name,
+                query_definition=query_payload,
+                query_version=album.query_version,
+                created_at=album.created_at,
+            )
+            session.add(row)
+            session.flush()
+            return Album(
+                id=row.id,
+                name=row.name,
+                query_definition=album.query_definition,
+                query_version=row.query_version,
+                created_at=row.created_at,
+            )
 
     def get(self, album_id: int) -> Album | None:
-        stmt = select(AlbumModel).where(AlbumModel.id == album_id)
-        row = self._session.scalar(stmt)
-        return None if row is None else _to_album(row)
+        with Session(self._engine) as session:
+            stmt = select(AlbumModel).where(AlbumModel.id == album_id)
+            row = session.scalar(stmt)
+            return None if row is None else _to_album(row)
 
     def list_all(self) -> list[Album]:
-        stmt = select(AlbumModel).order_by(AlbumModel.name.asc())
-        return [_to_album(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            stmt = select(AlbumModel).order_by(AlbumModel.name.asc())
+            return [_to_album(row) for row in session.scalars(stmt)]
 
     def update_name(self, album_id: int, name: str) -> Album | None:
-        stmt = select(AlbumModel).where(AlbumModel.id == album_id)
-        row = self._session.scalar(stmt)
-        if row is None:
-            return None
-        row.name = name
-        self._session.flush()
-        return _to_album(row)
+        with Session(self._engine) as session:
+            stmt = select(AlbumModel).where(AlbumModel.id == album_id)
+            row = session.scalar(stmt)
+            if row is None:
+                return None
+            row.name = name
+            session.flush()
+            return _to_album(row)
 
     def update_query(self, album_id: int, query: AlbumQuery) -> Album | None:
-        stmt = select(AlbumModel).where(AlbumModel.id == album_id)
-        row = self._session.scalar(stmt)
-        if row is None:
-            return None
-        row.query_definition = {
-            "person_ids": list(query.person_ids),
-            "cluster_ids": list(query.cluster_ids),
-            "date_from": query.date_from.isoformat() if query.date_from else None,
-            "date_to": query.date_to.isoformat() if query.date_to else None,
-            "tag_names": list(query.tag_names),
-            "rating_min": query.rating_min,
-            "quality_min": query.quality_min,
-            "camera_models": list(query.camera_models),
-            "location_name": query.location_name,
-            "gps_radius_km": query.gps_radius_km,
-        }
-        row.query_version += 1
-        self._session.flush()
-        return _to_album(row)
+        with Session(self._engine) as session:
+            stmt = select(AlbumModel).where(AlbumModel.id == album_id)
+            row = session.scalar(stmt)
+            if row is None:
+                return None
+            row.query_definition = {
+                "person_ids": list(query.person_ids),
+                "cluster_ids": list(query.cluster_ids),
+                "date_from": query.date_from.isoformat() if query.date_from else None,
+                "date_to": query.date_to.isoformat() if query.date_to else None,
+                "tag_names": list(query.tag_names),
+                "rating_min": query.rating_min,
+                "quality_min": query.quality_min,
+                "camera_models": list(query.camera_models),
+                "location_name": query.location_name,
+                "gps_radius_km": query.gps_radius_km,
+            }
+            row.query_version += 1
+            session.flush()
+            return _to_album(row)
 
     def delete(self, album_id: int) -> bool:
-        stmt = select(AlbumModel).where(AlbumModel.id == album_id)
-        row = self._session.scalar(stmt)
-        if row is None:
-            return False
-        self._session.delete(row)
-        self._session.flush()
-        return True
+        with Session(self._engine) as session:
+            stmt = select(AlbumModel).where(AlbumModel.id == album_id)
+            row = session.scalar(stmt)
+            if row is None:
+                return False
+            session.delete(row)
+            session.flush()
+            return True
 
 
 class SqlAlchemyIdentityClusterRepository:
     """Identity cluster repository implementation."""
 
-    def __init__(self, session: Session) -> None:
-        self._session = session
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def create_cluster(
         self,
@@ -605,26 +646,29 @@ class SqlAlchemyIdentityClusterRepository:
         *,
         created_at: datetime,
     ) -> IdentityCluster:
-        row = IdentityClusterModel(
-            canonical_embedding=canonical_embedding,
-            face_count=0,
-            variance=0.0,
-            flagged_for_review=False,
-            created_at=created_at,
-            updated_at=created_at,
-        )
-        self._session.add(row)
-        self._session.flush()
-        return _to_identity_cluster(row)
+        with Session(self._engine) as session:
+            row = IdentityClusterModel(
+                canonical_embedding=canonical_embedding,
+                face_count=0,
+                variance=0.0,
+                flagged_for_review=False,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+            session.add(row)
+            session.flush()
+            return _to_identity_cluster(row)
 
     def list_clusters(self) -> list[IdentityCluster]:
-        stmt = select(IdentityClusterModel)
-        return [_to_identity_cluster(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            stmt = select(IdentityClusterModel)
+            return [_to_identity_cluster(row) for row in session.scalars(stmt)]
 
     def get_cluster(self, cluster_id: int) -> IdentityCluster | None:
-        stmt = select(IdentityClusterModel).where(IdentityClusterModel.id == cluster_id)
-        row = self._session.scalar(stmt)
-        return None if row is None else _to_identity_cluster(row)
+        with Session(self._engine) as session:
+            stmt = select(IdentityClusterModel).where(IdentityClusterModel.id == cluster_id)
+            row = session.scalar(stmt)
+            return None if row is None else _to_identity_cluster(row)
 
     def update_cluster_state(
         self,
@@ -636,15 +680,17 @@ class SqlAlchemyIdentityClusterRepository:
         flagged_for_review: bool,
         updated_at: datetime,
     ) -> None:
-        stmt = select(IdentityClusterModel).where(IdentityClusterModel.id == cluster_id)
-        row = self._session.scalar(stmt)
-        if row is None:
-            return
-        row.canonical_embedding = canonical_embedding
-        row.face_count = face_count
-        row.variance = variance
-        row.flagged_for_review = flagged_for_review
-        row.updated_at = updated_at
+        with Session(self._engine) as session:
+            stmt = select(IdentityClusterModel).where(IdentityClusterModel.id == cluster_id)
+            row = session.scalar(stmt)
+            if row is None:
+                return
+            row.canonical_embedding = canonical_embedding
+            row.face_count = face_count
+            row.variance = variance
+            row.flagged_for_review = flagged_for_review
+            row.updated_at = updated_at
+            session.commit()
 
     def upsert_membership(
         self,
@@ -654,71 +700,81 @@ class SqlAlchemyIdentityClusterRepository:
         confidence: float,
         assigned_at: datetime,
     ) -> None:
-        stmt = select(FaceClusterMembershipModel).where(
-            FaceClusterMembershipModel.face_id == face_id
-        )
-        row = self._session.scalar(stmt)
-        if row is None:
-            self._session.add(
-                FaceClusterMembershipModel(
-                    face_id=face_id,
-                    cluster_id=cluster_id,
-                    confidence=confidence,
-                    assigned_at=assigned_at,
-                )
+        with Session(self._engine) as session:
+            stmt = select(FaceClusterMembershipModel).where(
+                FaceClusterMembershipModel.face_id == face_id
             )
-            return
-        row.cluster_id = cluster_id
-        row.confidence = confidence
-        row.assigned_at = assigned_at
+            row = session.scalar(stmt)
+            if row is None:
+                session.add(
+                    FaceClusterMembershipModel(
+                        face_id=face_id,
+                        cluster_id=cluster_id,
+                        confidence=confidence,
+                        assigned_at=assigned_at,
+                    )
+                )
+                session.commit()
+                return
+            row.cluster_id = cluster_id
+            row.confidence = confidence
+            row.assigned_at = assigned_at
+            session.commit()
 
     def list_memberships(self, cluster_id: int) -> list[FaceClusterMembership]:
-        stmt = select(FaceClusterMembershipModel).where(
-            FaceClusterMembershipModel.cluster_id == cluster_id
-        )
-        return [_to_membership(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            stmt = select(FaceClusterMembershipModel).where(
+                FaceClusterMembershipModel.cluster_id == cluster_id
+            )
+            return [_to_membership(row) for row in session.scalars(stmt)]
 
     def get_membership(self, face_id: int) -> FaceClusterMembership | None:
-        stmt = select(FaceClusterMembershipModel).where(
-            FaceClusterMembershipModel.face_id == face_id
-        )
-        row = self._session.scalar(stmt)
-        return None if row is None else _to_membership(row)
+        with Session(self._engine) as session:
+            stmt = select(FaceClusterMembershipModel).where(
+                FaceClusterMembershipModel.face_id == face_id
+            )
+            row = session.scalar(stmt)
+            return None if row is None else _to_membership(row)
 
     def reassign_cluster_memberships(
         self,
         source_cluster_id: int,
         target_cluster_id: int,
     ) -> None:
-        stmt = select(FaceClusterMembershipModel).where(
-            FaceClusterMembershipModel.cluster_id == source_cluster_id
-        )
-        for membership in self._session.scalars(stmt):
-            membership.cluster_id = target_cluster_id
+        with Session(self._engine) as session:
+            stmt = select(FaceClusterMembershipModel).where(
+                FaceClusterMembershipModel.cluster_id == source_cluster_id
+            )
+            for membership in session.scalars(stmt):
+                membership.cluster_id = target_cluster_id
+            session.commit()
 
     def delete_cluster(self, cluster_id: int) -> None:
-        temporal_stmt = select(ClusterEmbeddingModel).where(
-            ClusterEmbeddingModel.cluster_id == cluster_id
-        )
-        for row in self._session.scalars(temporal_stmt):
-            self._session.delete(row)
+        with Session(self._engine) as session:
+            temporal_stmt = select(ClusterEmbeddingModel).where(
+                ClusterEmbeddingModel.cluster_id == cluster_id
+            )
+            for row in session.scalars(temporal_stmt):
+                session.delete(row)
 
-        membership_stmt = select(FaceClusterMembershipModel).where(
-            FaceClusterMembershipModel.cluster_id == cluster_id
-        )
-        for row in self._session.scalars(membership_stmt):
-            self._session.delete(row)
+            membership_stmt = select(FaceClusterMembershipModel).where(
+                FaceClusterMembershipModel.cluster_id == cluster_id
+            )
+            for row in session.scalars(membership_stmt):
+                session.delete(row)
 
-        cluster_stmt = select(IdentityClusterModel).where(IdentityClusterModel.id == cluster_id)
-        cluster = self._session.scalar(cluster_stmt)
-        if cluster is not None:
-            self._session.delete(cluster)
+            cluster_stmt = select(IdentityClusterModel).where(IdentityClusterModel.id == cluster_id)
+            cluster = session.scalar(cluster_stmt)
+            if cluster is not None:
+                session.delete(cluster)
+            session.commit()
 
     def list_temporal_embeddings(self, cluster_id: int) -> list[ClusterEmbedding]:
-        stmt = select(ClusterEmbeddingModel).where(
-            ClusterEmbeddingModel.cluster_id == cluster_id
-        )
-        return [_to_cluster_embedding(row) for row in self._session.scalars(stmt)]
+        with Session(self._engine) as session:
+            stmt = select(ClusterEmbeddingModel).where(
+                ClusterEmbeddingModel.cluster_id == cluster_id
+            )
+            return [_to_cluster_embedding(row) for row in session.scalars(stmt)]
 
     def upsert_temporal_embedding(
         self,
@@ -729,45 +785,51 @@ class SqlAlchemyIdentityClusterRepository:
         sample_count: int,
         updated_at: datetime,
     ) -> None:
-        stmt = select(ClusterEmbeddingModel).where(
-            ClusterEmbeddingModel.cluster_id == cluster_id,
-            ClusterEmbeddingModel.time_period == time_period,
-        )
-        row = self._session.scalar(stmt)
-        if row is None:
-            self._session.add(
-                ClusterEmbeddingModel(
-                    cluster_id=cluster_id,
-                    time_period=time_period,
-                    embedding=embedding,
-                    sample_count=sample_count,
-                    updated_at=updated_at,
-                )
+        with Session(self._engine) as session:
+            stmt = select(ClusterEmbeddingModel).where(
+                ClusterEmbeddingModel.cluster_id == cluster_id,
+                ClusterEmbeddingModel.time_period == time_period,
             )
-            return
-        row.embedding = embedding
-        row.sample_count = sample_count
-        row.updated_at = updated_at
+            row = session.scalar(stmt)
+            if row is None:
+                session.add(
+                    ClusterEmbeddingModel(
+                        cluster_id=cluster_id,
+                        time_period=time_period,
+                        embedding=embedding,
+                        sample_count=sample_count,
+                        updated_at=updated_at,
+                    )
+                )
+                session.commit()
+                return
+            row.embedding = embedding
+            row.sample_count = sample_count
+            row.updated_at = updated_at
+            session.commit()
 
 
 class SqlAlchemySettingsRepository:
     """Settings repository implementation."""
 
-    def __init__(self, session: Session) -> None:
-        self._session = session
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def get_all(self) -> dict[str, str]:
-        stmt = select(AppSettingModel)
-        rows = list(self._session.scalars(stmt))
-        return {row.key: row.value for row in rows}
+        with Session(self._engine) as session:
+            stmt = select(AppSettingModel)
+            rows = list(session.scalars(stmt))
+            return {row.key: row.value for row in rows}
 
     def upsert_many(self, values: dict[str, str]) -> None:
-        now = datetime.now(tz=UTC)
-        for key, value in values.items():
-            stmt = select(AppSettingModel).where(AppSettingModel.key == key)
-            row = self._session.scalar(stmt)
-            if row is None:
-                self._session.add(AppSettingModel(key=key, value=value, updated_at=now))
-                continue
-            row.value = value
-            row.updated_at = now
+        with Session(self._engine) as session:
+            now = datetime.now(tz=UTC)
+            for key, value in values.items():
+                stmt = select(AppSettingModel).where(AppSettingModel.key == key)
+                row = session.scalar(stmt)
+                if row is None:
+                    session.add(AppSettingModel(key=key, value=value, updated_at=now))
+                    continue
+                row.value = value
+                row.updated_at = now
+            session.commit()

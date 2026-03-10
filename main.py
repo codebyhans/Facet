@@ -9,7 +9,6 @@ from alembic import command
 from alembic.config import Config
 from PySide6.QtWidgets import QApplication
 from sqlalchemy import Engine
-from sqlalchemy.orm import Session
 
 from photo_app.app.main_window import MainWindow
 from photo_app.config.settings import AppSettings, load_settings
@@ -100,19 +99,19 @@ def run_migrations(settings: AppSettings) -> None:
     LOGGER.info("Alembic migrations complete.")
 
 
-def build_services(session: Session, settings: AppSettings, engine: Engine) -> ServiceContainer:
+def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
     """Create application services."""
     LOGGER.info("Building repositories and services...")
-    image_repo = SqlAlchemyImageRepository(session)
-    face_repo = SqlAlchemyFaceRepository(session)
-    person_repo = SqlAlchemyPersonRepository(session)
-    identity_cluster_repo = SqlAlchemyIdentityClusterRepository(session)
-    album_repo = SqlAlchemyAlbumRepository(session)
-    settings_repo = SqlAlchemySettingsRepository(session)
+    image_repo = SqlAlchemyImageRepository(engine)
+    face_repo = SqlAlchemyFaceRepository(engine)
+    person_repo = SqlAlchemyPersonRepository(engine)
+    identity_cluster_repo = SqlAlchemyIdentityClusterRepository(engine)
+    album_repo = SqlAlchemyAlbumRepository(engine)
+    settings_repo = SqlAlchemySettingsRepository(engine)
 
     settings_service = SettingsService(settings_repo, settings)
     runtime_settings = settings_service.get_runtime_settings()
-    query_cache_service = AlbumQueryCacheService(session, album_repo, image_repo)
+    query_cache_service = AlbumQueryCacheService(engine, album_repo, image_repo)
 
     scanner = FileScanner()
     thumbnail_store = ThumbnailStore(
@@ -214,8 +213,8 @@ def build_services(session: Session, settings: AppSettings, engine: Engine) -> S
         )
 
     # Create metadata and tags services
-    metadata_sync_service = MetadataSyncService(session)
-    tag_service = TagService(session)
+    metadata_sync_service = MetadataSyncService(engine)
+    tag_service = TagService(engine)
 
     LOGGER.info("Service graph ready.")
     return ServiceContainer(
@@ -234,10 +233,10 @@ def build_services(session: Session, settings: AppSettings, engine: Engine) -> S
     )
 
 
-def build_main_window(session: Session, settings: AppSettings, engine: Engine) -> MainWindow:
+def build_main_window(settings: AppSettings, engine: Engine) -> MainWindow:
     """Create application object graph and return main window."""
     LOGGER.info("Creating main window...")
-    services = build_services(session, settings, engine)
+    services = build_services(settings, engine)
     _ = services.person_service
     window = MainWindow(
         services.image_index_service,
@@ -275,15 +274,13 @@ def main() -> int:
     app = QApplication(sys.argv)
     apply_theme(app)
     LOGGER.info("Dark theme applied.")
-    with Session(engine) as session:
-        window = build_main_window(session, settings, engine)
-        LOGGER.info("Showing UI window...")
-        window.show()
-        LOGGER.info("Qt event loop starting.")
-        code = app.exec()
-        session.commit()
-        LOGGER.info("Application shutdown with code %s.", code)
-        return int(code)
+    window = build_main_window(settings, engine)
+    LOGGER.info("Showing UI window...")
+    window.show()
+    LOGGER.info("Qt event loop starting.")
+    code = app.exec()
+    LOGGER.info("Application shutdown with code %s.", code)
+    return int(code)
 
 
 if __name__ == "__main__":

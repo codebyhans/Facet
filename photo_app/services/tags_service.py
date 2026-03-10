@@ -7,9 +7,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +19,9 @@ logger = logging.getLogger(__name__)
 class TagService:
     """Manage user-defined tags for images."""
 
-    def __init__(self, session: Session) -> None:
-        """Initialize with SQLAlchemy session."""
-        self.session = session
+    def __init__(self, engine: Engine) -> None:
+        """Initialize with SQLAlchemy engine."""
+        self._engine = engine
 
     def add_tag(self, image_id: int, tag_name: str) -> None:
         """
@@ -31,27 +33,28 @@ class TagService:
         """
         from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
 
-        tag_name = tag_name.strip().lower()
-        if not tag_name:
-            return
+        with Session(self._engine) as session:
+            tag_name = tag_name.strip().lower()
+            if not tag_name:
+                return
 
-        # Check if tag already exists
-        existing = self.session.execute(
-            select(ImageTagModel).where(
-                (ImageTagModel.image_id == image_id)
-                & (ImageTagModel.tag_name == tag_name)
+            # Check if tag already exists
+            existing = session.execute(
+                select(ImageTagModel).where(
+                    (ImageTagModel.image_id == image_id)
+                    & (ImageTagModel.tag_name == tag_name)
+                )
+            ).scalar_one_or_none()
+
+            if existing is not None:
+                return  # Already tagged
+
+            tag = ImageTagModel(
+                image_id=image_id, tag_name=tag_name, created_at=datetime.utcnow()
             )
-        ).scalar_one_or_none()
-
-        if existing is not None:
-            return  # Already tagged
-
-        tag = ImageTagModel(
-            image_id=image_id, tag_name=tag_name, created_at=datetime.utcnow()
-        )
-        self.session.add(tag)
-        self.session.commit()
-        logger.debug(f"Added tag '{tag_name}' to image {image_id}")
+            session.add(tag)
+            session.commit()
+            logger.debug(f"Added tag '{tag_name}' to image {image_id}")
 
     def remove_tag(self, image_id: int, tag_name: str) -> None:
         """
@@ -63,18 +66,19 @@ class TagService:
         """
         from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
 
-        tag_name = tag_name.strip().lower()
-        tag = self.session.execute(
-            select(ImageTagModel).where(
-                (ImageTagModel.image_id == image_id)
-                & (ImageTagModel.tag_name == tag_name)
-            )
-        ).scalar_one_or_none()
+        with Session(self._engine) as session:
+            tag_name = tag_name.strip().lower()
+            tag = session.execute(
+                select(ImageTagModel).where(
+                    (ImageTagModel.image_id == image_id)
+                    & (ImageTagModel.tag_name == tag_name)
+                )
+            ).scalar_one_or_none()
 
-        if tag:
-            self.session.delete(tag)
-            self.session.commit()
-            logger.debug(f"Removed tag '{tag_name}' from image {image_id}")
+            if tag:
+                session.delete(tag)
+                session.commit()
+                logger.debug(f"Removed tag '{tag_name}' from image {image_id}")
 
     def get_image_tags(self, image_id: int) -> list[str]:
         """
@@ -88,11 +92,12 @@ class TagService:
         """
         from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
 
-        tags = self.session.execute(
-            select(ImageTagModel.tag_name).where(ImageTagModel.image_id == image_id)
-        ).scalars()
+        with Session(self._engine) as session:
+            tags = session.execute(
+                select(ImageTagModel.tag_name).where(ImageTagModel.image_id == image_id)
+            ).scalars()
 
-        return sorted(list(tags))
+            return sorted(list(tags))
 
     def list_all_tags(self) -> list[str]:
         """
@@ -103,11 +108,12 @@ class TagService:
         """
         from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
 
-        tags = self.session.execute(
-            select(ImageTagModel.tag_name).distinct()
-        ).scalars()
+        with Session(self._engine) as session:
+            tags = session.execute(
+                select(ImageTagModel.tag_name).distinct()
+            ).scalars()
 
-        return sorted(list(tags))
+            return sorted(list(tags))
 
     def get_tag_cloud(self) -> dict[str, int]:
         """
@@ -119,13 +125,14 @@ class TagService:
         from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
         from sqlalchemy import func
 
-        results = self.session.execute(
-            select(ImageTagModel.tag_name, func.count(ImageTagModel.id)).group_by(
-                ImageTagModel.tag_name
-            )
-        ).all()
+        with Session(self._engine) as session:
+            results = session.execute(
+                select(ImageTagModel.tag_name, func.count(ImageTagModel.id)).group_by(
+                    ImageTagModel.tag_name
+                )
+            ).all()
 
-        return {tag: count for tag, count in results}
+            return {tag: count for tag, count in results}
 
     def batch_tag_images(self, image_ids: list[int], tag_names: list[str]) -> None:
         """
@@ -137,32 +144,33 @@ class TagService:
         """
         from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
 
-        now = datetime.utcnow()
-        added = 0
+        with Session(self._engine) as session:
+            now = datetime.utcnow()
+            added = 0
 
-        for image_id in image_ids:
-            for tag_name in tag_names:
-                tag_name = tag_name.strip().lower()
-                if not tag_name:
-                    continue
+            for image_id in image_ids:
+                for tag_name in tag_names:
+                    tag_name = tag_name.strip().lower()
+                    if not tag_name:
+                        continue
 
-                # Check if already exists
-                existing = self.session.execute(
-                    select(ImageTagModel).where(
-                        (ImageTagModel.image_id == image_id)
-                        & (ImageTagModel.tag_name == tag_name)
-                    )
-                ).scalar_one_or_none()
+                    # Check if already exists
+                    existing = session.execute(
+                        select(ImageTagModel).where(
+                            (ImageTagModel.image_id == image_id)
+                            & (ImageTagModel.tag_name == tag_name)
+                        )
+                    ).scalar_one_or_none()
 
-                if existing is None:
-                    tag = ImageTagModel(
-                        image_id=image_id, tag_name=tag_name, created_at=now
-                    )
-                    self.session.add(tag)
-                    added += 1
+                    if existing is None:
+                        tag = ImageTagModel(
+                            image_id=image_id, tag_name=tag_name, created_at=now
+                        )
+                        session.add(tag)
+                        added += 1
 
-        self.session.commit()
-        logger.info(f"Batch tagged {len(image_ids)} images with {len(tag_names)} tags ({added} new tags)")
+            session.commit()
+            logger.info(f"Batch tagged {len(image_ids)} images with {len(tag_names)} tags ({added} new tags)")
 
     def search_images_by_tag(self, tag_name: str) -> list[int]:
         """
@@ -176,14 +184,15 @@ class TagService:
         """
         from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
 
-        tag_name = tag_name.strip().lower()
-        image_ids = self.session.execute(
-            select(ImageTagModel.image_id).where(
-                ImageTagModel.tag_name == tag_name
-            )
-        ).scalars()
+        with Session(self._engine) as session:
+            tag_name = tag_name.strip().lower()
+            image_ids = session.execute(
+                select(ImageTagModel.image_id).where(
+                    ImageTagModel.tag_name == tag_name
+                )
+            ).scalars()
 
-        return list(image_ids)
+            return list(image_ids)
 
     def search_images_by_tags(
         self, tag_names: list[str], match_all: bool = False
@@ -202,24 +211,25 @@ class TagService:
         from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
         from sqlalchemy import func
 
-        tag_names = [t.strip().lower() for t in tag_names if t.strip()]
-        if not tag_names:
-            return []
+        with Session(self._engine) as session:
+            tag_names = [t.strip().lower() for t in tag_names if t.strip()]
+            if not tag_names:
+                return []
 
-        if match_all:
-            # Find images with all tags
-            image_ids = self.session.execute(
-                select(ImageTagModel.image_id)
-                .where(ImageTagModel.tag_name.in_(tag_names))
-                .group_by(ImageTagModel.image_id)
-                .having(func.count(ImageTagModel.id) == len(tag_names))
-            ).scalars()
-        else:
-            # Find images with any tag
-            image_ids = self.session.execute(
-                select(ImageTagModel.image_id).where(
-                    ImageTagModel.tag_name.in_(tag_names)
-                )
-            ).scalars()
+            if match_all:
+                # Find images with all tags
+                image_ids = session.execute(
+                    select(ImageTagModel.image_id)
+                    .where(ImageTagModel.tag_name.in_(tag_names))
+                    .group_by(ImageTagModel.image_id)
+                    .having(func.count(ImageTagModel.id) == len(tag_names))
+                ).scalars()
+            else:
+                # Find images with any tag
+                image_ids = session.execute(
+                    select(ImageTagModel.image_id).where(
+                        ImageTagModel.tag_name.in_(tag_names)
+                    )
+                ).scalars()
 
-        return list(set(image_ids))
+            return list(set(image_ids))

@@ -581,9 +581,7 @@ class MainWindow(QMainWindow):
         append: bool,
     ) -> None:
         typed_items = [item for item in items if hasattr(item, "image_id")]
-        if not append:
-            model.clear()
-        model.append_page(typed_items, has_more=len(typed_items) >= _PAGE_SIZE)
+        model.append_page(typed_items, has_more=len(typed_items) >= _PAGE_SIZE, append=append)
 
     def _on_tile_ready(
         self,
