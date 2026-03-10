@@ -137,13 +137,23 @@ class AlbumQueryCacheService:
                 logger.error(f"Failed to get cached image IDs page for album {album_id}: {exc}")
                 return []
 
+    def _invalidate_cache_in_session(self, session: Session, album_id: int) -> None:
+        """Delete cache rows for one album using an already-open session."""
+        try:
+            session.execute(
+                delete(AlbumQueryCacheModel).where(AlbumQueryCacheModel.album_id == album_id)
+            )
+        except Exception as exc:
+            logger.error(f"Failed to invalidate cache for album {album_id}: {exc}")
+            raise
+
     def _store_results(self, album: Album, image_ids: list[int]) -> None:
         if album.id is None:
             return
 
         with Session(self._engine) as session:
             try:
-                self.invalidate_cache(album.id)
+                self._invalidate_cache_in_session(session, album.id)
 
                 generated_at = datetime.now(tz=UTC)
                 rows = [
@@ -158,7 +168,7 @@ class AlbumQueryCacheService:
                 ]
                 if rows:
                     session.bulk_save_objects(rows)
-                    session.flush()
+                session.commit()
             except Exception as exc:
                 logger.error(f"Failed to store cache results for album {album.id}: {exc}")
                 session.rollback()

@@ -9,6 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from photo_app.ml.quality_scorer import QualityScorer
+
 if TYPE_CHECKING:
     pass
 

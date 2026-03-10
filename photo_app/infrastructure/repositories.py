@@ -464,6 +464,7 @@ class SqlAlchemyPersonRepository:
             )
             session.add(row)
             session.flush()
+            session.commit()
             return Person(
                 id=row.id,
                 name=row.name,
@@ -572,6 +573,7 @@ class SqlAlchemyAlbumRepository:
             )
             session.add(row)
             session.flush()
+            session.commit()
             return Album(
                 id=row.id,
                 name=row.name,
@@ -599,6 +601,7 @@ class SqlAlchemyAlbumRepository:
                 return None
             row.name = name
             session.flush()
+            session.commit()
             return _to_album(row)
 
     def update_query(self, album_id: int, query: AlbumQuery) -> Album | None:
@@ -621,6 +624,7 @@ class SqlAlchemyAlbumRepository:
             }
             row.query_version += 1
             session.flush()
+            session.commit()
             return _to_album(row)
 
     def delete(self, album_id: int) -> bool:
@@ -631,6 +635,7 @@ class SqlAlchemyAlbumRepository:
                 return False
             session.delete(row)
             session.flush()
+            session.commit()
             return True
 
 
@@ -657,6 +662,7 @@ class SqlAlchemyIdentityClusterRepository:
             )
             session.add(row)
             session.flush()
+            session.commit()
             return _to_identity_cluster(row)
 
     def list_clusters(self) -> list[IdentityCluster]:
