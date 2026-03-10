@@ -67,6 +67,9 @@ class GalleryViewModel(QObject):
         self._debounce_timer.timeout.connect(self._on_debounce_timeout)
         self._pending_album_id: int | None = None
         self._pending_library_mode = False
+        
+        # Stale result protection
+        self._epoch = 0  # Increment on each new album/library selection
 
     def select_album(self, album_id: int) -> None:
         """Load first page for selected album with debouncing."""
@@ -118,8 +121,7 @@ class GalleryViewModel(QObject):
         worker.signals.error.connect(self._on_error)
         worker.signals.finished.connect(self._on_tile_build_finished)
         self._thread_pool.start(worker)
-        # Start loading page immediately without waiting for tiles to finish
-        self._load_page(append=False)
+        # DO NOT load page here - wait for tiles to finish first
 
     def _on_tile_build_result(self, result: object) -> None:
         built_images = int(getattr(result, "images_built", 0))
@@ -151,16 +153,21 @@ class GalleryViewModel(QObject):
                 limit=self._page_size,
             )
         
-        # Create a closure that captures the append parameter
-        def on_page_result(page: object) -> None:
-            self._on_page_result(page, append=append)
+        # Create a closure that captures the append parameter and current epoch
+        current_epoch = self._epoch
+        def on_page_result(page: object, *, _epoch: int = current_epoch) -> None:
+            self._on_page_result(page, append=append, epoch=_epoch)
         
         worker.signals.result_ready.connect(on_page_result)
         worker.signals.error.connect(self._on_error)
         worker.signals.finished.connect(self._on_page_finished)
         self._thread_pool.start(worker)
 
-    def _on_page_result(self, page: object, *, append: bool) -> None:
+    def _on_page_result(self, page: object, *, append: bool, epoch: int) -> None:
+        # Check for stale result - if epoch doesn't match current, discard
+        if epoch != self._epoch:
+            return
+            
         items: list[PhotoGridItem] = []
         page_items = getattr(page, "items", [])
         for image in page_items:
@@ -242,6 +249,13 @@ class GalleryViewModel(QObject):
             return
             
         self._current_operation_id = operation_id
+        # Increment epoch to mark this as the current operation
+        self._epoch += 1
+        current_epoch = self._epoch
+        
+        # Reset pagination state for new operation
+        self._offset = 0
+        self._has_more = True
         
         try:
             if operation_type == "album" and album_id is not None:

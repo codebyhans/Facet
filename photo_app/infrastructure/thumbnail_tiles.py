@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from sqlalchemy import Engine, delete, func, select
+from sqlalchemy.orm import Session
 
 from PIL import Image, ImageOps, UnidentifiedImageError
-from sqlalchemy import delete, func, select
-from sqlalchemy.orm import Session
 
 from photo_app.infrastructure.sqlalchemy_models import ImageModel, ThumbnailTileModel
 
@@ -37,14 +37,14 @@ class ThumbnailTileBuilder:
 
     def __init__(
         self,
-        session: Session,
+        engine: Engine,
         *,
         cache_directory: Path,
         tile_size: tuple[int, int],
         thumbnail_size: tuple[int, int],
         images_per_tile: int,
     ) -> None:
-        self._session = session
+        self._engine = engine
         self._cache_directory = cache_directory
         self._tile_dir = cache_directory / "tiles"
         self._tile_size = tile_size
@@ -54,79 +54,81 @@ class ThumbnailTileBuilder:
 
     def build_missing_tiles(self) -> TileBuildResult:
         """Append new tile files for images with no tile mapping."""
-        tile_rows = self._load_images_without_tiles()
-        if not tile_rows:
-            return TileBuildResult(images_built=0, tiles_built=0)
+        with Session(self._engine) as session:
+            tile_rows = self._load_images_without_tiles(session)
+            if not tile_rows:
+                return TileBuildResult(images_built=0, tiles_built=0)
 
-        grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
-        next_tile_index = self._next_tile_index()
-        tile_canvas = self._new_tile_canvas()
-        tile_entries = 0
-        tiles_built = 0
-        images_built = 0
-        mappings: list[ThumbnailTileModel] = []
-        current_tile_path = self._tile_path(next_tile_index)
+            grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
+            next_tile_index = self._next_tile_index(session)
+            tile_canvas = self._new_tile_canvas()
+            tile_entries = 0
+            tiles_built = 0
+            images_built = 0
+            mappings: list[ThumbnailTileModel] = []
+            current_tile_path = self._tile_path(next_tile_index)
 
-        for image_id, file_path in tile_rows:
-            thumb = self._load_thumbnail(Path(file_path))
-            if thumb is None:
-                continue
+            for image_id, file_path in tile_rows:
+                thumb = self._load_thumbnail(Path(file_path))
+                if thumb is None:
+                    continue
 
-            position = tile_entries % self._images_per_tile
-            col = position % grid_width
-            row = position // grid_width
-            x = col * self._thumbnail_size[0]
-            y = row * self._thumbnail_size[1]
-            tile_canvas.paste(thumb, (x, y))
+                position = tile_entries % self._images_per_tile
+                col = position % grid_width
+                row = position // grid_width
+                x = col * self._thumbnail_size[0]
+                y = row * self._thumbnail_size[1]
+                tile_canvas.paste(thumb, (x, y))
 
-            mappings.append(
-                ThumbnailTileModel(
-                    tile_path=str(current_tile_path),
-                    tile_index=next_tile_index,
-                    image_id=image_id,
-                    position_in_tile=position,
+                mappings.append(
+                    ThumbnailTileModel(
+                        tile_path=str(current_tile_path),
+                        tile_index=next_tile_index,
+                        image_id=image_id,
+                        position_in_tile=position,
+                    )
                 )
-            )
-            tile_entries += 1
-            images_built += 1
+                tile_entries += 1
+                images_built += 1
 
-            if tile_entries % self._images_per_tile == 0:
+                if tile_entries % self._images_per_tile == 0:
+                    self._save_tile(tile_canvas, current_tile_path)
+                    tiles_built += 1
+                    next_tile_index += 1
+                    current_tile_path = self._tile_path(next_tile_index)
+                    tile_canvas = self._new_tile_canvas()
+
+            if tile_entries % self._images_per_tile != 0:
                 self._save_tile(tile_canvas, current_tile_path)
                 tiles_built += 1
-                next_tile_index += 1
-                current_tile_path = self._tile_path(next_tile_index)
-                tile_canvas = self._new_tile_canvas()
 
-        if tile_entries % self._images_per_tile != 0:
-            self._save_tile(tile_canvas, current_tile_path)
-            tiles_built += 1
-
-        if mappings:
-            self._session.bulk_save_objects(mappings)
-            self._session.flush()
-            self._session.commit()  # Ensure changes are persisted
-        return TileBuildResult(images_built=images_built, tiles_built=tiles_built)
+            if mappings:
+                session.bulk_save_objects(mappings)
+                session.flush()
+                session.commit()  # Ensure changes are persisted
+            return TileBuildResult(images_built=images_built, tiles_built=tiles_built)
 
     def rebuild_all_tiles(self) -> TileBuildResult:
         """Drop tile files and tile mapping table, then rebuild from all images."""
         for tile_file in self._tile_dir.glob("*.webp"):
             tile_file.unlink(missing_ok=True)
-        self._session.execute(delete(ThumbnailTileModel))
-        self._session.flush()
+        with Session(self._engine) as session:
+            session.execute(delete(ThumbnailTileModel))
+            session.flush()
         return self.build_missing_tiles()
 
-    def _load_images_without_tiles(self) -> list[tuple[int, str]]:
+    def _load_images_without_tiles(self, session: Session) -> list[tuple[int, str]]:
         stmt = (
             select(ImageModel.id, ImageModel.file_path)
             .outerjoin(ThumbnailTileModel, ThumbnailTileModel.image_id == ImageModel.id)
             .where(ThumbnailTileModel.id.is_(None))
             .order_by(ImageModel.id.asc())
         )
-        rows = self._session.execute(stmt).all()
+        rows = session.execute(stmt).all()
         return [(int(row[0]), str(row[1])) for row in rows]
 
-    def _next_tile_index(self) -> int:
-        max_value = self._session.scalar(select(func.max(ThumbnailTileModel.tile_index)))
+    def _next_tile_index(self, session: Session) -> int:
+        max_value = session.scalar(select(func.max(ThumbnailTileModel.tile_index)))
         return int(max_value) + 1 if max_value is not None else 1
 
     def _new_tile_canvas(self) -> Image.Image:
@@ -157,19 +159,19 @@ class ThumbnailTileStore:
 
     def __init__(
         self,
-        session: Session,
+        engine: Engine,
         *,
         cache_directory: Path,
         tile_size: tuple[int, int],
         thumbnail_size: tuple[int, int],
         images_per_tile: int,
     ) -> None:
-        self._session = session
+        self._engine = engine
         self._tile_size = tile_size
         self._thumbnail_size = thumbnail_size
         self._images_per_tile = images_per_tile
         self._builder = ThumbnailTileBuilder(
-            session,
+            engine,
             cache_directory=cache_directory,
             tile_size=tile_size,
             thumbnail_size=thumbnail_size,
@@ -178,36 +180,38 @@ class ThumbnailTileStore:
 
     def get_tile(self, tile_index: int) -> Path | None:
         """Return tile file path for one tile index."""
-        stmt = (
-            select(ThumbnailTileModel.tile_path)
-            .where(ThumbnailTileModel.tile_index == tile_index)
-            .limit(1)
-        )
-        tile_path = self._session.scalar(stmt)
-        if tile_path is None:
-            return None
-        resolved = Path(str(tile_path))
-        return resolved if resolved.exists() else None
+        with Session(self._engine) as session:
+            stmt = (
+                select(ThumbnailTileModel.tile_path)
+                .where(ThumbnailTileModel.tile_index == tile_index)
+                .limit(1)
+            )
+            tile_path = session.scalar(stmt)
+            if tile_path is None:
+                return None
+            resolved = Path(str(tile_path))
+            return resolved if resolved.exists() else None
 
     def get_image_tile(self, image_id: int) -> ImageTileLookup | None:
         """Return tile lookup details for one image id."""
-        stmt = select(ThumbnailTileModel).where(ThumbnailTileModel.image_id == image_id)
-        row = self._session.scalar(stmt)
-        if row is None:
-            return None
-        grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
-        col = row.position_in_tile % grid_width
-        line = row.position_in_tile // grid_width
-        return ImageTileLookup(
-            image_id=row.image_id,
-            tile_index=row.tile_index,
-            tile_path=Path(row.tile_path),
-            position_in_tile=row.position_in_tile,
-            x=col * self._thumbnail_size[0],
-            y=line * self._thumbnail_size[1],
-            width=self._thumbnail_size[0],
-            height=self._thumbnail_size[1],
-        )
+        with Session(self._engine) as session:
+            stmt = select(ThumbnailTileModel).where(ThumbnailTileModel.image_id == image_id)
+            row = session.scalar(stmt)
+            if row is None:
+                return None
+            grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
+            col = row.position_in_tile % grid_width
+            line = row.position_in_tile // grid_width
+            return ImageTileLookup(
+                image_id=row.image_id,
+                tile_index=row.tile_index,
+                tile_path=Path(row.tile_path),
+                position_in_tile=row.position_in_tile,
+                x=col * self._thumbnail_size[0],
+                y=line * self._thumbnail_size[1],
+                width=self._thumbnail_size[0],
+                height=self._thumbnail_size[1],
+            )
 
     def build_missing_tiles(self) -> TileBuildResult:
         """Incrementally add tiles for unmapped images."""

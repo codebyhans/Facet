@@ -142,7 +142,6 @@ class AlbumService:
         limit: int = 100,
     ) -> AlbumPage:
         """Return paginated all-photos library view."""
-        # Simply fetch all images without filtering
-        all_images = self._image_repository.list_all()
-        items = all_images[offset : offset + limit]
+        # Use paginated query to avoid loading all images into memory
+        items = self._image_repository.list_paginated(offset=offset, limit=limit)
         return AlbumPage(items=items, offset=offset, limit=limit)

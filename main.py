@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from alembic import command
 from alembic.config import Config
 from PySide6.QtWidgets import QApplication
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from photo_app.app.main_window import MainWindow
@@ -99,7 +100,7 @@ def run_migrations(settings: AppSettings) -> None:
     LOGGER.info("Alembic migrations complete.")
 
 
-def build_services(session: Session, settings: AppSettings) -> ServiceContainer:
+def build_services(session: Session, settings: AppSettings, engine: Engine) -> ServiceContainer:
     """Create application services."""
     LOGGER.info("Building repositories and services...")
     image_repo = SqlAlchemyImageRepository(session)
@@ -119,7 +120,7 @@ def build_services(session: Session, settings: AppSettings) -> ServiceContainer:
         max_size=runtime_settings.thumbnail_max_size,
     )
     thumbnail_tile_store = ThumbnailTileStore(
-        session,
+        engine,
         cache_directory=settings.cache_directory,
         tile_size=settings.tile_size,
         thumbnail_size=settings.thumbnail_size,
@@ -233,10 +234,10 @@ def build_services(session: Session, settings: AppSettings) -> ServiceContainer:
     )
 
 
-def build_main_window(session: Session, settings: AppSettings) -> MainWindow:
+def build_main_window(session: Session, settings: AppSettings, engine: Engine) -> MainWindow:
     """Create application object graph and return main window."""
     LOGGER.info("Creating main window...")
-    services = build_services(session, settings)
+    services = build_services(session, settings, engine)
     _ = services.person_service
     window = MainWindow(
         services.image_index_service,
@@ -275,7 +276,7 @@ def main() -> int:
     apply_theme(app)
     LOGGER.info("Dark theme applied.")
     with Session(engine) as session:
-        window = build_main_window(session, settings)
+        window = build_main_window(session, settings, engine)
         LOGGER.info("Showing UI window...")
         window.show()
         LOGGER.info("Qt event loop starting.")

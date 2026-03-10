@@ -196,6 +196,11 @@ class SqlAlchemyImageRepository:
         stmt = select(ImageModel)
         return [_to_image(row) for row in self._session.scalars(stmt)]
 
+    def list_paginated(self, *, offset: int, limit: int) -> list[Image]:
+        """Paginated query to avoid loading all images into memory."""
+        stmt = select(ImageModel).order_by(ImageModel.id.asc()).offset(offset).limit(limit)
+        return [_to_image(row) for row in self._session.scalars(stmt)]
+
     def list_by_filters(
         self,
         *,

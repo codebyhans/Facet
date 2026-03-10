@@ -39,6 +39,9 @@ class ImageRepository(Protocol):
     def list_all(self) -> list[Image]:
         """Return all images."""
 
+    def list_paginated(self, *, offset: int, limit: int) -> list[Image]:
+        """Return paginated images to avoid loading all into memory."""
+
     def list_by_filters(
         self,
         *,

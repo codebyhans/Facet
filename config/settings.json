@@ -1,7 +1,7 @@
 {
   "window_size": [
-    1920,
-    1017
+    1136,
+    511
   ],
   "panel_widths": [
     270,
@@ -48,9 +48,9 @@
     }
   ],
   "splitter_widths": [
-    383,
-    1162,
-    347
+    320,
+    585,
+    203
   ],
-  "last_opened_album": 3
+  "last_opened_album": 1
 }
