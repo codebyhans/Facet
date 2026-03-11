@@ -67,7 +67,11 @@ class FaceIndexService:
         staged_faces: list[Face] = []
 
         for image in images:
-            staged_faces.extend(self._extract_faces_for_image(image))
+            if image.id is None:
+                continue
+            new_faces = self._extract_faces_for_image(image)
+            staged_faces.extend(new_faces)
+            self._image_repository.update_face_count(image.id, len(new_faces))
 
         if staged_faces:
             self._face_repository.add_many(staged_faces)
@@ -96,6 +100,7 @@ class FaceIndexService:
         staged_faces = self._extract_faces_for_image(image)
         if staged_faces:
             self._face_repository.add_many(staged_faces)
+            self._image_repository.update_face_count(image.id, len(staged_faces))
         if self._identity_cluster_service is None:
             self._cluster_all_faces()
         else:

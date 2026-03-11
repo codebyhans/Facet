@@ -1,7 +1,7 @@
 {
   "window_size": [
-    1185,
-    667
+    1920,
+    1017
   ],
   "panel_widths": [
     270,
@@ -20,37 +20,21 @@
       "children": []
     },
     {
-      "node_id": "v-2",
-      "name": "Nina",
-      "kind": "virtual",
-      "album_id": 2,
-      "query_definition": {
-        "person_ids": [
-          5
-        ],
-        "cluster_ids": []
-      },
-      "children": []
-    },
-    {
       "node_id": "v-3",
-      "name": "INgeborgh",
+      "name": "3",
       "kind": "virtual",
       "album_id": 3,
       "query_definition": {
-        "person_ids": [
-          7,
-          6
-        ],
+        "person_ids": [],
         "cluster_ids": []
       },
       "children": []
     }
   ],
   "splitter_widths": [
-    334,
-    611,
-    212
+    1122,
+    525,
+    245
   ],
-  "last_opened_album": 1
+  "last_opened_album": 3
 }

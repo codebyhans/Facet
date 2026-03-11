@@ -177,12 +177,20 @@ class TemporalIdentityClusterService:
         }
         merged = 0
         for left, right in combinations(vectors.keys(), 2):
+            if left not in vectors or right not in vectors:
+                continue                          # already merged away
             similarity = float(np.dot(vectors[left], vectors[right]))
             if similarity < self._config.merge_threshold:
                 continue
             if self.merge_clusters(source_cluster_id=right, target_cluster_id=left):
                 merged += 1
                 vectors.pop(right, None)
+                # Refresh left's centroid so later pairs use the post-merge value
+                updated = self._cluster_repository.get_cluster(left)
+                if updated is not None:
+                    vectors[left] = _normalize(
+                        np.frombuffer(updated.canonical_embedding, dtype=np.float32)
+                    )
         return merged
 
     def _match_cluster(self, vector: np.ndarray, *, age_bucket: str | None) -> ClusterMatch | None:

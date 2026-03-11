@@ -114,7 +114,7 @@ class ThumbnailTileBuilder:
             tile_file.unlink(missing_ok=True)
         with Session(self._engine) as session:
             session.execute(delete(ThumbnailTileModel))
-            session.flush()
+            session.commit()
         return self.build_missing_tiles()
 
     def _load_images_without_tiles(self, session: Session) -> list[tuple[int, str]]:
@@ -190,6 +190,7 @@ class ThumbnailTileStore:
             if tile_path is None:
                 return None
             resolved = Path(str(tile_path))
+            print(f"[TILES] get_tile({tile_index}): path={resolved}, exists={resolved.exists()}")
             return resolved if resolved.exists() else None
 
     def get_image_tile(self, image_id: int) -> ImageTileLookup | None:
@@ -197,6 +198,7 @@ class ThumbnailTileStore:
         with Session(self._engine) as session:
             stmt = select(ThumbnailTileModel).where(ThumbnailTileModel.image_id == image_id)
             row = session.scalar(stmt)
+            print(f"[TILES] get_image_tile({image_id}): {'found tile_index=' + str(row.tile_index) if row else 'NO ROW FOUND'}")
             if row is None:
                 return None
             grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])

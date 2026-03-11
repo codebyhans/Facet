@@ -110,7 +110,7 @@ class IdentityClusterModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     canonical_embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    face_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    face_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     variance: Mapped[float] = mapped_column(nullable=False, default=0.0)
     flagged_for_review: Mapped[bool] = mapped_column(
         Boolean,

@@ -54,6 +54,9 @@ class GalleryViewModel(QObject):
         self._thread_pool = QThreadPool.globalInstance()
         self._tile_building = False
         self._active_operations = 0  # Track concurrent operations
+        # Strong references to prevent GC while workers are running
+        self._active_tile_worker: TileBuildWorker | None = None
+        self._active_page_worker: AlbumQueryWorker | None = None
         
         # Operation queue management
         self._operation_queue = []  # Queue of pending operations
@@ -119,9 +122,11 @@ class GalleryViewModel(QObject):
         worker.signals.error.connect(self._on_error)
 
         def on_tile_build_finished() -> None:                 # epoch-aware closure
+            self._active_tile_worker = None                   # release reference when done
             self._on_tile_build_finished(epoch=captured_epoch)
 
         worker.signals.finished.connect(on_tile_build_finished)
+        self._active_tile_worker = worker                     # keep alive until finished
         self._thread_pool.start(worker)
         # DO NOT load page here - wait for tiles to finish first
 
@@ -131,10 +136,12 @@ class GalleryViewModel(QObject):
         self.status.emit(f"Tile cache updated: {built_images} images, {built_tiles} tiles")
 
     def _on_tile_build_finished(self, *, epoch: int) -> None:
+        print(f"[GALLERY] Tile build finished: epoch={epoch}, self._epoch={self._epoch}")
         if epoch != self._epoch:
             return
         self._tile_building = False
         self.tile_building_finished.emit()
+        print(f"[GALLERY] Tile build epoch OK, calling _load_page(append=False)")
         self._load_page(append=False)
 
     def _load_page(self, *, append: bool) -> None:
@@ -163,14 +170,17 @@ class GalleryViewModel(QObject):
             self._on_page_result(page, append=append, epoch=current_epoch)
 
         def on_page_finished() -> None:                       # ADD THIS
+            self._active_page_worker = None                   # release reference when done
             self._on_page_finished(epoch=current_epoch)
 
         worker.signals.result_ready.connect(on_page_result)
         worker.signals.error.connect(self._on_error)
         worker.signals.finished.connect(on_page_finished)    # CHANGE THIS (was self._on_page_finished)
+        self._active_page_worker = worker                     # keep alive until finished
         self._thread_pool.start(worker)
 
     def _on_page_result(self, page: object, *, append: bool, epoch: int) -> None:
+        print(f"[GALLERY] Page result arrived: epoch={epoch}, self._epoch={self._epoch}, items={len(getattr(page, 'items', []))}")
         # Check for stale result - if epoch doesn't match current, discard
         if epoch != self._epoch:
             return
@@ -204,6 +214,7 @@ class GalleryViewModel(QObject):
         self.page_ready.emit(items, append)
         # Update status with more specific information
         action = "Appended" if append else "Loaded"
+        print(f"[GALLERY] Page result processed: {len(items)} items, emitting page_ready")
         self.status.emit(f"{action} {len(items)} photos (total: {self._offset})")
 
     def _on_page_finished(self, *, epoch: int) -> None:
@@ -214,6 +225,7 @@ class GalleryViewModel(QObject):
         self.loading_finished.emit()
 
     def _on_error(self, message: str) -> None:
+        print(f"[GALLERY] ERROR: {message}")
         self._loading_page = False
         self._tile_building = False
         self.error.emit(message)
@@ -226,6 +238,12 @@ class GalleryViewModel(QObject):
 
     def _on_debounce_timeout(self) -> None:
         """Handle debounced album selection with operation queue management."""
+        # Cancel any in-progress operation before starting a new one.
+        # This resets _tile_building, _loading_page, and _current_operation_id
+        # so the new operation always proceeds cleanly.
+        self._cancel_current_operation()
+        
+        print(f"[GALLERY] Debounce fired: library_mode={self._pending_library_mode}, album_id={self._pending_album_id}")
         # Create new operation
         self._operation_counter += 1
         operation_id = self._operation_counter
@@ -251,10 +269,6 @@ class GalleryViewModel(QObject):
 
     def _execute_operation(self, operation_id: int, operation_type: str, album_id: int | None) -> None:
         """Execute an album loading operation with proper error handling."""
-        # Check if operation was cancelled (only if there's already a different operation running)
-        if self._current_operation_id is not None and self._current_operation_id != operation_id:
-            return
-            
         self._current_operation_id = operation_id
         # Increment epoch to mark this as the current operation
         self._epoch += 1
@@ -286,4 +300,6 @@ class GalleryViewModel(QObject):
             # Cancel page loading if in progress
             if self._loading_page:
                 self._loading_page = False
+            self._active_tile_worker = None   # release GC reference
+            self._active_page_worker = None   # release GC reference
             self._current_operation_id = None

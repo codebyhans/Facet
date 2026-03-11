@@ -75,6 +75,9 @@ class ImageRepository(Protocol):
     def list_by_ids(self, image_ids: Sequence[int]) -> list[Image]:
         """Load images by explicit ID order."""
 
+    def update_face_count(self, image_id: int, count: int) -> None:
+        """Update the face_count for an image."""
+
 
 class FaceRepository(Protocol):
     """Persistence port for faces."""

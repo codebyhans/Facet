@@ -25,8 +25,8 @@ class IdentityMaintenanceJobs:
         return self._service.recalculate_all_cluster_states()
 
     def recalculate_temporal_embeddings(self) -> int:
-        """Recompute temporal profile rows by recalculating all cluster states."""
-        return self._service.recalculate_all_cluster_states()
+        """Temporal embeddings are recomputed as part of recalculate_cluster_centroids."""
+        return 0
 
     def detect_cluster_merges(self) -> int:
         """Find and merge highly similar clusters."""
@@ -39,8 +39,7 @@ class IdentityMaintenanceJobs:
 
     def run_all(self) -> IdentityMaintenanceResult:
         """Execute all maintenance tasks and return summary."""
-        recalculated = self.recalculate_cluster_centroids()
-        _ = self.recalculate_temporal_embeddings()
+        recalculated = self.recalculate_cluster_centroids()  # includes temporal embeddings
         merged = self.detect_cluster_merges()
         flagged = self.monitor_cluster_variance()
         return IdentityMaintenanceResult(

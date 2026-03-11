@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -152,6 +153,10 @@ class MainWindow(QMainWindow):
         self._tag_service = tag_service
         self._runtime_settings = runtime_settings
         self._thread_pool = QThreadPool.globalInstance()
+        
+        # Worker references to prevent GC
+        self._active_face_index_worker = None
+        self._active_image_index_worker = None
 
         self._album_vm = AlbumViewModel(
             album_service,
@@ -580,6 +585,7 @@ class MainWindow(QMainWindow):
         items: list[object],
         append: bool,
     ) -> None:
+        print(f"[MAIN] _on_gallery_page: {len(items)} items, append={append}")
         typed_items = [item for item in items if hasattr(item, "image_id")]
         model.append_page(typed_items, has_more=len(typed_items) >= _PAGE_SIZE, append=append)
 
@@ -589,6 +595,7 @@ class MainWindow(QMainWindow):
         tile_index: int,
         pixmap: object,
     ) -> None:
+        print(f"[MAIN] _on_tile_ready: tile_index={tile_index}, pixmap_null={not isinstance(pixmap, QPixmap) or pixmap.isNull()}")
         if isinstance(pixmap, QPixmap):
             model.set_tile(tile_index, pixmap)
 
@@ -765,7 +772,8 @@ class MainWindow(QMainWindow):
         
         # Validate path before indexing
         if not root.exists():
-            self._show_error(f"Path does not exist: {root}")
+            self.statusBar().showMessage("No photo library folder set. Please choose a folder.")
+            self._on_select_library()
             return
         
         if not root.is_dir():
@@ -813,6 +821,12 @@ class MainWindow(QMainWindow):
         worker.signals.error.connect(
             lambda err: self._show_error(f"Indexing failed: {err}")
         )
+
+        def on_image_index_finished() -> None:
+            self._active_image_index_worker = None
+
+        worker.signals.finished.connect(on_image_index_finished)
+        self._active_image_index_worker = worker   # keep alive until finished
         self.statusBar().showMessage("Indexing images...")
         self._thread_pool.start(worker)
 
@@ -829,6 +843,12 @@ class MainWindow(QMainWindow):
         )
         worker.signals.result_ready.connect(self._refresh_people_list)
         worker.signals.error.connect(self._show_error)
+
+        def on_face_index_finished() -> None:
+            self._active_face_index_worker = None
+
+        worker.signals.finished.connect(on_face_index_finished)
+        self._active_face_index_worker = worker    # keep alive until finished
         self.statusBar().showMessage("Indexing faces...")
         self._thread_pool.start(worker)
 
@@ -911,6 +931,13 @@ class MainWindow(QMainWindow):
             return
         
         self.statusBar().showMessage(f"Library folder set to: {folder}")
+        
+        # Persist the new path to settings
+        updated_settings = dataclasses.replace(
+            self._runtime_settings, photo_root_dir=folder_path
+        )
+        self._settings_service.save_runtime_settings(updated_settings)
+        self._runtime_settings = updated_settings
         
         # Optionally prompt to index immediately
         reply = QMessageBox.question(

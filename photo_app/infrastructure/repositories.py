@@ -196,8 +196,11 @@ class SqlAlchemyImageRepository:
 
     def list_unprocessed_for_faces(self, limit: int) -> list[Image]:
         with Session(self._engine) as session:
-            subq = select(FaceModel.image_id)
-            stmt = select(ImageModel).where(~ImageModel.id.in_(subq)).limit(limit)
+            stmt = (
+                select(ImageModel)
+                .where(ImageModel.face_count.is_(None))
+                .limit(limit)
+            )
             return [_to_image(row) for row in session.scalars(stmt)]
 
     def list_all(self) -> list[Image]:
@@ -330,6 +333,14 @@ class SqlAlchemyImageRepository:
                 if image is not None:
                     ordered.append(image)
             return ordered
+
+    def update_face_count(self, image_id: int, count: int) -> None:
+        with Session(self._engine) as session:
+            stmt = select(ImageModel).where(ImageModel.id == image_id)
+            row = session.scalar(stmt)
+            if row is not None:
+                row.face_count = count
+                session.commit()
 
 
 class SqlAlchemyFaceRepository:
