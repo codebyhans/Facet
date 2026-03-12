@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Any
 
@@ -18,6 +18,7 @@ class PhotoGridItem:
     capture_date: date | None
     tile_index: int | None
     position_in_tile: int | None
+    flag: str | None = None
 
 
 class PhotoGridModel(QAbstractListModel):
@@ -26,6 +27,7 @@ class PhotoGridModel(QAbstractListModel):
     ImageIdRole = Qt.ItemDataRole.UserRole + 1
     CaptureDateRole = Qt.ItemDataRole.UserRole + 2
     FilePathRole = Qt.ItemDataRole.UserRole + 3
+    FlagRole = Qt.ItemDataRole.UserRole + 4
 
     tileRequested = Signal(int)
     loadMoreRequested = Signal()
@@ -67,6 +69,8 @@ class PhotoGridModel(QAbstractListModel):
             return self._format_capture_date(item.capture_date)
         if role == self.FilePathRole:
             return item.file_path
+        if role == self.FlagRole:
+            return item.flag
         return None
 
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
@@ -85,14 +89,14 @@ class PhotoGridModel(QAbstractListModel):
 
     def append_page(self, items: list[PhotoGridItem], *, has_more: bool, append: bool = True) -> None:
         """Append one paginated batch."""
+        # Clear first when starting a fresh load (even if the result is empty)
+        if not append:
+            self.clear()
+
         if not items:
             self._has_more = has_more
             return
-        
-        # Clear existing items if this is not an append operation (new album selection)
-        if not append:
-            self.clear()
-        
+
         # Add new items
         start = len(self._items)
         end = start + len(items) - 1
@@ -164,3 +168,13 @@ class PhotoGridModel(QAbstractListModel):
         if value is None:
             return "Unknown date"
         return value.isoformat()
+
+    def update_flag(self, row: int, flag: str | None) -> None:
+        """Replace the flag on one item and notify the view."""
+        if row < 0 or row >= len(self._items):
+            return
+        old = self._items[row]
+        # dataclasses.replace creates a new frozen instance with updated field
+        self._items[row] = replace(old, flag=flag)
+        idx = self.index(row, 0)
+        self.dataChanged.emit(idx, idx, [self.FlagRole])

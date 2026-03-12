@@ -8,20 +8,15 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDateEdit,
     QDialog,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QSlider,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -38,15 +33,11 @@ class AdvancedFilterEditorDialog(QDialog):
         self,
         parent: QWidget | None = None,
         available_persons: list[Person] | None = None,
-        available_tags: list[str] | None = None,
-        available_cameras: list[str] | None = None,
         current_query: AlbumQuery | None = None,
     ) -> None:
         """Initialize advanced filter editor."""
         super().__init__(parent)
         self._available_persons = available_persons or []
-        self._available_tags = available_tags or []
-        self._available_cameras = available_cameras or []
         self._current_query = current_query
 
         self.setWindowTitle("Advanced Filter Editor")
@@ -75,45 +66,6 @@ class AdvancedFilterEditorDialog(QDialog):
         people_group.setLayout(people_layout)
         layout.addWidget(people_group)
 
-        # Metadata filters
-        metadata_group = QGroupBox("Photo Metadata")
-        metadata_layout = QFormLayout()
-
-        # Rating
-        rating_layout = QHBoxLayout()
-        self._rating_slider = QSlider(Qt.Orientation.Horizontal)
-        self._rating_slider.setMinimum(0)
-        self._rating_slider.setMaximum(5)
-        self._rating_slider.setValue(0)
-        self._rating_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self._rating_label = QLabel("Any")
-        self._rating_slider.valueChanged.connect(self._on_rating_changed)
-        rating_layout.addWidget(QLabel("Min Rating:"))
-        rating_layout.addWidget(self._rating_slider)
-        rating_layout.addWidget(self._rating_label)
-        metadata_layout.addRow(rating_layout)
-
-        # Quality score
-        quality_layout = QHBoxLayout()
-        self._quality_spinbox = QDoubleSpinBox()
-        self._quality_spinbox.setMinimum(0.0)
-        self._quality_spinbox.setMaximum(1.0)
-        self._quality_spinbox.setValue(0.0)
-        self._quality_spinbox.setSingleStep(0.1)
-        quality_layout.addWidget(QLabel("Min Quality Score:"))
-        quality_layout.addWidget(self._quality_spinbox)
-        quality_layout.addStretch()
-        metadata_layout.addRow(quality_layout)
-
-        # Camera model
-        self._camera_combo = QComboBox()
-        self._camera_combo.addItem("(Any)", None)
-        for camera in sorted(set(self._available_cameras)):
-            self._camera_combo.addItem(camera, camera)
-        metadata_layout.addRow("Camera Model:", self._camera_combo)
-
-        metadata_group.setLayout(metadata_layout)
-        layout.addWidget(metadata_group)
 
         # Date range
         date_group = QGroupBox("Date Range")
@@ -142,19 +94,26 @@ class AdvancedFilterEditorDialog(QDialog):
         date_group.setLayout(date_layout)
         layout.addWidget(date_group)
 
-        # Tags
-        tags_group = QGroupBox("Tags")
-        tags_layout = QVBoxLayout()
+        # Flag filter
+        flag_group = QGroupBox("Image Flags")
+        flag_layout = QVBoxLayout()
 
-        tags_layout.addWidget(QLabel("Select tags to include:"))
-        self._tag_list = QListWidget()
-        self._tag_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-        for tag in sorted(self._available_tags):
-            item = QListWidgetItem(tag)
-            self._tag_list.addItem(item)
-        tags_layout.addWidget(self._tag_list)
-        tags_group.setLayout(tags_layout)
-        layout.addWidget(tags_group)
+        flag_layout.addWidget(QLabel("Show only images with these flags (leave all unchecked for any):"))
+
+        self._flag_keep_check = QCheckBox("Keep")
+        self._flag_undecided_check = QCheckBox("Undecided")
+        self._flag_discard_check = QCheckBox("Discard")
+        self._not_discarded_check = QCheckBox("Not discarded (Keep + Undecided)")
+        self._not_discarded_check.toggled.connect(self._on_not_discarded_toggled)
+
+        flag_layout.addWidget(self._not_discarded_check)
+        flag_layout.addWidget(self._flag_keep_check)
+        flag_layout.addWidget(self._flag_undecided_check)
+        flag_layout.addWidget(self._flag_discard_check)
+
+        flag_group.setLayout(flag_layout)
+        layout.addWidget(flag_group)
+
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -188,37 +147,6 @@ class AdvancedFilterEditorDialog(QDialog):
                 item_id = item.data(Qt.ItemDataRole.UserRole)
                 if item_id in person_ids:
                     self._person_list.setCurrentItem(item)
-
-        # Load rating
-        rating_min = get_value("rating_min")
-        if rating_min is not None:
-            try:
-                if isinstance(rating_min, (int, float)):
-                    self._rating_slider.setValue(int(rating_min))
-                elif isinstance(rating_min, str):
-                    self._rating_slider.setValue(int(rating_min))
-            except (ValueError, TypeError):
-                pass
-
-        # Load quality
-        quality_min = get_value("quality_min")
-        if quality_min is not None:
-            try:
-                if isinstance(quality_min, (int, float)):
-                    self._quality_spinbox.setValue(float(quality_min))
-                elif isinstance(quality_min, str):
-                    self._quality_spinbox.setValue(float(quality_min))
-            except (ValueError, TypeError):
-                pass
-
-        # Load camera
-        camera_models = get_value("camera_models", [])
-        if camera_models:
-            camera = camera_models[0] if isinstance(camera_models, list) and camera_models else camera_models
-            for i in range(self._camera_combo.count()):
-                if self._camera_combo.itemData(i) == camera:
-                    self._camera_combo.setCurrentIndex(i)
-                    break
 
         # Load date range
         date_from = get_value("date_from")
@@ -257,21 +185,26 @@ class AdvancedFilterEditorDialog(QDialog):
                 except (ValueError, TypeError):
                     pass
 
-        # Load tags
-        tag_names = get_value("tag_names", [])
-        if tag_names:
-            for i in range(self._tag_list.count()):
-                item = self._tag_list.item(i)
-                item_text = item.text()
-                if isinstance(tag_names, list) and item_text in tag_names:
-                    self._tag_list.setCurrentItem(item)
+        # Load flags
+        flags = get_value("flags", [])
+        if flags and isinstance(flags, (list, tuple)):
+            self._flag_keep_check.setChecked("keep" in flags)
+            self._flag_undecided_check.setChecked("undecided" in flags)
+            self._flag_discard_check.setChecked("discard" in flags)
+            # Restore the "Not discarded" shortcut state without triggering its toggle handler
+            is_not_discarded = (
+                "keep" in flags and "undecided" in flags and "discard" not in flags
+            )
+            self._not_discarded_check.blockSignals(True)
+            self._not_discarded_check.setChecked(is_not_discarded)
+            self._not_discarded_check.blockSignals(False)
 
-    def _on_rating_changed(self, value: int) -> None:
-        """Update rating label."""
-        if value == 0:
-            self._rating_label.setText("Any")
-        else:
-            self._rating_label.setText(f"{value}★")
+    def _on_not_discarded_toggled(self, checked: bool) -> None:
+        """Handle Not Discarded shortcut toggle."""
+        if checked:
+            self._flag_keep_check.setChecked(True)
+            self._flag_undecided_check.setChecked(True)
+            self._flag_discard_check.setChecked(False)
 
     def get_query_definition(self) -> dict[str, object]:
         """Get the filter query definition as a dict."""
@@ -280,20 +213,25 @@ class AdvancedFilterEditorDialog(QDialog):
         for item in self._person_list.selectedItems():
             person_ids.append(item.data(Qt.ItemDataRole.UserRole))
 
-        # Get selected tags
-        tag_names = []
-        for item in self._tag_list.selectedItems():
-            tag_names.append(item.text())
+        # Get selected flags
+        selected_flags = []
+        if self._flag_keep_check.isChecked():
+            selected_flags.append("keep")
+        if self._flag_undecided_check.isChecked():
+            selected_flags.append("undecided")
+        if self._flag_discard_check.isChecked():
+            selected_flags.append("discard")
 
         return {
             "person_ids": person_ids,
             "cluster_ids": [],
-            "tag_names": tag_names,
-            "rating_min": self._rating_slider.value() if self._rating_slider.value() > 0 else None,
-            "quality_min": self._quality_spinbox.value() if self._quality_spinbox.value() > 0 else None,
-            "camera_models": [self._camera_combo.currentData()] if self._camera_combo.currentData() else [],
-            "date_from": self._date_from.date().isoformat() if self._date_from_check.isChecked() else None,
-            "date_to": self._date_to.date().isoformat() if self._date_to_check.isChecked() else None,
+            "tag_names": [],
+            "rating_min": None,
+            "quality_min": None,
+            "camera_models": [],
+            "date_from": self._date_from.date().toString("yyyy-MM-dd") if self._date_from_check.isChecked() else None,
+            "date_to": self._date_to.date().toString("yyyy-MM-dd") if self._date_to_check.isChecked() else None,
             "location_name": None,
             "gps_radius_km": None,
+            "flags": selected_flags,
         }

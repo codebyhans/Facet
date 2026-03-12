@@ -46,7 +46,14 @@ class GalleryViewModel(QObject):
         self._album_view_model = album_view_model
         self._tile_store = tile_store
         self._page_size = page_size
+        
+        # Store reference to image repository for flag updates
+        self._image_repository = album_view_model._image_repository
+        
+        # Note: Flag change handling will be connected in the main window
+        # where we have access to both the PhotoGridWidget and the model
         self._current_album_id: int | None = None
+        self._current_query_definition: dict[str, object] | None = None
         self._library_mode = False
         self._offset = 0
         self._has_more = False
@@ -73,22 +80,56 @@ class GalleryViewModel(QObject):
         
         # Stale result protection
         self._epoch = 0  # Increment on each new album/library selection
+        
+        # Filter state management
+        self._filter_query_definition: dict[str, object] | None = None
 
-    def select_album(self, album_id: int) -> None:
+    def select_album(self, album_id: int, query_definition: dict[str, object] | None = None) -> None:
         """Load first page for selected album with debouncing."""
         self._cancel_current_operation()
         self._debounce_timer.stop()
         self._pending_album_id = album_id
         self._pending_library_mode = False
+        self._current_query_definition = query_definition
         self._debounce_timer.start()
 
-    def select_library(self) -> None:
+    def select_library(self, query_definition: dict[str, object] | None = None) -> None:
         """Load first page for all-library browsing with debouncing."""
         self._cancel_current_operation()
         self._debounce_timer.stop()
         self._pending_album_id = None
         self._pending_library_mode = True
+        self._current_query_definition = query_definition
         self._debounce_timer.start()
+
+    def update_filter_query(self, query_definition: dict[str, object] | None) -> None:
+        """Update the current filter query and reload the current view."""
+        self._filter_query_definition = query_definition
+        # Combine filter with current album query if we're in album mode
+        combined_query = self._combine_queries(self._current_query_definition, query_definition)
+        if self._library_mode:
+            self.select_library(query_definition=query_definition)
+        elif self._current_album_id is not None:
+            self.select_album(self._current_album_id, combined_query)
+
+    def _combine_queries(self, album_query: dict[str, object] | None, filter_query: dict[str, object] | None) -> dict[str, object] | None:
+        """Combine album query with filter query, with filter taking precedence."""
+        if not album_query and not filter_query:
+            return None
+        if not album_query:
+            return filter_query
+        if not filter_query:
+            return album_query
+        
+        # Start with album query as base
+        combined = album_query.copy()
+        
+        # Override with filter query values
+        for key, value in filter_query.items():
+            if value is not None:
+                combined[key] = value
+        
+        return combined
 
     def load_next_page(self) -> None:
         """Load next page if available."""
@@ -151,6 +192,7 @@ class GalleryViewModel(QObject):
                 self._album_view_model.resolve_library_images,
                 offset=self._offset,
                 limit=self._page_size,
+                query_definition=self._current_query_definition,
             )
         else:
             album_id = self._current_album_id
@@ -162,6 +204,7 @@ class GalleryViewModel(QObject):
                 album_id,
                 offset=self._offset,
                 limit=self._page_size,
+                query_definition=self._current_query_definition,
             )
         
         # Create a closure that captures the append parameter and current epoch
@@ -207,6 +250,7 @@ class GalleryViewModel(QObject):
                         if tile_lookup is None
                         else int(tile_lookup.position_in_tile)
                     ),
+                    flag=getattr(image, "flag", None),
                 )
             )
         self._offset += len(items)
@@ -303,3 +347,15 @@ class GalleryViewModel(QObject):
             self._active_tile_worker = None   # release GC reference
             self._active_page_worker = None   # release GC reference
             self._current_operation_id = None
+
+    def _on_flag_changed(self, index: object, flag_value: str | None) -> None:
+        """Handle flag change from PhotoGridWidget."""
+        try:
+            # Update the flag in the database
+            if self._image_repository and hasattr(self._image_repository, 'update_flag'):
+                # Get the image ID from the model - we need to get this from the PhotoGridModel
+                # For now, we'll need to handle this differently since we don't have direct access
+                # This will be handled in the main window where we have access to the model
+                pass
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(f"Failed to update flag: {exc}")

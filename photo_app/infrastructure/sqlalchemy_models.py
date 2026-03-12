@@ -47,6 +47,7 @@ class ImageModel(Base):
     gps_latitude: Mapped[float | None] = mapped_column(nullable=True)
     gps_longitude: Mapped[float | None] = mapped_column(nullable=True)
     location_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    flag: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     faces: Mapped[list[FaceModel]] = relationship(back_populates="image")
     tags: Mapped[list[ImageTagModel]] = relationship(back_populates="image")

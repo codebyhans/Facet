@@ -78,6 +78,9 @@ class ImageRepository(Protocol):
     def update_face_count(self, image_id: int, count: int) -> None:
         """Update the face_count for an image."""
 
+    def update_flag(self, image_id: int, flag: str | None) -> None:
+        """Update the flag for an image."""
+
 
 class FaceRepository(Protocol):
     """Persistence port for faces."""

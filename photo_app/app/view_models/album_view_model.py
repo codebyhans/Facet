@@ -35,6 +35,12 @@ class AlbumViewModel(QObject):
         self._face_review_service = face_review_service
         self._settings_path = settings_path
         self._state = self._load_state()
+        
+        # Store reference to image repository for flag updates
+        if hasattr(album_service, '_image_repository'):
+            self._image_repository = album_service._image_repository
+        else:
+            self._image_repository = None
 
     def load_album_tree(self) -> list[AlbumTreeNode]:
         """Load tree from local UI state and merge persisted virtual albums."""
@@ -121,24 +127,26 @@ class AlbumViewModel(QObject):
             if not deleted:
                 raise RuntimeError("Could not delete album")
 
-    def resolve_album_images(self, album_id: int, *, offset: int, limit: int) -> object:
+    def resolve_album_images(self, album_id: int, *, offset: int, limit: int, query_definition: dict[str, object] | None = None) -> object:
         """Fetch one page of images through AlbumService."""
-        return self._album_service.list_album_images(album_id, offset=offset, limit=limit)
+        return self._album_service.list_album_images(album_id, offset=offset, limit=limit, query_definition=query_definition)
 
-    def resolve_library_images(self, *, offset: int, limit: int) -> object:
+    def resolve_library_images(self, *, offset: int, limit: int, query_definition: dict[str, object] | None = None) -> object:
         """Fetch one page of all-library images."""
-        return self._album_service.list_library_images(offset=offset, limit=limit)
+        return self._album_service.list_library_images(offset=offset, limit=limit, query_definition=query_definition)
 
     def list_filter_people(self) -> list[FilterPerson]:
-        """Return person options derived from face review stacks."""
+        """Return named person options for the filter editor."""
         stacks = self._safe_call(lambda: self._face_review_service.person_stacks(), default=[])
         people: list[FilterPerson] = []
         for stack in stacks:
-            # Use person_id as the filter ID (not cluster_id, even if present)
+            # Only include clusters that have been given a name
+            if not stack.person_name or not stack.person_name.strip():
+                continue
             people.append(
                 FilterPerson(
                     person_id=int(stack.person_id),
-                    name=stack.person_name or f"Person {stack.person_id}",
+                    name=stack.person_name.strip(),
                 )
             )
         return people
@@ -173,6 +181,10 @@ class AlbumViewModel(QObject):
     def persist_tree(self, root_nodes: list[AlbumTreeNode]) -> None:
         """Persist current album tree UI state."""
         self._persist_tree(root_nodes)
+
+    def get_serialized_tree(self) -> list[dict[str, object]] | None:
+        """Return the currently serialized album_tree from in-memory state."""
+        return self._state.get("album_tree")
 
     def move_album(self, _node_id: str, _new_parent_id: str | None) -> bool:
         """Hook for tree move operation kept in UI state layer."""
@@ -271,24 +283,34 @@ class AlbumViewModel(QObject):
         return output
 
     def _album_query_to_dict(self, query: object) -> dict[str, object]:
-        person_ids = []
-        cluster_ids = []
-        date_from = None
-        date_to = None
-        if hasattr(query, "person_ids"):
-            person_ids = list(getattr(query, "person_ids"))
-        if hasattr(query, "cluster_ids"):
-            cluster_ids = list(getattr(query, "cluster_ids"))
-        if hasattr(query, "date_from") and getattr(query, "date_from") is not None:
-            date_from = getattr(query, "date_from").isoformat()
-        if hasattr(query, "date_to") and getattr(query, "date_to") is not None:
-            date_to = getattr(query, "date_to").isoformat()
-        result: dict[str, object] = {
-            "person_ids": person_ids,
-            "cluster_ids": cluster_ids,
+        """Convert an AlbumQuery to a plain dict, preserving all filter fields."""
+
+        def _get(attr: str, default: object = None) -> object:
+            return getattr(query, attr, default)
+
+        # Dates: convert Python date -> ISO string so JSON serialisation is safe
+        date_from = _get("date_from")
+        date_to = _get("date_to")
+        if date_from is not None and hasattr(date_from, "isoformat"):
+            date_from = date_from.isoformat()
+        if date_to is not None and hasattr(date_to, "isoformat"):
+            date_to = date_to.isoformat()
+
+        # Flags: stored as a tuple on AlbumQuery, dialogs expect a list
+        flags = _get("flags", ())
+        if not isinstance(flags, (list, tuple)):
+            flags = []
+
+        return {
+            "person_ids": list(_get("person_ids") or []),
+            "cluster_ids": list(_get("cluster_ids") or []),
+            "tag_names": list(_get("tag_names") or []),
+            "flags": list(flags),
+            "rating_min": _get("rating_min"),
+            "quality_min": _get("quality_min"),
+            "camera_models": list(_get("camera_models") or []),
+            "date_from": date_from,
+            "date_to": date_to,
+            "location_name": _get("location_name"),
+            "gps_radius_km": _get("gps_radius_km"),
         }
-        if date_from:
-            result["date_from"] = date_from
-        if date_to:
-            result["date_to"] = date_to
-        return result

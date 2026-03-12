@@ -36,10 +36,18 @@ def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
     )
     raw_date_from = definition.get("date_from")
     raw_date_to = definition.get("date_to")
-    date_from = parse_iso_date(
-        raw_date_from if isinstance(raw_date_from, str) else None
-    )
-    date_to = parse_iso_date(raw_date_to if isinstance(raw_date_to, str) else None)
+    if isinstance(raw_date_from, date):
+        date_from = raw_date_from
+    elif isinstance(raw_date_from, str):
+        date_from = parse_iso_date(raw_date_from)
+    else:
+        date_from = None
+    if isinstance(raw_date_to, date):
+        date_to = raw_date_to
+    elif isinstance(raw_date_to, str):
+        date_to = parse_iso_date(raw_date_to)
+    else:
+        date_to = None
 
     # Parse tag names
     raw_tag_names = definition.get("tag_names", [])
@@ -83,6 +91,13 @@ def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
     if isinstance(raw_radius, (int, float)):
         gps_radius_km = max(0.0, float(raw_radius))
 
+    # Parse flags
+    raw_flags = definition.get("flags", [])
+    flags: tuple[str, ...] = ()
+    if isinstance(raw_flags, list):
+        valid = {"keep", "discard", "undecided"}
+        flags = tuple(str(f) for f in raw_flags if isinstance(f, str) and f in valid)
+
     return AlbumQuery(
         person_ids=person_ids,
         cluster_ids=cluster_ids,
@@ -94,4 +109,5 @@ def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
         camera_models=camera_models,
         location_name=location_name,
         gps_radius_km=gps_radius_km,
+        flags=flags,
     )

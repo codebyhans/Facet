@@ -35,8 +35,10 @@ from photo_app.app.view_models.album_view_model import AlbumViewModel
 from photo_app.app.view_models.gallery_view_model import GalleryViewModel
 from photo_app.app.widgets.advanced_filter_editor import AdvancedFilterEditorDialog
 from photo_app.app.widgets.album_tree import AlbumTreeWidget
+from photo_app.app.widgets.filter_bar import FilterBarWidget
 from photo_app.app.widgets.image_detail_panel import ImageDetailPanel
 from photo_app.app.widgets.metadata_editor import MetadataEditorPanel
+from photo_app.app.widgets.people_browser import PeopleBrowser
 from photo_app.app.widgets.person_detail_view import PersonDetailView
 from photo_app.app.widgets.photo_grid import PhotoGridWidget
 from photo_app.app.widgets.photo_viewer import PhotoViewerWidget
@@ -191,39 +193,82 @@ class MainWindow(QMainWindow):
             face_review_service=self._face_review_service
         )
 
-        # Build people review panel
-        self._person_detail_view = PersonDetailView(
+        # Build people browser
+        self._people_browser = PeopleBrowser(
             face_review_service=self._face_review_service,
             parent=self
         )
 
-        # Create left panel that can switch between Albums and People modes
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        # Create persistent navigation header that's always visible
+        self._nav_header = QWidget()
+        nav_layout = QHBoxLayout(self._nav_header)
+        nav_layout.setContentsMargins(12, 12, 12, 8)
+        nav_layout.setSpacing(8)
         
-        # Mode toggle
-        mode_layout = QHBoxLayout()
         self._albums_btn = QPushButton("Albums")
         self._albums_btn.setCheckable(True)
         self._albums_btn.setChecked(True)
+        self._albums_btn.setFixedHeight(32)
+        self._albums_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2d2d30;
+                color: #ffffff;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:checked {
+                background-color: #007acc;
+                border-color: #007acc;
+            }
+            QPushButton:hover {
+                background-color: #3e3e42;
+            }
+        """)
         self._albums_btn.clicked.connect(self._on_switch_to_albums)
         
         self._people_btn = QPushButton("People")
         self._people_btn.setCheckable(True)
+        self._people_btn.setFixedHeight(32)
+        self._people_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2d2d30;
+                color: #ffffff;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:checked {
+                background-color: #007acc;
+                border-color: #007acc;
+            }
+            QPushButton:hover {
+                background-color: #3e3e42;
+            }
+        """)
         self._people_btn.clicked.connect(self._on_switch_to_people)
         
-        mode_layout.addWidget(self._albums_btn)
-        mode_layout.addWidget(self._people_btn)
-        mode_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addLayout(mode_layout)
+        nav_layout.addWidget(self._albums_btn)
+        nav_layout.addWidget(self._people_btn)
+        nav_layout.addStretch()
         
-        # Stacked widget for albums or people view
+        # Create left panel for albums tree only (no people browser)
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Left stack now only contains album tree
         self._left_stack = QStackedWidget()
-        self._left_stack.addWidget(self._album_tree)  # Index 0
-        self._left_stack.addWidget(self._person_detail_view)  # Index 1
+        self._left_stack.addWidget(self._album_tree)  # Index 0 - Albums only
         self._left_stack.setCurrentIndex(0)
         left_layout.addWidget(self._left_stack, 1)
+
+        # Create filter bar
+        self._filter_bar = FilterBarWidget()
+        self._filter_bar.filter_changed.connect(self._on_filter_changed)
+        self._filter_bar.save_as_album_requested.connect(self._on_save_filter_as_album)
 
         # Create stacked widget for center panel (gallery or detail view)
         center_stack = QStackedWidget()
@@ -235,10 +280,17 @@ class MainWindow(QMainWindow):
         # Build metadata editor (right panel)
         self._metadata_editor = MetadataEditorPanel(self)
 
-        # Create 3-way splitter: albums/people (left) | photos/detail (center) | metadata (right)
+        # Create center panel with filter bar and content
+        center_panel = QWidget()
+        center_layout = QVBoxLayout(center_panel)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.addWidget(self._filter_bar)  # Filter bar at top
+        center_layout.addWidget(center_stack)      # Content below filter bar
+
+        # Create 3-way splitter: albums (left) | photos/detail (center) | metadata (right)
         splitter = QSplitter()
         splitter.addWidget(left_panel)
-        splitter.addWidget(center_stack)  # Use stacked widget instead of direct widget
+        splitter.addWidget(center_panel)  # Use center panel instead of direct stack
         splitter.addWidget(self._metadata_editor)
         splitter.setStretchFactor(0, 1)  # Left: 1x space
         splitter.setStretchFactor(1, 3)  # Center: 3x space
@@ -246,9 +298,17 @@ class MainWindow(QMainWindow):
         self._splitter = splitter
         self._viewing_mode = "gallery"  # Track current view mode: "gallery" or "detail"
 
+        # Top-level mode switcher: Albums mode (splitter) vs People mode (full-width people browser)
+        self._mode_stack = QStackedWidget()
+        self._mode_stack.addWidget(splitter)               # Index 0 = Albums mode
+        self._mode_stack.addWidget(self._people_browser)   # Index 1 = People mode
+        self._mode_stack.setCurrentIndex(0)
+
         root = QWidget(self)
         layout = QVBoxLayout(root)
-        layout.addWidget(splitter)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._nav_header)  # Add persistent navigation header
+        layout.addWidget(self._mode_stack)  # Use mode stack instead of direct splitter
         self.setCentralWidget(root)
 
         self._current_viewer: PhotoViewerWidget | None = None
@@ -280,7 +340,9 @@ class MainWindow(QMainWindow):
         self._album_gallery_vm.loading_started.connect(self._on_loading_started)
         self._album_gallery_vm.loading_finished.connect(self._on_loading_finished)
 
-        self._album_tree.albumSelected.connect(self._album_gallery_vm.select_album)
+        self._album_tree.albumSelected.connect(
+            lambda album_id, qd: self._album_gallery_vm.select_album(album_id, query_definition=qd)
+        )
         self._album_tree.albumSelected.connect(self._on_album_selected)
         self._album_tree.albumMoved.connect(self._on_album_moved)
         self._album_tree.createFolderRequested.connect(self._on_create_folder)
@@ -304,6 +366,9 @@ class MainWindow(QMainWindow):
 
         # Photo grid selection -> metadata editor update & detail panel
         self._album_photo_grid.photoActivated.connect(self._on_photo_selected)
+        
+        # Photo grid flag changes -> update database
+        self._album_photo_grid.flagChanged.connect(self._on_flag_changed)
 
         # Image detail panel signals
         self._image_detail_panel.closed.connect(self._on_detail_panel_closed)
@@ -313,8 +378,11 @@ class MainWindow(QMainWindow):
         self._metadata_editor.rating_changed.connect(self._on_rating_changed)
         self._metadata_editor.tags_changed.connect(self._on_tags_changed)
         
-        # People detail view signals
-        self._person_detail_view.person_renamed.connect(self._on_person_renamed)
+        # People browser signals
+        self._people_browser.person_selected.connect(self._on_person_selected)
+        self._people_browser.back_to_stacks.connect(self._on_back_to_stacks)
+        self._people_browser.person_renamed.connect(self._on_person_renamed)
+        self._people_browser.show_unnamed_changed.connect(self._on_show_unnamed_changed)
 
     def _build_menu(self) -> None:
         """Build application menu bar."""
@@ -447,15 +515,11 @@ class MainWindow(QMainWindow):
     def _on_create_virtual_album(self, parent_id: object) -> None:
         # Get available options for the advanced filter dialog
         all_persons = self._album_vm.list_filter_people()
-        all_tags = self._tag_service.list_all_tags() if self._tag_service else []
-        all_cameras = []  # TODO: Add get_distinct_cameras() to ImageRepository
 
         # Show advanced filter dialog
         dialog = AdvancedFilterEditorDialog(
             parent=self,
             available_persons=all_persons,
-            available_tags=sorted(all_tags),
-            available_cameras=sorted(all_cameras),
         )
         
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -527,16 +591,12 @@ class MainWindow(QMainWindow):
 
         # Get available options for the advanced filter dialog
         all_persons = self._album_vm.list_filter_people()
-        all_tags = self._tag_service.list_all_tags() if self._tag_service else []
-        all_cameras = []  # TODO: Add get_distinct_cameras() to ImageRepository
 
         # Show advanced filter dialog with current query loaded
         current_query = node.query_definition or {}
         dialog = AdvancedFilterEditorDialog(
             parent=self,
             available_persons=all_persons,
-            available_tags=sorted(all_tags),
-            available_cameras=sorted(all_cameras),
             current_query=current_query,
         )
         
@@ -550,6 +610,15 @@ class MainWindow(QMainWindow):
                 query_definition,
             )
             self._persist_tree()
+            # Immediately reload the grid if this album is currently displayed
+            if (
+                node.album_id is not None
+                and self._album_gallery_vm._current_album_id == node.album_id
+            ):
+                self._album_gallery_vm.select_album(
+                    node.album_id,
+                    query_definition=node.query_definition,
+                )
         except Exception as exc:  # noqa: BLE001
             self._show_error(str(exc))
 
@@ -691,22 +760,49 @@ class MainWindow(QMainWindow):
 
     def _on_switch_to_albums(self) -> None:
         """Switch to Albums view mode."""
-        self._left_stack.setCurrentIndex(0)
+        self._mode_stack.setCurrentIndex(0)
         self._albums_btn.setChecked(True)
         self._people_btn.setChecked(False)
         self.statusBar().showMessage("Albums View")
 
     def _on_switch_to_people(self) -> None:
         """Switch to People clusters view mode."""
-        self._left_stack.setCurrentIndex(1)
+        self._mode_stack.setCurrentIndex(1)
         self._albums_btn.setChecked(False)
         self._people_btn.setChecked(True)
         self._refresh_people_list()
         self.statusBar().showMessage("People Clusters View")
+        
+        # Ensure buttons remain visible and accessible
+        self._albums_btn.setVisible(True)
+        self._people_btn.setVisible(True)
+
+    def _on_person_selected(self, person_id: int, stack: object) -> None:
+        """Handle person selection in people browser."""
+        from photo_app.services.face_review_service import PersonStackSummary
+        if isinstance(stack, PersonStackSummary):
+            self._people_browser.show_person_detail(person_id, stack)
+            self.statusBar().showMessage(f"Viewing: {stack.person_name or f'Cluster #{person_id}'}")
+        else:
+            self.statusBar().showMessage(f"Selected person {person_id}")
+
+    def _on_back_to_stacks(self) -> None:
+        """Handle back to stacks button click."""
+        self._refresh_people_list()
 
     def _on_person_renamed(self, person_id: int, name: str) -> None:
-        """Handle person rename in people detail view."""
-        self.statusBar().showMessage(f"Person '{name}' updated")
+        """Handle person rename from people browser."""
+        try:
+            self._face_review_service.rename_person_stack(person_id, name)
+            self._refresh_people_list()
+            self.statusBar().showMessage(f"Renamed person to '{name}'")
+        except Exception as exc:
+            self._show_error(f"Failed to rename person: {exc}")
+
+    def _on_show_unnamed_changed(self, show_unnamed: bool) -> None:
+        """Handle show unnamed clusters toggle from people browser."""
+        self._show_unnamed = show_unnamed
+        self._refresh_people_list()
 
     def _refresh_people_list(self) -> None:
         """Refresh the people clusters list with current threshold setting."""
@@ -715,10 +811,22 @@ class MainWindow(QMainWindow):
                 return
             
             threshold = self._settings_service.get_face_review_threshold()
-            stacks = self._face_review_service.person_stacks_filtered(
-                min_image_count=threshold
-            )
-            self._person_detail_view.load_stacks(stacks)
+            show_unnamed = getattr(self, '_show_unnamed', False)
+            if show_unnamed:
+                stacks = self._face_review_service.person_stacks()
+            else:
+                stacks = self._face_review_service.person_stacks_filtered(
+                    min_image_count=threshold
+                )
+            self._people_browser.load_stacks(stacks)
+
+            # Populate the filter bar's people picker with named persons only
+            try:
+                all_people = self._face_review_service._person_repository.list_all()
+                named_people = [p for p in all_people if p.name]
+                self._filter_bar.set_available_people(named_people)
+            except Exception:
+                pass
             
             if stacks:
                 self.statusBar().showMessage(
@@ -730,6 +838,11 @@ class MainWindow(QMainWindow):
                 )
         except Exception as exc:  # noqa: BLE001
             self._show_error(f"Failed to load people clusters: {exc}")
+
+    def _on_show_unnamed_toggled(self, state: int) -> None:
+        """Handle show unnamed clusters toggle in people browser."""
+        self._show_unnamed = state == 2  # Qt.Checked is 2
+        self._refresh_people_list()
 
     def _on_face_review_settings(self) -> None:
         """Open a dialog to configure face review threshold."""
@@ -868,6 +981,10 @@ class MainWindow(QMainWindow):
         current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
         if current is not None and current.album_id is not None:
             self._ui_state["last_opened_album"] = current.album_id
+        # Preserve the album_tree written by AlbumViewModel so we don't overwrite it
+        saved_tree = self._album_vm.get_serialized_tree()
+        if saved_tree is not None:
+            self._ui_state["album_tree"] = saved_tree
         self._settings_path.parent.mkdir(parents=True, exist_ok=True)
         self._settings_path.write_text(
             json.dumps(self._ui_state, indent=2),
@@ -1123,3 +1240,61 @@ class MainWindow(QMainWindow):
             if node.album_id == album_id:
                 return self._album_tree_model.index_from_node_id(node.node_id)
         return QModelIndex()
+
+    def _on_flag_changed(self, index: QModelIndex, flag_value: str | None) -> None:
+        """Handle flag change from PhotoGridWidget."""
+        try:
+            # Get the image ID from the model
+            image_id = self._album_photo_model.data(index, PhotoGridModel.ImageIdRole)
+            if not isinstance(image_id, int):
+                self._show_error("Invalid image ID")
+                return
+            
+            # Update the flag in the database
+            image_repo = self._album_vm._image_repository
+            if hasattr(image_repo, 'update_flag'):
+                image_repo.update_flag(image_id, flag_value)
+                
+                # Update the model item so the badge repaints immediately
+                self._album_photo_model.update_flag(index.row(), flag_value)
+                
+                self.statusBar().showMessage(f"Flag updated: {flag_value or 'None'}")
+            else:
+                self._show_error("Image repository does not support flag updates")
+                
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Failed to update flag: {exc}")
+
+    def _on_filter_changed(self) -> None:
+        """Handle filter changes from the filter bar."""
+        # Get the current query definition from the filter bar
+        query_definition = self._filter_bar.get_query_definition()
+        
+        # Update the GalleryViewModel with the new filter
+        self._album_gallery_vm.update_filter_query(query_definition)
+
+    def _on_save_filter_as_album(self, album_name: str) -> None:
+        """Handle saving current filter as a virtual album."""
+        try:
+            # Get the current query definition from the filter bar
+            query_definition = self._filter_bar.get_query_definition()
+            
+            # Get current album for parent context
+            current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
+            parent_node_id = current.node_id if current else None
+            
+            # Create the virtual album
+            node = self._album_vm.create_virtual_album(
+                album_name.strip(),
+                parent_node_id,
+                query_definition,
+            )
+            
+            # Add to tree and persist
+            self._album_tree_model.add_node(node, parent_node_id)
+            self._persist_tree()
+            
+            self.statusBar().showMessage(f"Saved filter as album: {album_name}")
+            
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Failed to save filter as album: {exc}")

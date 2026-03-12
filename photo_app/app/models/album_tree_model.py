@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt
+from PySide6.QtGui import QColor, QIcon
+from PySide6.QtWidgets import QApplication, QStyle
 
 
 @dataclass
@@ -63,14 +65,30 @@ class AlbumTreeModel(QAbstractItemModel):
         if not index.isValid():
             return None
         node = self._node_from_index(index)
+
         if role == Qt.ItemDataRole.DisplayRole:
             return node.name
+
+        if role == Qt.ItemDataRole.DecorationRole:
+            style = QApplication.style()
+            if node.kind == "folder":
+                return style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+            if node.kind == "virtual":
+                return style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if node.kind == "folder":
+                return QColor("#5B9BD5")   # muted blue for folders
+            if node.kind == "virtual":
+                return QColor("#D4D4D4")   # light grey for albums
+
         if role == self.NodeIdRole:
             return node.node_id
         if role == self.KindRole:
             return node.kind
         if role == self.AlbumIdRole:
             return node.album_id
+
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:

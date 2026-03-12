@@ -55,6 +55,7 @@ def _to_image(entity: ImageModel) -> Image:
         gps_latitude=entity.gps_latitude,
         gps_longitude=entity.gps_longitude,
         location_name=entity.location_name,
+        flag=entity.flag,
     )
 
 
@@ -97,6 +98,13 @@ def _to_album(entity: AlbumModel) -> Album:
     location_name = entity.query_definition.get("location_name")
     gps_radius_km = entity.query_definition.get("gps_radius_km")
     
+    # Parse flags
+    raw_flags = entity.query_definition.get("flags", [])
+    flags: tuple[str, ...] = ()
+    if isinstance(raw_flags, list):
+        valid_flags = {"keep", "discard", "undecided"}
+        flags = tuple(str(f) for f in raw_flags if isinstance(f, str) and f in valid_flags)
+    
     query = AlbumQuery(
         person_ids=tuple(int(i) for i in entity.query_definition.get("person_ids", [])),
         cluster_ids=tuple(
@@ -110,6 +118,7 @@ def _to_album(entity: AlbumModel) -> Album:
         camera_models=camera_models,
         location_name=str(location_name) if location_name else None,
         gps_radius_km=float(gps_radius_km) if gps_radius_km is not None else None,
+        flags=flags,
     )
     return Album(
         id=entity.id,
@@ -196,9 +205,12 @@ class SqlAlchemyImageRepository:
 
     def list_unprocessed_for_faces(self, limit: int) -> list[Image]:
         with Session(self._engine) as session:
+            # Find images that don't have any faces associated with them
             stmt = (
                 select(ImageModel)
-                .where(ImageModel.face_count.is_(None))
+                .outerjoin(FaceModel, FaceModel.image_id == ImageModel.id)
+                .group_by(ImageModel.id)
+                .having(func.count(FaceModel.id) == 0)
                 .limit(limit)
             )
             return [_to_image(row) for row in session.scalars(stmt)]
@@ -225,6 +237,7 @@ class SqlAlchemyImageRepository:
         rating_min: int | None = None,
         quality_min: float | None = None,
         camera_models: Sequence[str] = (),
+        flags: Sequence[str] = (),
         offset: int,
         limit: int,
     ) -> list[Image]:
@@ -237,6 +250,7 @@ class SqlAlchemyImageRepository:
             rating_min=rating_min,
             quality_min=quality_min,
             camera_models=camera_models,
+            flags=flags,
         )
         page_ids = ordered_ids[offset : offset + limit]
         return self.list_by_ids(page_ids)
@@ -252,6 +266,7 @@ class SqlAlchemyImageRepository:
         rating_min: int | None = None,
         quality_min: float | None = None,
         camera_models: Sequence[str] = (),
+        flags: Sequence[str] = (),
     ) -> list[int]:
         with Session(self._engine) as session:
             stmt = select(ImageModel.id)
@@ -314,6 +329,10 @@ class SqlAlchemyImageRepository:
             if clauses:
                 stmt = stmt.where(and_(*clauses))
             
+            # Filter by flags
+            if flags:
+                stmt = stmt.where(ImageModel.flag.in_(flags))
+            
             stmt = stmt.order_by(
                 nulls_last(ImageModel.capture_date.asc()),
                 ImageModel.id.asc(),
@@ -334,12 +353,13 @@ class SqlAlchemyImageRepository:
                     ordered.append(image)
             return ordered
 
-    def update_face_count(self, image_id: int, count: int) -> None:
+
+    def update_flag(self, image_id: int, flag: str | None) -> None:
         with Session(self._engine) as session:
             stmt = select(ImageModel).where(ImageModel.id == image_id)
             row = session.scalar(stmt)
             if row is not None:
-                row.face_count = count
+                row.flag = flag
                 session.commit()
 
 
@@ -575,6 +595,7 @@ class SqlAlchemyAlbumRepository:
                 "camera_models": list(album.query_definition.camera_models),
                 "location_name": album.query_definition.location_name,
                 "gps_radius_km": album.query_definition.gps_radius_km,
+                "flags": list(album.query_definition.flags),
             }
             row = AlbumModel(
                 name=album.name,
@@ -632,6 +653,7 @@ class SqlAlchemyAlbumRepository:
                 "camera_models": list(query.camera_models),
                 "location_name": query.location_name,
                 "gps_radius_km": query.gps_radius_km,
+                "flags": list(query.flags),
             }
             row.query_version += 1
             session.flush()

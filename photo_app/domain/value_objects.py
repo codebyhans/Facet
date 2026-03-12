@@ -31,3 +31,4 @@ class AlbumQuery:
     camera_models: tuple[str, ...] = ()
     location_name: str | None = None
     gps_radius_km: float | None = None
+    flags: tuple[str, ...] = ()

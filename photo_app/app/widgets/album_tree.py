@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMenu,
     QTreeView,
-    QVBoxLayout,
 )
 
 from photo_app.app.models.album_tree_model import AlbumTreeModel, AlbumTreeNode
@@ -25,7 +24,7 @@ class MoveAlbumDialog(QDialog):
         self,
         nodes: Iterable[AlbumTreeNode],
         current_node_id: str,
-        parent: QDialog | None = None,
+        parent: QDialog | QTreeView | None = None,
     ) -> None:
         super().__init__(parent)
         self._combo = QComboBox(self)
@@ -56,7 +55,7 @@ class MoveAlbumDialog(QDialog):
 class AlbumTreeWidget(QTreeView):
     """Album tree view with context actions and drag/drop move requests."""
 
-    albumSelected = Signal(int)
+    albumSelected = Signal(int, object)
     albumMoved = Signal(int, object)
     createFolderRequested = Signal(object)
     createVirtualAlbumRequested = Signal(object)
@@ -126,7 +125,7 @@ class AlbumTreeWidget(QTreeView):
             self.editFiltersRequested.emit(node.node_id)
         elif picked is move and node is not None:
             all_nodes = self._flatten(model.all_nodes())
-            dialog = MoveAlbumDialog(all_nodes, node.node_id, self)
+            dialog = MoveAlbumDialog(all_nodes, node.node_id, parent=self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.moveRequested.emit(node.node_id, dialog.target_parent_id())
 
@@ -138,7 +137,7 @@ class AlbumTreeWidget(QTreeView):
         if node is None:
             return
         if node.kind == "virtual" and node.album_id is not None:
-            self.albumSelected.emit(node.album_id)
+            self.albumSelected.emit(node.album_id, node.query_definition)
 
     def _flatten(self, nodes: list[AlbumTreeNode]) -> list[AlbumTreeNode]:
         result: list[AlbumTreeNode] = []

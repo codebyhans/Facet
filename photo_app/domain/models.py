@@ -31,6 +31,7 @@ class Image:
     gps_latitude: float | None = None
     gps_longitude: float | None = None
     location_name: str | None = None
+    flag: str | None = None
 
 
 @dataclass(frozen=True)

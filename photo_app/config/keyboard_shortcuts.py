@@ -27,6 +27,12 @@ class KeyboardShortcuts(NamedTuple):
     BATCH_FACES: str = "Ctrl+B"  # Batch face tagging
     NEW_VIRTUAL_ALBUM: str = "Ctrl+Alt+A"  # Create virtual album from filter
     FIND_ALBUM: str = "Ctrl+F"  # Find/filter albums
+    
+    # Image flagging
+    FLAG_KEEP: str = "P"  # Mark image as keep
+    FLAG_DISCARD: str = "X"  # Mark image as discard
+    FLAG_UNDECIDED: str = "U"  # Mark image as undecided
+    FLAG_CLEAR: str = "Backspace"  # Clear flag
 
     # Navigation
     NEXT_PHOTO: str = "Right"  # Next photo
@@ -78,6 +84,10 @@ def describe_shortcuts() -> dict[str, str]:
         "Batch Face Tagging": shortcuts.BATCH_FACES,
         "Create Virtual Album": shortcuts.NEW_VIRTUAL_ALBUM,
         "Find Album": shortcuts.FIND_ALBUM,
+        "Flag as Keep": shortcuts.FLAG_KEEP,
+        "Flag as Discard": shortcuts.FLAG_DISCARD,
+        "Flag as Undecided": shortcuts.FLAG_UNDECIDED,
+        "Clear Flag": shortcuts.FLAG_CLEAR,
         "Next Photo": shortcuts.NEXT_PHOTO,
         "Previous Photo": shortcuts.PREV_PHOTO,
         "First Photo": shortcuts.FIRST_PHOTO,
