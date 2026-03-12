@@ -133,10 +133,37 @@ class TemporalIdentityClusterService:
         if source is None or target is None:
             return False
 
+        # Move all face memberships to the target cluster
         self._cluster_repository.reassign_cluster_memberships(
             source_cluster_id=source_cluster_id,
             target_cluster_id=target_cluster_id,
         )
+
+        # ── NEW: rebind the source person to the target cluster ──────────────────
+        # The source Person record still points to source_cluster_id (now being
+        # deleted). Find that person and point them at the target cluster instead.
+        # If both clusters had a person bound, merge the source person into the
+        # target person: reassign their faces and delete the duplicate.
+        source_person = self._person_repository.find_by_cluster_id(source_cluster_id)
+        target_person = self._person_repository.find_by_cluster_id(target_cluster_id)
+
+        if source_person is not None and source_person.id is not None:
+            if target_person is not None and target_person.id is not None:
+                # Both clusters had a person — reassign all faces from source person
+                # to target person, then delete the now-orphaned source person.
+                all_faces = self._face_repository.list_all_active()
+                source_face_ids = [
+                    f.id for f in all_faces
+                    if f.person_id == source_person.id and f.id is not None
+                ]
+                if source_face_ids:
+                    self._face_repository.assign_person_auto(source_face_ids, target_person.id)
+                self._person_repository.delete(source_person.id)
+            else:
+                # Only source cluster had a person — point them at the target cluster
+                self._person_repository.bind_cluster(source_person.id, target_cluster_id)
+        # ── END NEW ──────────────────────────────────────────────────────────────
+
         self._cluster_repository.delete_cluster(source_cluster_id)
         self._refresh_cluster_state(
             target_cluster_id,

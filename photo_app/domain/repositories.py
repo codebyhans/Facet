@@ -137,6 +137,9 @@ class PersonRepository(Protocol):
     def bind_cluster(self, person_id: int, cluster_id: int) -> None:
         """Attach person to one identity cluster."""
 
+    def delete(self, person_id: int) -> None:
+        """Delete a person record by ID."""
+
 
 class IdentityClusterRepository(Protocol):
     """Persistence port for temporal identity clusters."""

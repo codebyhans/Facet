@@ -14,6 +14,8 @@ build/
 .pdm-python
 .pdm-build/
 __pypackages__/
+__pycache__/
+*.pyc
 # pdm.lock is intentionally kept — it ensures reproducible installs
 
 # === Virtual environments ===

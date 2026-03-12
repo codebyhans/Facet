@@ -582,6 +582,15 @@ class SqlAlchemyPersonRepository:
                 for row in session.scalars(stmt)
             ]
 
+    def delete(self, person_id: int) -> None:
+        """Delete a person record by ID."""
+        with Session(self._engine) as session:
+            stmt = select(PersonModel).where(PersonModel.id == person_id)
+            row = session.scalar(stmt)
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
 
 class SqlAlchemyAlbumRepository:
     """Album repository implementation."""
