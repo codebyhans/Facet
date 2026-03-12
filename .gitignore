@@ -1,4 +1,64 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# === PDM ===
+.pdm-python
+.pdm-build/
+__pypackages__/
+# pdm.lock is intentionally kept — it ensures reproducible installs
+
+# === Virtual environments ===
+.venv/
+venv/
+env/
+
+# === App runtime data ===
+# Database, thumbnail tiles, face embeddings, ML model cache
+photo_app_data/
+
+# === User config / settings ===
+# Contains window state, last-opened album, album tree — machine-specific
+config/settings.json
+
+# === Demo / personal photos ===
 demo_images/
 demo_images*/
-photo_app_data/
-__pycache__/
+
+# === ML model weights ===
+# Large binary files — download separately
+*.pt
+*.pth
+*.onnx
+*.pkl
+*.bin
+*.npy
+*.npz
+
+# === Logs ===
+*.log
+logs/
+
+# === IDE / editor ===
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# === Test artefacts ===
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
