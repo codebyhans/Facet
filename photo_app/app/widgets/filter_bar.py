@@ -47,19 +47,20 @@ class FilterPill(QToolButton):
         # Style the button to look like a pill
         self.setStyleSheet("""
             QToolButton {
-                background-color: #f0f0f0;
-                border: 1px solid #d0d0d0;
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #3f3f3f;
                 border-radius: 12px;
                 padding: 4px 8px;
                 margin: 2px;
                 font-weight: bold;
             }
             QToolButton:checked {
-                background-color: #e0e0ff;
-                border-color: #a0a0ff;
+                background-color: #094771;
+                border-color: #0078d4;
             }
             QToolButton:hover {
-                background-color: #e8e8e8;
+                background-color: #333333;
             }
         """)
 
@@ -69,30 +70,33 @@ class FilterPill(QToolButton):
         if active:
             self.setStyleSheet("""
                 QToolButton {
-                    background-color: #e0e0ff;
-                    border: 1px solid #a0a0ff;
+                    background-color: #094771;
+                    color: #e0e0e0;
+                    border: 1px solid #0078d4;
                     border-radius: 12px;
                     padding: 4px 8px;
                     margin: 2px;
                     font-weight: bold;
                 }
                 QToolButton:hover {
-                    background-color: #d0d0ff;
+                    background-color: #0e5a8a;
+                    border-color: #1084d7;
                 }
             """)
             self.setText(f"{self._label} ✓")
         else:
             self.setStyleSheet("""
                 QToolButton {
-                    background-color: #f0f0f0;
-                    border: 1px solid #d0d0d0;
+                    background-color: #2d2d2d;
+                    color: #e0e0e0;
+                    border: 1px solid #3f3f3f;
                     border-radius: 12px;
                     padding: 4px 8px;
                     margin: 2px;
                     font-weight: bold;
                 }
                 QToolButton:hover {
-                    background-color: #e8e8e8;
+                    background-color: #333333;
                 }
             """)
             self.setText(self._label)
@@ -642,7 +646,6 @@ class FilterBarWidget(QFrame):
     """Main filter bar widget with four filter pills."""
 
     filter_changed = Signal()
-    save_as_album_requested = Signal(str)  # album_name
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -656,8 +659,6 @@ class FilterBarWidget(QFrame):
         self._flag_pill = FlagFilterPill()
 
         # Control buttons
-        self._save_btn = QPushButton("💾 Save as Album")
-        self._save_btn.clicked.connect(self._on_save_as_album)
         self._clear_btn = QPushButton("🗑️ Clear Filters")
         self._clear_btn.clicked.connect(self.clear_filters)
 
@@ -687,7 +688,6 @@ class FilterBarWidget(QFrame):
 
         # Control buttons
         layout.addWidget(self._clear_btn)
-        layout.addWidget(self._save_btn)
 
         self.setLayout(layout)
 
@@ -702,18 +702,6 @@ class FilterBarWidget(QFrame):
         self._people_pill.set_active(bool(self._people_pill.get_query_params()))
         self._date_pill.set_active(bool(self._date_pill.get_query_params()))
         self._flag_pill.set_active(bool(self._flag_pill.get_query_params()))
-
-    def _on_save_as_album(self) -> None:
-        """Handle save as album button click."""
-        from PySide6.QtWidgets import QInputDialog
-        album_name, ok = QInputDialog.getText(
-            self,
-            "Save Filter as Album",
-            "Album name:",
-            text="My Filter"
-        )
-        if ok and album_name.strip():
-            self.save_as_album_requested.emit(album_name.strip())
 
     def get_query_definition(self) -> dict[str, object]:
         """Get the combined query definition from all filters."""

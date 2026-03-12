@@ -73,8 +73,7 @@ class AlbumTreeModel(QAbstractItemModel):
             style = QApplication.style()
             if node.kind == "folder":
                 return style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
-            if node.kind == "virtual":
-                return style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+            # No icon for albums — fall through and return None
 
         if role == Qt.ItemDataRole.ForegroundRole:
             if node.kind == "folder":

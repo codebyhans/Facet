@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QGridLayout,
     QWidget,
-    QLayout,
 )
 
 from photo_app.app.widgets.cluster_image_grid import ClusterImageGridWidget
@@ -30,6 +29,9 @@ if TYPE_CHECKING:
 
 class PeopleBrowser(QWidget):
     """Dedicated People browser widget with stacks view and person detail view."""
+
+    _CARD_WIDTH = 148   # matches PersonCardWidget fixed width + border
+    _CARD_SPACING = 12  # matches grid spacing
 
     person_selected = Signal(int, object)  # person_id, PersonStackSummary
     back_to_stacks = Signal()
@@ -59,22 +61,6 @@ class PeopleBrowser(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Show unnamed clusters toggle (moved to top, no title needed since navigation is persistent)
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(12, 8, 12, 8)
-        header_layout.setSpacing(12)
-
-        # Spacer
-        header_layout.addStretch()
-
-        # Show unnamed clusters toggle
-        self._show_unnamed_checkbox = QCheckBox("Show unnamed clusters")
-        self._show_unnamed_checkbox.setStyleSheet("color: #cccccc; font-size: 11px;")
-        self._show_unnamed_checkbox.stateChanged.connect(self._on_show_unnamed_toggled)
-        header_layout.addWidget(self._show_unnamed_checkbox)
-
-        main_layout.addLayout(header_layout)
-
         # Stacked widget for stacks view and person detail view
         self._stacked_widget = QStackedWidget()
         self._stacked_widget.setStyleSheet("background-color: #1e1e1e;")
@@ -98,19 +84,30 @@ class PeopleBrowser(QWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(12, 8, 12, 12)
-        layout.setSpacing(12)
+        layout.setSpacing(8)
 
-        # Info label
+        # Toolbar: info label left, show-unnamed toggle right
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 0)
+
         self._stacks_info_label = QLabel("Loading people clusters...")
-        self._stacks_info_label.setStyleSheet("color: #999; font-size: 11px; padding: 8px;")
-        layout.addWidget(self._stacks_info_label)
+        self._stacks_info_label.setStyleSheet("color: #999; font-size: 11px;")
+        toolbar.addWidget(self._stacks_info_label)
+        toolbar.addStretch()
+
+        self._show_unnamed_checkbox = QCheckBox("Show unnamed")
+        self._show_unnamed_checkbox.setStyleSheet("color: #888888; font-size: 11px;")
+        self._show_unnamed_checkbox.stateChanged.connect(self._on_show_unnamed_toggled)
+        toolbar.addWidget(self._show_unnamed_checkbox)
+
+        layout.addLayout(toolbar)
 
         # Grid area for person cards
         self._grid_widget = QWidget()
         self._grid_layout = QGridLayout(self._grid_widget)
         self._grid_layout.setContentsMargins(0, 0, 0, 0)
         self._grid_layout.setSpacing(12)
-        self._grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
 
         # Scroll area for the grid
         scroll_area = QScrollArea()
@@ -118,6 +115,9 @@ class PeopleBrowser(QWidget):
         scroll_area.setWidget(self._grid_widget)
         scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
         layout.addWidget(scroll_area, 1)
+        
+        # Store reference to scroll area for responsive grid
+        self._stacks_scroll_area = scroll_area
 
         return widget
 
@@ -141,30 +141,38 @@ class PeopleBrowser(QWidget):
         # Spacer
         header_layout.addStretch()
 
+        # Person name area (tightened)
+        name_layout = QHBoxLayout()
+        name_layout.setContentsMargins(0, 0, 0, 0)
+        name_layout.setSpacing(8)
+
         # Person name (editable)
         self._person_name_input = QLineEdit()
         self._person_name_input.setPlaceholderText("Enter person name...")
-        self._person_name_input.setMaximumWidth(300)
+        self._person_name_input.setMaximumWidth(250)
+        self._person_name_input.setMinimumWidth(150)
         self._person_name_input.returnPressed.connect(self._on_save_person_name)
-        header_layout.addWidget(self._person_name_input)
+        name_layout.addWidget(self._person_name_input)
 
         # Save button
-        self._save_name_btn = QPushButton("Save Name")
+        self._save_name_btn = QPushButton("Save")
         self._save_name_btn.clicked.connect(self._on_save_person_name)
-        self._save_name_btn.setMaximumWidth(100)
-        header_layout.addWidget(self._save_name_btn)
+        self._save_name_btn.setMaximumWidth(80)
+        name_layout.addWidget(self._save_name_btn)
 
         # Merge button
-        self._merge_btn = QPushButton("Merge with...")
+        self._merge_btn = QPushButton("Merge")
         self._merge_btn.clicked.connect(self._on_merge_person)
-        self._merge_btn.setMaximumWidth(120)
-        header_layout.addWidget(self._merge_btn)
+        self._merge_btn.setMaximumWidth(80)
+        name_layout.addWidget(self._merge_btn)
+
+        header_layout.addLayout(name_layout)
 
         layout.addLayout(header_layout)
 
-        # Image count label
+        # Image count label (tightened)
         self._image_count_label = QLabel()
-        self._image_count_label.setStyleSheet("color: #999; font-size: 11px; padding: 4px;")
+        self._image_count_label.setStyleSheet("color: #999; font-size: 11px; padding: 2px 0px;")
         layout.addWidget(self._image_count_label)
 
         # Gallery of person images
@@ -188,6 +196,7 @@ class PeopleBrowser(QWidget):
     def load_stacks(self, stacks: list[PersonStackSummary], cover_lookups: dict[int, tuple[str, int, int, int, int]] | None = None) -> None:
         """Load and display person stacks in grid layout."""
         self._current_stacks = stacks
+        self._current_cover_lookups = cover_lookups or {}
         self._clear_stacks_view()
 
         if not stacks:
@@ -201,9 +210,10 @@ class PeopleBrowser(QWidget):
         )
 
         # Create person cards in a grid layout
-        grid_cols = 4
+        grid_cols = self._calc_grid_cols()
+        self._current_grid_cols = grid_cols
         tile_pixmaps: dict[str, QPixmap] = {}
-        cover_lookups = cover_lookups or {}
+        cover_lookups = self._current_cover_lookups
 
         for i, stack in enumerate(stacks):
             card = PersonCardWidget(stack, self._tile_store)
@@ -227,7 +237,9 @@ class PeopleBrowser(QWidget):
             self._grid_layout.addWidget(card, row, col)
 
         for col in range(grid_cols):
-            self._grid_layout.setColumnStretch(col, 1)
+            self._grid_layout.setColumnStretch(col, 0)
+        # Trailing stretch column absorbs remaining space
+        self._grid_layout.setColumnStretch(grid_cols, 1)
 
     def _clear_stacks_view(self) -> None:
         """Clear all person cards from the stacks grid."""
@@ -313,6 +325,27 @@ class PeopleBrowser(QWidget):
     def _on_show_unnamed_toggled(self, state: int) -> None:
         """Handle show unnamed clusters toggle."""
         self.show_unnamed_changed.emit(state == 2)  # Qt.Checked == 2
+
+    def _calc_grid_cols(self) -> int:
+        """Calculate how many cards fit in the current viewport width."""
+        if not hasattr(self, '_stacks_scroll_area'):
+            return 4
+        viewport_w = self._stacks_scroll_area.viewport().width()
+        cols = max(1, (viewport_w + self._CARD_SPACING) // (self._CARD_WIDTH + self._CARD_SPACING))
+        return cols
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # Only reflow when showing the stacks view and stacks are loaded
+        if (
+            hasattr(self, '_stacked_widget')
+            and self._stacked_widget.currentIndex() == 0
+            and hasattr(self, '_current_stacks')
+            and self._current_stacks
+        ):
+            new_cols = self._calc_grid_cols()
+            if hasattr(self, '_current_grid_cols') and new_cols != self._current_grid_cols:
+                self.load_stacks(self._current_stacks, self._current_cover_lookups)
 
     def set_threshold(self, threshold: int) -> None:
         """Set the threshold for filtering stacks."""

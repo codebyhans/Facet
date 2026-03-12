@@ -10,6 +10,7 @@ from PySide6.QtGui import QPixmap, QMouseEvent, QContextMenuEvent, QEnterEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
     QMenu,
@@ -40,8 +41,8 @@ class PersonCardWidget(QWidget):
         """Setup UI for the person card."""
         # Main layout
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(6, 6, 6, 6)
+        main_layout.setSpacing(4)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # Cover image area
@@ -50,9 +51,10 @@ class PersonCardWidget(QWidget):
         
         self._cover_label = QLabel()
         self._cover_label.setFixedSize(120, 120)
+        self._cover_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._cover_label.setStyleSheet("border: 1px solid #444; background-color: #2a2a2a;")
         self._cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover_layout.addWidget(self._cover_label, 0, Qt.AlignmentFlag.AlignCenter)
+        cover_layout.addWidget(self._cover_label, 0, Qt.AlignmentFlag.AlignHCenter)
         main_layout.addLayout(cover_layout)
 
         # Info area
@@ -62,18 +64,20 @@ class PersonCardWidget(QWidget):
 
         # Person name
         self._name_label = QLabel()
-        self._name_label.setWordWrap(True)
-        self._name_label.setStyleSheet("font-weight: bold; font-size: 12px;")
+        self._name_label.setWordWrap(False)  # single line, elide if too long
+        self._name_label.setStyleSheet("font-size: 10px; font-weight: 600; color: #cccccc;")
+        self._name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._update_name_label()
         info_layout.addWidget(self._name_label)
 
         # Image count
         self._count_label = QLabel()
-        self._count_label.setStyleSheet("font-size: 10px; color: #999;")
+        self._count_label.setStyleSheet("font-size: 9px; color: #666666;")
+        self._count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._count_label.setText(f"{self.stack.image_count} images")
         info_layout.addWidget(self._count_label)
 
-        main_layout.addLayout(info_layout, 1)
+        main_layout.addLayout(info_layout)
 
         # Styling
         self.setStyleSheet(
@@ -81,18 +85,21 @@ class PersonCardWidget(QWidget):
         )
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # Set minimum size for grid layout
-        self.setMinimumSize(140, 180)
-        self.setMaximumWidth(200)
+        self.setFixedSize(148, 172)
 
     def _update_name_label(self) -> None:
         """Update the name label with proper styling."""
         if self.stack.person_name:
             self._name_label.setText(self.stack.person_name)
-            self._name_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #cccccc;")
+            self._name_label.setStyleSheet(
+                "font-size: 10px; font-weight: 600; color: #cccccc;"
+            )
         else:
             self._name_label.setText("Unnamed")
-            self._name_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #888888; font-style: italic;")
+            self._name_label.setStyleSheet(
+                "font-size: 10px; color: #555555; font-style: italic;"
+            )
+        self._name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def load_cover_image(self) -> None:
         """Load the cover image for this person using thumbnail tiles."""
@@ -113,7 +120,12 @@ class PersonCardWidget(QWidget):
                             tile_lookup.width, 
                             tile_lookup.height
                         )
-                        self._cover_label.setPixmap(cropped)
+                        scaled = cropped.scaled(
+                            120, 120,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation,
+                        )
+                        self._cover_label.setPixmap(scaled)
                         return
             except Exception:
                 pass
@@ -126,7 +138,7 @@ class PersonCardWidget(QWidget):
                     scaled = pixmap.scaled(
                         120, 120,
                         Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation
+                        Qt.TransformationMode.SmoothTransformation,
                     )
                     self._cover_label.setPixmap(scaled)
             except Exception:
@@ -203,4 +215,9 @@ class PersonCardWidget(QWidget):
     def set_cover_pixmap(self, pixmap: QPixmap) -> None:
         """Set the cover image from an already-loaded and cropped QPixmap."""
         if not pixmap.isNull():
-            self._cover_label.setPixmap(pixmap)
+            scaled = pixmap.scaled(
+                120, 120,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._cover_label.setPixmap(scaled)

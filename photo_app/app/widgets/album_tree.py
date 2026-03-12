@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_app.app.models.album_tree_model import AlbumTreeModel, AlbumTreeNode
+from photo_app.app.widgets.album_tree_style import AlbumTreeStyle
 
 
 class MoveAlbumDialog(QDialog):
@@ -78,6 +79,9 @@ class AlbumTreeWidget(QTreeView):
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
+
+        # Apply custom style for dark theme arrows
+        self.setStyle(AlbumTreeStyle())
 
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
         model = self.model()

@@ -335,7 +335,6 @@ class MainWindow(QMainWindow):
         # Create filter bar
         self._filter_bar = FilterBarWidget()
         self._filter_bar.filter_changed.connect(self._on_filter_changed)
-        self._filter_bar.save_as_album_requested.connect(self._on_save_filter_as_album)
 
         # Create stacked widget for center panel (gallery or detail view)
         center_stack = QStackedWidget()
@@ -896,8 +895,20 @@ class MainWindow(QMainWindow):
             if merge_dialog.exec() == QDialog.DialogCode.Accepted:
                 target_person_id = merge_dialog.selected_person_id()
                 if target_person_id and target_person_id != person_id:
-                    # Perform the merge
-                    self._face_review_service.merge_person_stacks(person_id, target_person_id)
+                    # Look up cluster IDs — both stacks are already in _current_stacks
+                    source_cluster_id = current_stack.cluster_id
+                    target_stack = next(
+                        (s for s in self._people_browser._current_stacks
+                         if s.person_id == target_person_id),
+                        None,
+                    )
+                    if source_cluster_id is None or target_stack is None or target_stack.cluster_id is None:
+                        self._show_error("Cannot merge: one or both persons have no cluster assignment")
+                        return
+                    # Perform the merge using the correct method and cluster IDs
+                    self._face_review_service.merge_identity_clusters(
+                        source_cluster_id, target_stack.cluster_id
+                    )
                     self._refresh_people_list()
                     self.statusBar().showMessage(f"Merged person into '{merge_dialog.selected_person_name()}'")
                 else:
@@ -968,10 +979,6 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage(f"No person clusters with {threshold}+ images")
 
-    def _on_show_unnamed_toggled(self, state: int) -> None:
-        """Handle show unnamed clusters toggle in people browser."""
-        self._show_unnamed = state == 2  # Qt.Checked is 2
-        self._refresh_people_list()
 
     def _on_face_review_settings(self) -> None:
         """Open a dialog to configure face review threshold."""

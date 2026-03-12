@@ -1,7 +1,7 @@
 {
   "window_size": [
-    1920,
-    1017
+    1573,
+    893
   ],
   "panel_widths": [
     270,
@@ -29,147 +29,35 @@
       "children": []
     },
     {
-      "node_id": "v-3",
-      "name": "3",
-      "kind": "virtual",
-      "album_id": 3,
-      "query_definition": {
-        "person_ids": [
-          1
-        ],
-        "cluster_ids": [],
-        "tag_names": [],
-        "flags": [
-          "keep"
-        ],
-        "rating_min": null,
-        "quality_min": null,
-        "camera_models": [],
-        "date_from": null,
-        "date_to": null,
-        "location_name": null,
-        "gps_radius_km": null
-      },
-      "children": []
-    },
-    {
-      "node_id": "v-5",
-      "name": "Save",
-      "kind": "virtual",
-      "album_id": 5,
-      "query_definition": {
-        "person_ids": [],
-        "cluster_ids": [],
-        "tag_names": [],
-        "flags": [],
-        "rating_min": null,
-        "quality_min": null,
-        "camera_models": [],
-        "date_from": null,
-        "date_to": null,
-        "location_name": null,
-        "gps_radius_km": null
-      },
-      "children": []
-    },
-    {
-      "node_id": "v-4",
-      "name": "keeps",
-      "kind": "virtual",
-      "album_id": 4,
-      "query_definition": {
-        "person_ids": [],
-        "cluster_ids": [],
-        "tag_names": [],
-        "flags": [
-          "undecided"
-        ],
-        "rating_min": null,
-        "quality_min": null,
-        "camera_models": [],
-        "date_from": null,
-        "date_to": null,
-        "location_name": null,
-        "gps_radius_km": null
-      },
-      "children": []
-    },
-    {
-      "node_id": "v-7",
-      "name": "test",
-      "kind": "virtual",
-      "album_id": 7,
-      "query_definition": {
-        "person_ids": [],
-        "cluster_ids": [],
-        "tag_names": [],
-        "flags": [],
-        "rating_min": null,
-        "quality_min": null,
-        "camera_models": [],
-        "date_from": null,
-        "date_to": null,
-        "location_name": null,
-        "gps_radius_km": null
-      },
-      "children": []
-    },
-    {
       "node_id": "f-0f5544142d6f4f8dbc0a57aaf9e2911d",
       "name": "jhj",
       "kind": "folder",
       "album_id": null,
       "query_definition": null,
+      "children": []
+    },
+    {
+      "node_id": "f-6f7d3f44fed44223a8c2f15ad68265da",
+      "name": "test",
+      "kind": "folder",
+      "album_id": null,
+      "query_definition": null,
       "children": [
         {
-          "node_id": "v-8",
-          "name": "test2",
-          "kind": "virtual",
-          "album_id": 8,
-          "query_definition": {
-            "person_ids": [],
-            "cluster_ids": [],
-            "tag_names": [],
-            "flags": [],
-            "rating_min": null,
-            "quality_min": null,
-            "camera_models": [],
-            "date_from": null,
-            "date_to": null,
-            "location_name": null,
-            "gps_radius_km": null
-          },
-          "children": []
-        },
-        {
-          "node_id": "v-6",
-          "name": "keeps2",
-          "kind": "virtual",
-          "album_id": 6,
-          "query_definition": {
-            "person_ids": [],
-            "cluster_ids": [],
-            "tag_names": [],
-            "flags": [
-              "keep"
-            ],
-            "rating_min": null,
-            "quality_min": null,
-            "camera_models": [],
-            "date_from": null,
-            "date_to": null,
-            "location_name": null,
-            "gps_radius_km": null
-          },
+          "node_id": "f-180304b9d87b4b79ac9d8e68a56f9d37",
+          "name": "test",
+          "kind": "folder",
+          "album_id": null,
+          "query_definition": null,
           "children": []
         }
       ]
     }
   ],
   "splitter_widths": [
-    385,
-    1345,
-    180
+    355,
+    947,
+    261
   ],
-  "last_opened_album": 7
+  "last_opened_album": 1
 }
