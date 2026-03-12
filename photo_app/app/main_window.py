@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
+    QGridLayout,
 )
 
 from photo_app.app.models.album_tree_model import AlbumTreeModel, AlbumTreeNode
@@ -43,6 +44,7 @@ from photo_app.app.widgets.person_detail_view import PersonDetailView
 from photo_app.app.widgets.photo_grid import PhotoGridWidget
 from photo_app.app.widgets.photo_viewer import PhotoViewerWidget
 from photo_app.app.workers.indexing_worker import IndexWorker
+from photo_app.app.workers.people_list_worker import PeopleListWorker
 from photo_app.config.keyboard_shortcuts import KeyboardShortcuts, get_shortcuts
 from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
@@ -129,6 +131,67 @@ class FaceAssignDialog(QDialog):
         return self._name.text().strip()
 
 
+class MergePersonDialog(QDialog):
+    """Dialog for merging one person into another person."""
+
+    def __init__(
+        self, 
+        source_stack: object, 
+        target_stacks: list[object], 
+        parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Merge Person")
+        self._source_stack = source_stack
+        self._target_stacks = target_stacks
+        
+        layout = QVBoxLayout(self)
+        
+        # Source person info
+        source_label = QLabel(f"Merge '{source_stack.person_name or f'Cluster #{source_stack.person_id}'}' into:")
+        source_label.setStyleSheet("font-weight: bold; color: #cccccc;")
+        layout.addWidget(source_label)
+        
+        # Target person selection
+        self._target_combo = QListWidget(self)
+        for stack in target_stacks:
+            self._target_combo.addItem(f"{stack.person_name} ({stack.image_count} images)")
+        if self._target_combo.count() > 0:
+            self._target_combo.setCurrentRow(0)
+        
+        layout.addWidget(self._target_combo)
+        
+        # Warning message
+        warning_label = QLabel("This will merge all faces from the source person into the target person.")
+        warning_label.setStyleSheet("color: #ffcc00; font-size: 11px;")
+        layout.addWidget(warning_label)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setMinimumWidth(300)
+
+    def selected_person_id(self) -> int | None:
+        """Return the selected target person ID."""
+        current_row = self._target_combo.currentRow()
+        if current_row >= 0 and current_row < len(self._target_stacks):
+            return self._target_stacks[current_row].person_id
+        return None
+
+    def selected_person_name(self) -> str | None:
+        """Return the selected target person name."""
+        current_row = self._target_combo.currentRow()
+        if current_row >= 0 and current_row < len(self._target_stacks):
+            return self._target_stacks[current_row].person_name
+        return None
+
+
 class MainWindow(QMainWindow):
     """Lightroom-style 3-panel layout: Albums (left) | Photos (center) | Metadata (right)."""
 
@@ -159,6 +222,9 @@ class MainWindow(QMainWindow):
         # Worker references to prevent GC
         self._active_face_index_worker = None
         self._active_image_index_worker = None
+        self._active_people_worker = None
+        self._people_epoch: int = 0
+        self._thumbnail_tile_store = thumbnail_tile_store
 
         self._album_vm = AlbumViewModel(
             album_service,
@@ -196,6 +262,7 @@ class MainWindow(QMainWindow):
         # Build people browser
         self._people_browser = PeopleBrowser(
             face_review_service=self._face_review_service,
+            tile_store=thumbnail_tile_store,
             parent=self
         )
 
@@ -382,6 +449,7 @@ class MainWindow(QMainWindow):
         self._people_browser.person_selected.connect(self._on_person_selected)
         self._people_browser.back_to_stacks.connect(self._on_back_to_stacks)
         self._people_browser.person_renamed.connect(self._on_person_renamed)
+        self._people_browser.person_merge_requested.connect(self._on_person_merge_requested)
         self._people_browser.show_unnamed_changed.connect(self._on_show_unnamed_changed)
 
     def _build_menu(self) -> None:
@@ -799,45 +867,106 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._show_error(f"Failed to rename person: {exc}")
 
+    def _on_person_merge_requested(self, person_id: int) -> None:
+        """Handle person merge request from people browser."""
+        try:
+            # Get current person info
+            current_stack = None
+            for stack in self._people_browser._current_stacks:
+                if stack.person_id == person_id:
+                    current_stack = stack
+                    break
+            
+            if current_stack is None:
+                self._show_error("Person not found for merge operation")
+                return
+            
+            # Get list of other people to merge with
+            other_people = [
+                stack for stack in self._people_browser._current_stacks 
+                if stack.person_id != person_id and stack.person_name
+            ]
+            
+            if not other_people:
+                self._show_error("No other named people available to merge with")
+                return
+            
+            # Create merge dialog
+            merge_dialog = MergePersonDialog(current_stack, other_people, self)
+            if merge_dialog.exec() == QDialog.DialogCode.Accepted:
+                target_person_id = merge_dialog.selected_person_id()
+                if target_person_id and target_person_id != person_id:
+                    # Perform the merge
+                    self._face_review_service.merge_person_stacks(person_id, target_person_id)
+                    self._refresh_people_list()
+                    self.statusBar().showMessage(f"Merged person into '{merge_dialog.selected_person_name()}'")
+                else:
+                    self.statusBar().showMessage("Merge cancelled")
+            else:
+                self.statusBar().showMessage("Merge cancelled")
+                
+        except Exception as exc:
+            self._show_error(f"Failed to merge person: {exc}")
+
     def _on_show_unnamed_changed(self, show_unnamed: bool) -> None:
         """Handle show unnamed clusters toggle from people browser."""
         self._show_unnamed = show_unnamed
         self._refresh_people_list()
 
     def _refresh_people_list(self) -> None:
-        """Refresh the people clusters list with current threshold setting."""
-        try:
-            if self._settings_service is None:
-                return
-            
-            threshold = self._settings_service.get_face_review_threshold()
-            show_unnamed = getattr(self, '_show_unnamed', False)
-            if show_unnamed:
-                stacks = self._face_review_service.person_stacks()
-            else:
-                stacks = self._face_review_service.person_stacks_filtered(
-                    min_image_count=threshold
-                )
-            self._people_browser.load_stacks(stacks)
+        """Refresh the people clusters list in a background thread."""
+        if self._settings_service is None:
+            return
 
-            # Populate the filter bar's people picker with named persons only
+        # Cancel any in-flight worker by advancing the epoch and disconnecting its signal
+        if self._active_people_worker is not None:
             try:
-                all_people = self._face_review_service._person_repository.list_all()
-                named_people = [p for p in all_people if p.name]
-                self._filter_bar.set_available_people(named_people)
-            except Exception:
+                self._active_people_worker.signals.result_ready.disconnect()
+            except RuntimeError:
                 pass
+            self._active_people_worker = None
+
+        self._people_epoch += 1
+        threshold = self._settings_service.get_face_review_threshold()
+        show_unnamed = getattr(self, '_show_unnamed', False)
+
+        worker = PeopleListWorker(
+            self._face_review_service,
+            tile_store=self._thumbnail_tile_store,
+            min_image_count=threshold,
+            show_unnamed=show_unnamed,
+            epoch=self._people_epoch,
+        )
+        worker.signals.result_ready.connect(self._on_people_list_ready)
+        worker.signals.error.connect(
+            lambda msg: self._show_error(f"Failed to load people: {msg}")
+        )
+        self._active_people_worker = worker
+        self._thread_pool.start(worker)
+
+    def _on_people_list_ready(self, stacks: list, cover_lookups: dict, epoch: int) -> None:
+        """Called on the main thread when people stacks are loaded."""
+        # Ignore stale results from previous epochs
+        if epoch != self._people_epoch:
+            return
             
-            if stacks:
-                self.statusBar().showMessage(
-                    f"Loaded {len(stacks)} person clusters (threshold: {threshold}+ images)"
-                )
-            else:
-                self.statusBar().showMessage(
-                    f"No person clusters with {threshold}+ images"
-                )
-        except Exception as exc:  # noqa: BLE001
-            self._show_error(f"Failed to load people clusters: {exc}")
+        self._active_people_worker = None
+        self._people_browser.load_stacks(stacks, cover_lookups)
+
+        try:
+            all_people = self._face_review_service._person_repository.list_all()
+            named_people = [p for p in all_people if p.name]
+            self._filter_bar.set_available_people(named_people)
+        except Exception:
+            pass
+
+        threshold = self._settings_service.get_face_review_threshold() if self._settings_service else 0
+        if stacks:
+            self.statusBar().showMessage(
+                f"Loaded {len(stacks)} person clusters (threshold: {threshold}+ images)"
+            )
+        else:
+            self.statusBar().showMessage(f"No person clusters with {threshold}+ images")
 
     def _on_show_unnamed_toggled(self, state: int) -> None:
         """Handle show unnamed clusters toggle in people browser."""

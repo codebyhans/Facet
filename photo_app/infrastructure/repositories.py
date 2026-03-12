@@ -567,6 +567,21 @@ class SqlAlchemyPersonRepository:
                 row.identity_cluster_id = cluster_id
             session.commit()
 
+    def list_all(self) -> list[Person]:
+        """Fetch all persons in a single query to avoid N+1 DB round-trips."""
+        with Session(self._engine) as session:
+            stmt = select(PersonModel)
+            return [
+                Person(
+                    id=row.id,
+                    name=row.name,
+                    created_at=row.created_at,
+                    birth_date=row.birth_date,
+                    identity_cluster_id=row.identity_cluster_id,
+                )
+                for row in session.scalars(stmt)
+            ]
+
 
 class SqlAlchemyAlbumRepository:
     """Album repository implementation."""

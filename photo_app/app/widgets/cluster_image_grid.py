@@ -7,6 +7,7 @@ from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QListView
 
 from photo_app.app.models.cluster_image_model import ClusterImageModel
+from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
 if TYPE_CHECKING:
     from photo_app.app.widgets.people_browser import PersonStackSummary
@@ -15,9 +16,14 @@ if TYPE_CHECKING:
 class ClusterImageGridWidget(QListView):
     """Icon-mode photo list for cluster image gallery in person detail view."""
 
-    def __init__(self, parent: QListView | None = None) -> None:
+    def __init__(
+        self, 
+        tile_store: ThumbnailTileStore | None = None,
+        parent: QListView | None = None
+    ) -> None:
         super().__init__(parent)
-        self.setModel(ClusterImageModel([]))
+        self._tile_store = tile_store
+        self.setModel(ClusterImageModel([], tile_store=self._tile_store))
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setMovement(QListView.Movement.Static)
@@ -56,4 +62,7 @@ class ClusterImageGridWidget(QListView):
         """Set the cluster images for display."""
         model = self.model()
         if isinstance(model, ClusterImageModel):
-            model.set_image_paths(list(stack.sample_image_paths))
+            model.set_images(
+                list(stack.sample_image_paths), 
+                list(stack.sample_image_ids)
+            )

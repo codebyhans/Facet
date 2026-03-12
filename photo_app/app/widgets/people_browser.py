@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -14,12 +15,14 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QStackedWidget,
     QVBoxLayout,
+    QGridLayout,
     QWidget,
     QLayout,
 )
 
 from photo_app.app.widgets.cluster_image_grid import ClusterImageGridWidget
 from photo_app.app.widgets.person_card_widget import PersonCardWidget
+from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
 if TYPE_CHECKING:
     from photo_app.services.face_review_service import FaceReviewService, PersonStackSummary
@@ -31,15 +34,19 @@ class PeopleBrowser(QWidget):
     person_selected = Signal(int, object)  # person_id, PersonStackSummary
     back_to_stacks = Signal()
     person_renamed = Signal(int, str)  # person_id, name
+    person_merge_requested = Signal(int)  # person_id
+    person_merge_multiple_requested = Signal(list, int)  # source_person_ids, target_person_id
     show_unnamed_changed = Signal(bool)  # show_unnamed
 
     def __init__(
         self,
         face_review_service: "FaceReviewService | None" = None,
+        tile_store: "ThumbnailTileStore | None" = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self._face_review_service = face_review_service
+        self._tile_store = tile_store
         self._current_stacks: list[PersonStackSummary] = []
         self._current_person_id: int | None = None
         
@@ -100,7 +107,7 @@ class PeopleBrowser(QWidget):
 
         # Grid area for person cards
         self._grid_widget = QWidget()
-        self._grid_layout = QVBoxLayout(self._grid_widget)
+        self._grid_layout = QGridLayout(self._grid_widget)
         self._grid_layout.setContentsMargins(0, 0, 0, 0)
         self._grid_layout.setSpacing(12)
         self._grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -147,26 +154,13 @@ class PeopleBrowser(QWidget):
         self._save_name_btn.setMaximumWidth(100)
         header_layout.addWidget(self._save_name_btn)
 
-        layout.addLayout(header_layout)
-
-        # Action buttons
-        action_layout = QHBoxLayout()
-        action_layout.setContentsMargins(0, 0, 0, 0)
-
+        # Merge button
         self._merge_btn = QPushButton("Merge with...")
+        self._merge_btn.clicked.connect(self._on_merge_person)
         self._merge_btn.setMaximumWidth(120)
-        action_layout.addWidget(self._merge_btn)
+        header_layout.addWidget(self._merge_btn)
 
-        self._rename_btn = QPushButton("Rename")
-        self._rename_btn.setMaximumWidth(100)
-        action_layout.addWidget(self._rename_btn)
-
-        self._delete_btn = QPushButton("Delete person")
-        self._delete_btn.setMaximumWidth(120)
-        action_layout.addWidget(self._delete_btn)
-
-        action_layout.addStretch()
-        layout.addLayout(action_layout)
+        layout.addLayout(header_layout)
 
         # Image count label
         self._image_count_label = QLabel()
@@ -191,7 +185,7 @@ class PeopleBrowser(QWidget):
 
         return widget
 
-    def load_stacks(self, stacks: list[PersonStackSummary]) -> None:
+    def load_stacks(self, stacks: list[PersonStackSummary], cover_lookups: dict[int, tuple[str, int, int, int, int]] | None = None) -> None:
         """Load and display person stacks in grid layout."""
         self._current_stacks = stacks
         self._clear_stacks_view()
@@ -207,68 +201,56 @@ class PeopleBrowser(QWidget):
         )
 
         # Create person cards in a grid layout
-        grid_cols = 4  # Number of columns in the grid
-        current_col = 0
-        current_row_layout: QHBoxLayout | None = None
+        grid_cols = 4
+        tile_pixmaps: dict[str, QPixmap] = {}
+        cover_lookups = cover_lookups or {}
 
-        for stack in stacks:
-            card = PersonCardWidget(stack)
+        for i, stack in enumerate(stacks):
+            card = PersonCardWidget(stack, self._tile_store)
             card.person_clicked.connect(self._on_person_card_clicked)
-            card.load_cover_image()
 
-            # Create new row layout if needed
-            if current_col == 0:
-                current_row_layout = QHBoxLayout()
-                current_row_layout.setContentsMargins(0, 0, 0, 0)
-                current_row_layout.setSpacing(12)
+            # Use pre-fetched lookup, deduplicating tile PNG reads per unique file
+            lookup = cover_lookups.get(stack.cover_image_id) if stack.cover_image_id else None
+            if lookup is not None:
+                tile_path_str, x, y, w, h = lookup
+                if tile_path_str not in tile_pixmaps:
+                    tile_pixmaps[tile_path_str] = QPixmap(tile_path_str)
+                tile_pix = tile_pixmaps[tile_path_str]
+                if not tile_pix.isNull():
+                    card.set_cover_pixmap(tile_pix.copy(x, y, w, h))
+                else:
+                    card.load_cover_image()
+            else:
+                card.load_cover_image()
 
-            if current_row_layout is not None:
-                current_row_layout.addWidget(card, 1)
-            current_col += 1
+            row, col = divmod(i, grid_cols)
+            self._grid_layout.addWidget(card, row, col)
 
-            # Add row to grid and start new row if needed
-            if current_col >= grid_cols:
-                if current_row_layout is not None:
-                    self._grid_layout.addLayout(current_row_layout)
-                current_col = 0
-                current_row_layout = None
-
-        # Add remaining cards in incomplete row
-        if current_row_layout is not None:
-            current_row_layout.addStretch()
-            self._grid_layout.addLayout(current_row_layout)
-
-        # Add stretch at the bottom
-        self._grid_layout.addStretch()
+        for col in range(grid_cols):
+            self._grid_layout.setColumnStretch(col, 1)
 
     def _clear_stacks_view(self) -> None:
-        """Clear all person cards and row layouts from the stacks grid."""
-        self._clear_layout(self._grid_layout)
-
-    def _clear_layout(self, layout: QLayout) -> None:
-        """Recursively remove all items from a layout."""
-        while layout.count():
-            item = layout.takeAt(0)
+        """Clear all person cards from the stacks grid."""
+        while self._grid_layout.count():
+            item = self._grid_layout.takeAt(0)
             if item is None:
                 continue
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-            child_layout = item.layout()
-            if child_layout is not None:
-                self._clear_layout(child_layout)
-                child_layout.deleteLater()
 
     def show_person_detail(self, person_id: int, stack: PersonStackSummary) -> None:
         """Show person detail view for the selected person."""
         self._current_person_id = person_id
         self._current_stack = stack
 
-        # Update header
+        # Update header - always set/clear the name input unconditionally
         if stack.person_name:
             self._person_name_input.setText(stack.person_name)
+            self._person_name_input.setPlaceholderText("")
         else:
-            self._person_name_input.setPlaceholderText(f"Cluster #{person_id}")
+            self._person_name_input.setText("")
+            self._person_name_input.setPlaceholderText(f"Name this person...")
 
         # Update image count
         self._image_count_label.setText(f"{stack.image_count} images in this cluster")
@@ -314,13 +296,23 @@ class PeopleBrowser(QWidget):
         current_stack = getattr(self, '_current_stack', None)
         if current_stack is not None:
             person_id = current_stack.person_id
-            # Emit a signal to save the person name
-            self.person_selected.emit(person_id, name)
+            # Emit a signal to rename the person
+            self.person_renamed.emit(person_id, name)
+
+    def _on_merge_person(self) -> None:
+        """Handle merge person button click."""
+        if not hasattr(self, '_current_stack') or getattr(self, '_current_stack', None) is None:
+            return
+
+        current_stack = getattr(self, '_current_stack', None)
+        if current_stack is not None:
+            person_id = current_stack.person_id
+            # Emit a signal to merge the person
+            self.person_merge_requested.emit(person_id)
 
     def _on_show_unnamed_toggled(self, state: int) -> None:
         """Handle show unnamed clusters toggle."""
-        # This will be handled by the main window
-        pass
+        self.show_unnamed_changed.emit(state == 2)  # Qt.Checked == 2
 
     def set_threshold(self, threshold: int) -> None:
         """Set the threshold for filtering stacks."""

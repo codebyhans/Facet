@@ -5,18 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtGui import QPixmap, QMouseEvent, QContextMenuEvent, QEnterEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
     QWidget,
+    QMenu,
 )
-from PySide6.QtGui import QMouseEvent, QEnterEvent
 
 if TYPE_CHECKING:
     from photo_app.services.face_review_service import PersonStackSummary
+    from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
 
 class PersonCardWidget(QWidget):
@@ -24,9 +25,15 @@ class PersonCardWidget(QWidget):
 
     person_clicked = Signal(int, object)  # person_id, PersonStackSummary
 
-    def __init__(self, stack: PersonStackSummary, parent: QWidget | None = None):
+    def __init__(
+        self, 
+        stack: PersonStackSummary, 
+        tile_store: ThumbnailTileStore | None = None,
+        parent: QWidget | None = None
+    ):
         super().__init__(parent)
         self.stack = stack
+        self._tile_store = tile_store
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -88,8 +95,30 @@ class PersonCardWidget(QWidget):
             self._name_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #888888; font-style: italic;")
 
     def load_cover_image(self) -> None:
-        """Load the cover image for this person."""
+        """Load the cover image for this person using thumbnail tiles."""
         self._cover_label.clear()
+        
+        # Try to use thumbnail tile first for performance
+        if self._tile_store and self.stack.cover_image_id is not None:
+            try:
+                tile_lookup = self._tile_store.get_image_tile(self.stack.cover_image_id)
+                if tile_lookup and tile_lookup.tile_path.exists():
+                    # Load the tile and crop the specific thumbnail
+                    tile_pixmap = QPixmap(str(tile_lookup.tile_path))
+                    if not tile_pixmap.isNull():
+                        # Crop the specific thumbnail from the tile
+                        cropped = tile_pixmap.copy(
+                            tile_lookup.x, 
+                            tile_lookup.y, 
+                            tile_lookup.width, 
+                            tile_lookup.height
+                        )
+                        self._cover_label.setPixmap(cropped)
+                        return
+            except Exception:
+                pass
+        
+        # Fallback to loading full image if tile system fails
         if self.stack.cover_image_path:
             try:
                 pixmap = QPixmap(str(Path(self.stack.cover_image_path)))
@@ -133,3 +162,45 @@ class PersonCardWidget(QWidget):
             "background-color: #252526; border: 1px solid #3e3e42; border-radius: 4px;"
         )
         super().leaveEvent(event)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        """Handle right-click context menu."""
+        from PySide6.QtWidgets import QMenu
+        
+        menu = QMenu(self)
+        
+        # Reclassify action
+        reclassify_action = menu.addAction("Reclassify Person")
+        reclassify_action.triggered.connect(self._on_reclassify)
+        
+        # Merge action
+        merge_action = menu.addAction("Merge with...")
+        merge_action.triggered.connect(self._on_merge)
+        
+        # Delete action
+        delete_action = menu.addAction("Delete Person")
+        delete_action.triggered.connect(self._on_delete)
+        
+        menu.exec(event.globalPos())
+
+    def _on_reclassify(self) -> None:
+        """Handle reclassify action."""
+        # Emit signal to parent for reclassification
+        pass
+
+    def _on_merge(self) -> None:
+        """Handle merge action."""
+        # Emit signal to parent for merge
+        pass
+
+    def _on_delete(self) -> None:
+        """Handle delete action."""
+        # Emit signal to parent for delete
+        pass
+
+
+
+    def set_cover_pixmap(self, pixmap: QPixmap) -> None:
+        """Set the cover image from an already-loaded and cropped QPixmap."""
+        if not pixmap.isNull():
+            self._cover_label.setPixmap(pixmap)

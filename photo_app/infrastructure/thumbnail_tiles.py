@@ -190,7 +190,6 @@ class ThumbnailTileStore:
             if tile_path is None:
                 return None
             resolved = Path(str(tile_path))
-            print(f"[TILES] get_tile({tile_index}): path={resolved}, exists={resolved.exists()}")
             return resolved if resolved.exists() else None
 
     def get_image_tile(self, image_id: int) -> ImageTileLookup | None:
@@ -198,7 +197,6 @@ class ThumbnailTileStore:
         with Session(self._engine) as session:
             stmt = select(ThumbnailTileModel).where(ThumbnailTileModel.image_id == image_id)
             row = session.scalar(stmt)
-            print(f"[TILES] get_image_tile({image_id}): {'found tile_index=' + str(row.tile_index) if row else 'NO ROW FOUND'}")
             if row is None:
                 return None
             grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
@@ -214,6 +212,31 @@ class ThumbnailTileStore:
                 width=self._thumbnail_size[0],
                 height=self._thumbnail_size[1],
             )
+
+    def get_image_tiles_batch(self, image_ids: list[int]) -> dict[int, ImageTileLookup]:
+        """Return tile lookups for multiple image IDs in a single DB query."""
+        if not image_ids:
+            return {}
+        with Session(self._engine) as session:
+            stmt = select(ThumbnailTileModel).where(
+                ThumbnailTileModel.image_id.in_(image_ids)
+            )
+            grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
+            result: dict[int, ImageTileLookup] = {}
+            for row in session.scalars(stmt):
+                col = row.position_in_tile % grid_width
+                line = row.position_in_tile // grid_width
+                result[row.image_id] = ImageTileLookup(
+                    image_id=row.image_id,
+                    tile_index=row.tile_index,
+                    tile_path=Path(row.tile_path),
+                    position_in_tile=row.position_in_tile,
+                    x=col * self._thumbnail_size[0],
+                    y=line * self._thumbnail_size[1],
+                    width=self._thumbnail_size[0],
+                    height=self._thumbnail_size[1],
+                )
+            return result
 
     def build_missing_tiles(self) -> TileBuildResult:
         """Incrementally add tiles for unmapped images."""

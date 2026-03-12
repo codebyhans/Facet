@@ -58,7 +58,9 @@ class PersonStackSummary:
     face_count: int
     image_count: int
     cover_image_path: str | None
+    cover_image_id: int | None
     sample_image_paths: tuple[str, ...]
+    sample_image_ids: tuple[int, ...]
 
 
 class FaceReviewService:
@@ -155,6 +157,13 @@ class FaceReviewService:
             if image.id is not None
         }
 
+        # Batch load all persons to avoid N+1 DB queries
+        all_persons = self._person_repository.list_all()
+        persons_by_id: dict[int, Person] = {}
+        for person in all_persons:
+            if person.id is not None:
+                persons_by_id[person.id] = person
+
         stacks: list[PersonStackSummary] = []
         for person_id, image_ids in grouped.items():
             unique_paths: list[str] = []
@@ -177,7 +186,8 @@ class FaceReviewService:
                 image_faces=image_faces,
             )
 
-            person = self._person_repository.get(person_id)
+            # Use batch-loaded person data instead of individual DB queries
+            person = persons_by_id.get(person_id)
             stacks.append(
                 PersonStackSummary(
                     person_id=person_id,
@@ -188,7 +198,9 @@ class FaceReviewService:
                     face_count=len(image_ids),
                     image_count=len(unique_paths),
                     cover_image_path=cover_image_path,
+                    cover_image_id=unique_image_ids[0] if unique_image_ids else None,
                     sample_image_paths=tuple(unique_paths[:sample_limit]),
+                    sample_image_ids=tuple(unique_image_ids[:sample_limit]),
                 )
             )
 
@@ -214,6 +226,12 @@ class FaceReviewService:
         cleaned = name.strip()
         if not cleaned:
             return
+        
+        # Check for name uniqueness
+        existing_person = self._person_repository.get_by_name(cleaned)
+        if existing_person is not None and existing_person.id != person_id:
+            raise ValueError(f"Person name '{cleaned}' already exists")
+        
         self._person_repository.update_name(person_id, cleaned)
         if self._query_cache_service is not None:
             self._query_cache_service.invalidate_all()
@@ -367,7 +385,6 @@ class FaceReviewService:
         """
         import numpy as np
 
-        from photo_app.services.ann_index import RandomProjectionAnnIndex
 
         suggestions: list[SuggestedPerson] = []
         face = self._face_repository.get(face_id)
@@ -419,11 +436,7 @@ class FaceReviewService:
                     )
 
         # Priority 2: ANN search for high-similarity named faces
-        if len(suggestions) < top_k:
-            ann_index = RandomProjectionAnnIndex()
-            # TODO: Query ANN index for similar faces; requires initialization
-            # For now, skip ANN fallback
-            pass
+        # TODO: Implement ANN search for additional suggestions
 
         # Sort by (in_same_cluster desc, similarity_score desc)
         suggestions.sort(
