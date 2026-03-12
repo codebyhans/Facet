@@ -362,6 +362,14 @@ class SqlAlchemyImageRepository:
                 row.flag = flag
                 session.commit()
 
+    def update_face_count(self, image_id: int, count: int) -> None:
+        with Session(self._engine) as session:
+            stmt = select(ImageModel).where(ImageModel.id == image_id)
+            row = session.scalar(stmt)
+            if row is not None:
+                row.face_count = count
+                session.commit()
+
 
 class SqlAlchemyFaceRepository:
     """Face repository implementation."""
