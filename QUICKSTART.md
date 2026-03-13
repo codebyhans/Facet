@@ -73,32 +73,3 @@ If you want face recognition:
 | Index images | Ctrl+I |
 | Next photo | Right arrow |
 | Previous photo | Left arrow |
-
-## Troubleshooting
-
-**No images appear after indexing?**
-- Check if folder path is correct in File → Select Library Folder
-- Verify files are in supported formats (JPG, PNG, HEIF, WEBP)
-- Try File → Index Images again
-- Check the app console for error messages
-
-**Indexing crashes or "Python stopped working"?**
-- This usually means a file is corrupted or unreadable
-- Try indexing a subfolder with fewer files first
-- Check permissions on the folder (should be readable)
-- Skipped files are logged but don't crash the app - see status bar for count
-- If it still crashes, check logs in `photo_app_data/` folder
-
-**App crashes on startup?**
-- Check if `photo_app_data/photo_manager.sqlite3` isn't corrupted
-- Delete it and restart (will rebuild database)
-
-**Face indexing not working?**
-- Requires InsightFace ML models (~500MB download)
-- Check status bar for error messages
-- Not critical - app still works for photo management
-
-**Status bar shows "X skipped"?**
-- These are files that couldn't be processed (corrupted, unreadable, etc.)
-- The app continues indexing other files automatically
-- No action needed
