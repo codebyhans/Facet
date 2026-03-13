@@ -108,7 +108,7 @@ class FaceDetectionWidget(QLabel):
             painter.drawRect(scaled_x, scaled_y, scaled_w, scaled_h)
 
             # Draw label background and text
-            label_text = face.person_name or "Unknown"
+            label_text = face.person_name if face.person_name else f"Unknown face {face.face_id}"
             font = QFont()
             font.setPointSize(10)
             font.setBold(True)

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QGridLayout,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_app.app.widgets.cluster_image_grid import ClusterImageGridWidget
+from photo_app.app.widgets.cluster_image_inspector import ClusterImageInspectorWidget
 from photo_app.app.widgets.person_card_widget import PersonCardWidget
 from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
@@ -39,6 +41,8 @@ class PeopleBrowser(QWidget):
     person_merge_requested = Signal(int)  # person_id
     person_merge_multiple_requested = Signal(list, int)  # source_person_ids, target_person_id
     show_unnamed_changed = Signal(bool)  # show_unnamed
+    face_delete_requested = Signal(int)  # face_id
+    face_reassign_requested = Signal(int, str)  # face_id, new_person_name
 
     def __init__(
         self,
@@ -122,7 +126,7 @@ class PeopleBrowser(QWidget):
         return widget
 
     def _create_person_detail_view(self) -> QWidget:
-        """Create the person detail view widget."""
+        """Create the person detail view widget with two-column layout."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -175,12 +179,19 @@ class PeopleBrowser(QWidget):
         self._image_count_label.setStyleSheet("color: #999; font-size: 11px; padding: 2px 0px;")
         layout.addWidget(self._image_count_label)
 
-        # Gallery of person images
+        # Two-column layout for image grid and inspector
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        
+        # Left pane: Image grid
+        left_pane = QWidget()
+        left_layout = QVBoxLayout(left_pane)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        
         gallery_label = QLabel("All images containing this person:")
         gallery_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 8px 0px 4px 0px; color: #cccccc;")
-        layout.addWidget(gallery_label)
-
-        # Image grid area - use QListView instead of manual layout
+        left_layout.addWidget(gallery_label)
+        
         self._cluster_image_grid = ClusterImageGridWidget()
         self._cluster_image_grid.setStyleSheet("background-color: #1e1e1e;")
         
@@ -189,7 +200,24 @@ class PeopleBrowser(QWidget):
         image_scroll_area.setWidgetResizable(True)
         image_scroll_area.setWidget(self._cluster_image_grid)
         image_scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
-        layout.addWidget(image_scroll_area, 1)
+        left_layout.addWidget(image_scroll_area, 1)
+        
+        splitter.addWidget(left_pane)
+        
+        # Right pane: Image inspector
+        self._inspector = ClusterImageInspectorWidget()
+        splitter.addWidget(self._inspector)
+        
+        # Set sizes: left min 250, initial 300; right min 350
+        splitter.setSizes([300, 350])
+        splitter.setMinimumWidth(600)  # Ensure minimum total width
+        
+        layout.addWidget(splitter, 1)
+
+        # Connect signals
+        self._cluster_image_grid.activated.connect(self._on_cluster_image_activated)
+        self._inspector.face_delete_requested.connect(self.face_delete_requested)
+        self._inspector.face_reassign_requested.connect(self.face_reassign_requested)
 
         return widget
 
@@ -255,6 +283,8 @@ class PeopleBrowser(QWidget):
         """Show person detail view for the selected person."""
         self._current_person_id = person_id
         self._current_stack = stack
+        self._current_inspector_path = None
+        self._inspector.show_placeholder()
 
         # Update header - always set/clear the name input unconditionally
         if stack.person_name:
@@ -322,6 +352,77 @@ class PeopleBrowser(QWidget):
             # Emit a signal to merge the person
             self.person_merge_requested.emit(person_id)
 
+    def _on_cluster_image_activated(self, index) -> None:
+        """Handle image selection in the cluster grid."""
+        model = self._cluster_image_grid.model()
+        if not hasattr(model, '_image_paths'):
+            return
+        row = index.row()
+        file_path = model._image_paths[row] if row < len(model._image_paths) else None
+        if file_path is None:
+            return
+        
+        self._current_inspector_path = file_path
+        
+        # Load faces via service
+        faces = []
+        if self._face_review_service is not None:
+            try:
+                faces = self._face_review_service.faces_for_image_path(file_path)
+            except Exception:
+                faces = []
+        
+        # Populate person names for reassign dropdown
+        # Populate reassign dropdown with ALL named persons in the library
+        person_names: list[str] = []
+        if self._face_review_service is not None:
+            try:
+                all_stacks = self._face_review_service.person_stacks()
+                person_names = sorted(
+                    s.person_name
+                    for s in all_stacks
+                    if s.person_name is not None
+                )
+            except Exception:
+                # Fall back to names visible in this image
+                person_names = sorted({
+                    f.person_name for f in faces if f.person_name is not None
+                })
+        self._inspector.set_available_persons(person_names)
+        self._inspector.load_image(file_path, faces)
+
+    def reload_current_inspector_image(self) -> None:
+        """Reload face data for the currently inspected image."""
+        if self._current_inspector_path is None:
+            return
+        faces = []
+        if self._face_review_service is not None:
+            try:
+                faces = self._face_review_service.faces_for_image_path(
+                    self._current_inspector_path
+                )
+            except Exception:
+                pass
+        
+        # Populate reassign dropdown with ALL named persons in the library
+        person_names: list[str] = []
+        if self._face_review_service is not None:
+            try:
+                all_stacks = self._face_review_service.person_stacks()
+                person_names = sorted(
+                    s.person_name
+                    for s in all_stacks
+                    if s.person_name is not None
+                )
+            except Exception:
+                # Fall back to names visible in this image
+                person_names = sorted({
+                    f.person_name for f in faces if f.person_name is not None
+                })
+        
+        self._inspector.set_available_persons(person_names)
+        self._inspector.load_image(self._current_inspector_path, faces)
+
     def _on_show_unnamed_toggled(self, state: int) -> None:
         """Handle show unnamed clusters toggle."""
         self.show_unnamed_changed.emit(state == 2)  # Qt.Checked == 2
@@ -335,6 +436,7 @@ class PeopleBrowser(QWidget):
         return cols
 
     def resizeEvent(self, event) -> None:
+        """Handle resize events to reflow the grid."""
         super().resizeEvent(event)
         # Only reflow when showing the stacks view and stacks are loaded
         if (

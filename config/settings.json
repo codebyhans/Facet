@@ -1,7 +1,7 @@
 {
   "window_size": [
-    1215,
-    893
+    1920,
+    1017
   ],
   "panel_widths": [
     270,
@@ -30,11 +30,44 @@
     },
     {
       "node_id": "f-0f5544142d6f4f8dbc0a57aaf9e2911d",
-      "name": "jhj",
+      "name": "B\u00f8rn",
       "kind": "folder",
       "album_id": null,
       "query_definition": null,
-      "children": []
+      "children": [
+        {
+          "node_id": "f-79dbd86a261b482487abfc43c4577366",
+          "name": "Karenn",
+          "kind": "folder",
+          "album_id": null,
+          "query_definition": null,
+          "children": []
+        },
+        {
+          "node_id": "f-a5816546292a4cdf9373a04ca2fddbda",
+          "name": "Franz",
+          "kind": "folder",
+          "album_id": null,
+          "query_definition": null,
+          "children": []
+        },
+        {
+          "node_id": "f-87219fed55404107841705e944b9a0fc",
+          "name": "Hedvig",
+          "kind": "folder",
+          "album_id": null,
+          "query_definition": null,
+          "children": []
+        },
+        {
+          "node_id": "f-5b004d1c41d24514ab1cde4625eadd64",
+          "name": "Rolf",
+          "kind": "folder",
+          "album_id": null,
+          "query_definition": null,
+          "children": []
+        }
+      ]
     },
     {
       "node_id": "f-6f7d3f44fed44223a8c2f15ad68265da",
@@ -52,12 +85,52 @@
           "children": []
         }
       ]
+    },
+    {
+      "node_id": "f-9ecb7bc525a34bdf891209cd2655d683",
+      "name": "Voksne",
+      "kind": "folder",
+      "album_id": null,
+      "query_definition": null,
+      "children": [
+        {
+          "node_id": "f-e66311f013c245dcbd982cf742193cb9",
+          "name": "Nina",
+          "kind": "folder",
+          "album_id": null,
+          "query_definition": null,
+          "children": [
+            {
+              "node_id": "v-2",
+              "name": "Nina",
+              "kind": "virtual",
+              "album_id": 2,
+              "query_definition": {
+                "person_ids": [
+                  1
+                ],
+                "cluster_ids": [],
+                "tag_names": [],
+                "flags": [],
+                "rating_min": null,
+                "quality_min": null,
+                "camera_models": [],
+                "date_from": null,
+                "date_to": null,
+                "location_name": null,
+                "gps_radius_km": null
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
     }
   ],
   "splitter_widths": [
-    274,
-    730,
-    201
+    434,
+    1157,
+    319
   ],
   "last_opened_album": 1
 }

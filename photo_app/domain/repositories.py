@@ -115,6 +115,9 @@ class FaceRepository(Protocol):
     def delete_by_image(self, image_id: int) -> None:
         """Delete all faces for one image, including excluded/manual rows."""
 
+    def find_cluster_id_for_person(self, person_id: int) -> int | None:
+        """Return the cluster_id for any face membership belonging to this person."""
+
 
 class PersonRepository(Protocol):
     """Persistence port for persons."""

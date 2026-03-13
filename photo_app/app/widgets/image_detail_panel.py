@@ -6,13 +6,14 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
-    QCheckBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
+    QCheckBox,
+    QMessageBox,
 )
 
 from photo_app.app.widgets.face_detection_widget import FaceDetectionWidget
@@ -35,6 +36,7 @@ class ImageDetailPanel(QWidget):
 
     closed = Signal()  # Emitted when user clicks "Back to Gallery"
     image_selected = Signal(int)  # Emitted when user navigates to different image
+    reindex_requested = Signal(str)  # Emitted when user requests re-indexing (file_path)
 
     def __init__(
         self, 
@@ -86,6 +88,15 @@ class ImageDetailPanel(QWidget):
         self._zoom_100_btn.clicked.connect(self._set_zoom_100)
         self._zoom_100_btn.setMaximumWidth(60)
         
+        # Re-index faces button
+        self._reindex_btn = QPushButton("Re-index faces")
+        self._reindex_btn.setToolTip(
+            "Re-run face detection on this image.\n"
+            "WARNING: overwrites all manual edits for this image."
+        )
+        self._reindex_btn.clicked.connect(self._on_reindex_requested)
+        self._reindex_btn.setMaximumWidth(120)
+        
         # Face bounding box checkbox
         self._bbox_checkbox = QCheckBox("Show Face Bounding Boxes")
         self._bbox_checkbox.setChecked(False)
@@ -97,6 +108,7 @@ class ImageDetailPanel(QWidget):
         nav_layout.addWidget(self._prev_btn)
         nav_layout.addWidget(self._zoom_fit_btn)
         nav_layout.addWidget(self._zoom_100_btn)
+        nav_layout.addWidget(self._reindex_btn)
         nav_layout.addWidget(self._bbox_checkbox)
         nav_layout.addStretch()
         nav_layout.addWidget(self._close_btn)
@@ -277,8 +289,39 @@ class ImageDetailPanel(QWidget):
         self.closed.emit()
 
     def _on_bbox_toggle(self, state: int) -> None:
-        """Handle bbox checkbox toggle."""
-        self._image_label.set_show_bboxes(self._bbox_checkbox.isChecked())
+        """Handle bbox checkbox toggle — load faces on demand if not yet fetched."""
+        show = self._bbox_checkbox.isChecked()
+        self._image_label.set_show_bboxes(show)
+        if (
+            show
+            and self._face_review_service is not None
+            and self._current_item is not None
+            and not self._image_label._faces
+        ):
+            try:
+                faces = self._face_review_service.faces_for_image_path(
+                    self._current_item.file_path
+                )
+            except Exception:
+                faces = []
+            self._image_label.set_faces(faces)
+
+    def _on_reindex_requested(self) -> None:
+        """Handle re-index faces button click."""
+        if self._current_item is None:
+            return
+        result = QMessageBox.warning(
+            self,
+            "Re-index faces",
+            "This will delete all manually assigned names and edits for faces in "
+            "this image and re-run face detection from scratch.\n\n"
+            "Use this only to recover accidentally deleted bounding boxes.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if result == QMessageBox.StandardButton.Yes:
+            self.reindex_requested.emit(self._current_item.file_path)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         """Handle keyboard shortcuts."""

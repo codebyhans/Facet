@@ -486,6 +486,17 @@ class SqlAlchemyFaceRepository:
                 session.delete(face)
             session.commit()
 
+    def find_cluster_id_for_person(self, person_id: int) -> int | None:
+        """Return the cluster_id for any face membership belonging to this person."""
+        with Session(self._engine) as session:
+            stmt = (
+                select(FaceClusterMembershipModel.cluster_id)
+                .join(FaceModel, FaceModel.id == FaceClusterMembershipModel.face_id)
+                .where(FaceModel.person_id == person_id)
+                .limit(1)
+            )
+            return session.scalar(stmt)
+
 
 class SqlAlchemyPersonRepository:
     """Person repository implementation."""

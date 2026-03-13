@@ -439,6 +439,7 @@ class MainWindow(QMainWindow):
         # Image detail panel signals
         self._image_detail_panel.closed.connect(self._on_detail_panel_closed)
         self._image_detail_panel.image_selected.connect(self._on_detail_image_selected)
+        self._image_detail_panel.reindex_requested.connect(self._on_reindex_faces_requested)
 
         # Metadata editor signals -> sync service
         self._metadata_editor.rating_changed.connect(self._on_rating_changed)
@@ -450,6 +451,8 @@ class MainWindow(QMainWindow):
         self._people_browser.person_renamed.connect(self._on_person_renamed)
         self._people_browser.person_merge_requested.connect(self._on_person_merge_requested)
         self._people_browser.show_unnamed_changed.connect(self._on_show_unnamed_changed)
+        self._people_browser.face_delete_requested.connect(self._on_face_delete_requested)
+        self._people_browser.face_reassign_requested.connect(self._on_face_reassign_requested)
 
     def _build_menu(self) -> None:
         """Build application menu bar."""
@@ -923,6 +926,25 @@ class MainWindow(QMainWindow):
         """Handle show unnamed clusters toggle from people browser."""
         self._show_unnamed = show_unnamed
         self._refresh_people_list()
+
+    def _on_face_delete_requested(self, face_id: int) -> None:
+        """Remove a face detection from a cluster image."""
+        try:
+            self._face_review_service.remove_face(face_id)
+            self._people_browser.reload_current_inspector_image()
+            self.statusBar().showMessage("Face removed")
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Could not remove face: {exc}")
+
+    def _on_face_reassign_requested(self, face_id: int, new_person_name: str) -> None:
+        """Reassign a face to a different named person."""
+        try:
+            self._face_review_service.assign_name(face_id, new_person_name)
+            self._people_browser.reload_current_inspector_image()
+            self._refresh_people_list()
+            self.statusBar().showMessage(f"Face reassigned to '{new_person_name}'")
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Could not reassign face: {exc}")
 
     def _refresh_people_list(self) -> None:
         """Refresh the people clusters list in a background thread."""
@@ -1434,3 +1456,54 @@ class MainWindow(QMainWindow):
             
         except Exception as exc:  # noqa: BLE001
             self._show_error(f"Failed to save filter as album: {exc}")
+
+    def _on_reindex_faces_requested(self, file_path: str) -> None:
+        """Re-index faces for a single image in a background worker."""
+        if self._face_index_service is None:
+            self._show_error("Face indexing service not available")
+            return
+
+        # Disable the button while running to prevent double-submission
+        self._image_detail_panel._reindex_btn.setEnabled(False)
+        self.statusBar().showMessage(f"Re-indexing {Path(file_path).name}…")
+
+        worker = IndexWorker(self._face_index_service.reindex_image, file_path)
+        worker.signals.result_ready.connect(
+            lambda result: self._on_reindex_complete(result, file_path)
+        )
+        worker.signals.error.connect(
+            lambda msg: self._on_reindex_error(msg)
+        )
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_reindex_complete(self, result: object, file_path: str) -> None:
+        """Called on the main thread when reindex_image finishes."""
+        self._image_detail_panel._reindex_btn.setEnabled(True)
+        detected = getattr(result, "detected_faces", "?")
+        self.statusBar().showMessage(
+            f"Re-indexed {Path(file_path).name}: {detected} face(s) found"
+        )
+        # Reload the detail panel so new bboxes appear immediately
+        items = self._image_detail_panel._items
+        idx   = self._image_detail_panel._current_index
+        if items and idx < len(items):
+            self._image_detail_panel.load_image(items, idx)
+
+    def _on_reindex_error(self, msg: str) -> None:
+        """Called on the main thread when reindex_image fails."""
+        self._image_detail_panel._reindex_btn.setEnabled(True)
+        self._show_error(f"Re-index failed: {msg}")
+
+    def _refresh_current_view(self) -> None:
+        """Refresh the current view to show updated data."""
+        # If in detail view, reload the current image
+        if self._viewing_mode == "detail":
+            current_items = self._image_detail_panel._items
+            current_index = self._image_detail_panel._current_index
+            if current_items and current_index < len(current_items):
+                self._image_detail_panel.load_image(current_items, current_index)
+        # If in gallery view, refresh the current album
+        else:
+            current_album_id = self._album_gallery_vm._current_album_id
+            if current_album_id:
+                self._album_gallery_vm.select_album(current_album_id)

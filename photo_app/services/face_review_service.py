@@ -458,3 +458,11 @@ class FaceReviewService:
         self._face_repository.assign_person_manual(face_ids, person_id)
         if self._query_cache_service is not None:
             self._query_cache_service.invalidate_all()
+
+    def resolve_cluster_id_for_person(
+        self, person_id: int, stack_cluster_id: int | None
+    ) -> int | None:
+        """Return cluster_id from the stack, or look it up via face memberships."""
+        if stack_cluster_id is not None:
+            return stack_cluster_id
+        return self._face_repository.find_cluster_id_for_person(person_id)
