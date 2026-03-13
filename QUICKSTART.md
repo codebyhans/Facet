@@ -26,7 +26,7 @@ The app will launch with an empty browser window.
   - File hashing uses fast sampling (not full file read)
   - Thumbnails are generated on-demand while browsing (not during indexing)
   - Database operations are batched
-  - Progress is logged every 10 files if indexing takes a while
+  - Progress is logged every 10 files if indexing takes a while 
 
 ### Step 3: View Your Photos
 - A **"Library"** album is created automatically (bottom left)
