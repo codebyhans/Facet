@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QModelIndex, QSize, QThreadPool
+from PySide6.QtCore import QModelIndex, QSize, QThreadPool, QMetaObject, Qt, Q_ARG
 from PySide6.QtGui import QCloseEvent, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -381,18 +381,29 @@ class MainWindow(QMainWindow):
         self._wire_signals()
         self._build_menu()
         self._setup_keyboard_shortcuts()
+        
+        # Add persistent left-side label for background task progress
+        self._task_label = QLabel("")
+        self._task_label.setStyleSheet("color: #aaaaaa; padding: 0 8px;")
+        self.statusBar().insertPermanentWidget(0, self._task_label)
+        
         self.statusBar().showMessage("Ready")
 
-        self._ensure_library_album()  # Create default Library album if needed
+        # Initialise album tree and gallery on startup
+        self._ensure_library_album()
         self._load_tree()
-        # Always ensure Library album is selected and populated
-        # This happens after _load_tree so album tree is visible
-        # even if no previous album selection exists
         self._album_gallery_vm.select_library()
         self._refresh_people_list()
-
         self._restore_geometry()
         self.setWindowTitle("Photo Browser - Lightroom Edition")
+
+    def _set_task_status(self, message: str) -> None:
+        """Show a persistent background-task message (left side of status bar)."""
+        self._task_label.setText(message)
+
+    def _clear_task_status(self) -> None:
+        """Clear the background-task message when work finishes."""
+        self._task_label.setText("")
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._save_ui_state()
@@ -402,7 +413,7 @@ class MainWindow(QMainWindow):
     def _wire_signals(self) -> None:
         self._album_vm.error.connect(self._show_error)
         self._album_gallery_vm.error.connect(self._show_error)
-        self._album_gallery_vm.status.connect(self.statusBar().showMessage)
+        self._album_gallery_vm.status.connect(self._on_gallery_status)
         self._album_gallery_vm.loading_started.connect(self._on_loading_started)
         self._album_gallery_vm.loading_finished.connect(self._on_loading_finished)
 
@@ -424,7 +435,7 @@ class MainWindow(QMainWindow):
         self._album_gallery_vm.tile_ready.connect(
             lambda tile_index, pixmap: self._on_tile_ready(self._album_photo_model, tile_index, pixmap)
         )
-        self._album_gallery_vm.status.connect(self.statusBar().showMessage)
+        self._album_gallery_vm.status.connect(self._on_gallery_status)
         self._album_gallery_vm.error.connect(self._show_error)
 
         self._album_photo_model.tileRequested.connect(self._album_gallery_vm.request_tile)
@@ -525,8 +536,11 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence(shortcuts.INDEX_FACES), self, self._run_face_index)
 
     def _load_tree(self) -> None:
+        print("DEBUG: _load_tree start")
         nodes = self._album_vm.load_album_tree()
+        print(f"DEBUG: load_album_tree returned {len(nodes)} nodes")
         self._album_tree_model.set_nodes(nodes)
+        print("DEBUG: set_nodes done")
         self._album_tree.expandAll()
 
         last_album_id = self._ui_state.get("last_opened_album")
@@ -833,7 +847,6 @@ class MainWindow(QMainWindow):
         self._mode_stack.setCurrentIndex(0)
         self._albums_btn.setChecked(True)
         self._people_btn.setChecked(False)
-        self.statusBar().showMessage("Albums View")
 
     def _on_switch_to_people(self) -> None:
         """Switch to People clusters view mode."""
@@ -841,7 +854,6 @@ class MainWindow(QMainWindow):
         self._albums_btn.setChecked(False)
         self._people_btn.setChecked(True)
         self._refresh_people_list()
-        self.statusBar().showMessage("People Clusters View")
         
         # Ensure buttons remain visible and accessible
         self._albums_btn.setVisible(True)
@@ -1051,14 +1063,15 @@ class MainWindow(QMainWindow):
             self._show_error(f"Not a directory: {root}")
             return
         
+        # Set initial task status
+        self._set_task_status("⟳ Indexing images…")
+        
         def on_progress(current: int, total: int) -> None:
             """Update status bar with indexing progress."""
             try:
-                msg = f"Indexing images ({current}/{total})..."
-                self.statusBar().showMessage(msg)
-            except Exception as e:
-                import logging
-                logging.error(f"Error updating progress: {e}")
+                self._set_task_status(f"⟳ Indexing images {current}/{total}")
+            except Exception:
+                pass
         
         # Create a safe wrapper for the indexing function
         def run_index() -> object:
@@ -1082,15 +1095,21 @@ class MainWindow(QMainWindow):
                 scanned = getattr(result, "scanned", 0)
                 inserted = getattr(result, "inserted", 0)
                 skipped = getattr(result, "skipped", 0)
-                msg = f"Index complete: {inserted} new images ({scanned} scanned, {skipped} skipped)"
-                self.statusBar().showMessage(msg)
+                self._clear_task_status()
+                self.statusBar().showMessage(
+                    f"Index complete: {inserted} new images "
+                    f"({scanned} scanned, {skipped} skipped)"
+                )
                 self._reload_album_tree()
+                if inserted > 0:
+                    # Trigger tile build + gallery reload so new images appear immediately
+                    self._album_gallery_vm.select_library()
             except Exception as exc:
                 self._show_error(f"Error processing index result: {exc}")
         
         worker.signals.result_ready.connect(on_index_complete)
         worker.signals.error.connect(
-            lambda err: self._show_error(f"Indexing failed: {err}")
+            lambda err: (self._clear_task_status(), self._show_error(f"Indexing failed: {err}"))
         )
 
         def on_image_index_finished() -> None:
@@ -1098,29 +1117,104 @@ class MainWindow(QMainWindow):
 
         worker.signals.finished.connect(on_image_index_finished)
         self._active_image_index_worker = worker   # keep alive until finished
-        self.statusBar().showMessage("Indexing images...")
         self._thread_pool.start(worker)
 
     def _run_face_index(self) -> None:
         if self._face_index_service is None:
             self._show_error("Face indexing unavailable")
             return
+
         face_batch_size = int(getattr(self._runtime_settings, "face_batch_size", 128))
-        worker = IndexWorker(self._face_index_service.index_faces, face_batch_size)
+
+        # Track totals across all batches for the completion message
+        total_processed: list[int] = [0]
+        total_detected:  list[int] = [0]
+
+        # Set initial task status
+        self._set_task_status("⟳ Indexing faces…")
+
+        def on_progress(current: int, total: int) -> None:
+            try:
+                overall = total_processed[0] + current
+                self._set_task_status(
+                    f"⟳ Indexing faces — {current}/{total} "
+                    f"(batch), {overall} total"
+                )
+            except Exception:
+                pass
+
+        def run_face_index_loop() -> object:
+            """Detect faces in batches, then cluster once at the end."""
+            # Phase 1: detection only — fast, no clustering overhead per batch
+            while True:
+                result = self._face_index_service.index_faces(
+                    face_batch_size,
+                    on_progress=on_progress,
+                    skip_clustering=True,       # ← skip per-batch clustering
+                )
+                total_processed[0] += result.processed_images
+                total_detected[0]  += result.detected_faces
+                if result.processed_images < face_batch_size:
+                    break
+
+            # Phase 2: cluster all newly detected faces once
+            def on_cluster_progress(current: int, total: int) -> None:
+                try:
+                    msg = f"⟳ Clustering faces ({current}/{total})…"
+                    QMetaObject.invokeMethod(
+                        self._task_label,
+                        "setText",
+                        Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(str, msg),
+                    )
+                except Exception:
+                    pass
+
+            try:
+                self._set_task_status("⟳ Clustering faces…")
+            except Exception:
+                pass
+
+            if self._face_index_service._identity_cluster_service is not None:
+                self._face_index_service._identity_cluster_service.index_new_faces(
+                    on_progress=on_cluster_progress
+                )
+            elif hasattr(self._face_index_service, '_cluster_all_faces'):
+                self._face_index_service._cluster_all_faces()
+
+            # Skip run_all() on first full index — too expensive with thousands of clusters.
+            # It will run on the next incremental index (small number of new images).
+            # Only run the cache invalidation so the people tab refreshes.
+            if self._face_index_service._query_cache_service is not None:
+                self._face_index_service._query_cache_service.invalidate_all()
+
+            from photo_app.services.face_index_service import FaceIndexResult
+            return FaceIndexResult(
+                processed_images=total_processed[0],
+                detected_faces=total_detected[0],
+            )
+
+        worker = IndexWorker(run_face_index_loop)
         worker.signals.result_ready.connect(
-            lambda result: self.statusBar().showMessage(
-                f"Face index complete: {result}"
+            lambda result: (
+                self._clear_task_status(),
+                self.statusBar().showMessage(
+                    f"Face index complete: "
+                    f"{getattr(result, 'detected_faces', 0)} faces detected "
+                    f"across {getattr(result, 'processed_images', 0)} images"
+                ),
             )
         )
         worker.signals.result_ready.connect(self._refresh_people_list)
-        worker.signals.error.connect(self._show_error)
+        worker.signals.error.connect(
+            lambda err: (self._clear_task_status(), self._show_error(err))
+        )
 
         def on_face_index_finished() -> None:
             self._active_face_index_worker = None
 
         worker.signals.finished.connect(on_face_index_finished)
-        self._active_face_index_worker = worker    # keep alive until finished
-        self.statusBar().showMessage("Indexing faces...")
+        self._active_face_index_worker = worker
         self._thread_pool.start(worker)
 
     def _restore_geometry(self) -> None:
@@ -1174,6 +1268,14 @@ class MainWindow(QMainWindow):
     def _on_loading_finished(self) -> None:
         """Handle loading completion."""
         # Reset any loading indicators
+        pass
+
+    def _on_gallery_status(self, message: str) -> None:
+        """Handle gallery status updates without using main status bar."""
+        # Gallery status updates are handled internally by the GalleryViewModel
+        # and don't need to be shown in the main status bar
+        # This method exists to prevent the status bar from being updated
+        # by gallery operations
         pass
 
     def _on_select_library(self) -> None:
@@ -1465,7 +1567,7 @@ class MainWindow(QMainWindow):
 
         # Disable the button while running to prevent double-submission
         self._image_detail_panel._reindex_btn.setEnabled(False)
-        self.statusBar().showMessage(f"Re-indexing {Path(file_path).name}…")
+        self._set_task_status(f"⟳ Re-indexing {Path(file_path).name}…")
 
         worker = IndexWorker(self._face_index_service.reindex_image, file_path)
         worker.signals.result_ready.connect(

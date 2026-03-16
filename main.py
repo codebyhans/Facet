@@ -168,9 +168,11 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
             ctx_id=0,
             det_thresh=runtime_settings.detector_confidence_threshold,
         )
+        print("DEBUG: prepare() completed")        # ← add this
         detector = InsightFaceDetector(face_app)
+        print("DEBUG: detector created")           # ← add this
         embedding_model: EmbeddingModel = InsightFaceDetectorEmbeddingModel(detector)
-
+        print("DEBUG: embedding model created")    # ← add this
         if (
             runtime_settings.onnx_model_path is not None
             and runtime_settings.onnx_model_path.exists()
@@ -211,11 +213,11 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
         LOGGER.exception(
             "Face ML initialization failed; disabling face indexing."
         )
-
+        
     # Create metadata and tags services
     metadata_sync_service = MetadataSyncService(engine)
     tag_service = TagService(engine)
-
+    print("DEBUG: services built, returning container")  # ← add
     LOGGER.info("Service graph ready.")
     return ServiceContainer(
         image_index_service=image_index_service,
@@ -237,18 +239,26 @@ def build_main_window(settings: AppSettings, engine: Engine) -> MainWindow:
     """Create application object graph and return main window."""
     LOGGER.info("Creating main window...")
     services = build_services(settings, engine)
+    print("DEBUG: build_services done")  # ← add
     _ = services.person_service
-    window = MainWindow(
-        services.image_index_service,
-        services.album_service,
-        services.face_index_service,
-        services.face_review_service,
-        services.metadata_sync_service,
-        services.tag_service,
-        services.settings_service,
-        services.runtime_settings,
-        services.thumbnail_tile_store,
-    )
+    try:
+        window = MainWindow(
+            services.image_index_service,
+            services.album_service,
+            services.face_index_service,
+            services.face_review_service,
+            services.metadata_sync_service,
+            services.tag_service,
+            services.settings_service,
+            services.runtime_settings,
+            services.thumbnail_tile_store,
+        )
+    except Exception as exc:
+            import traceback
+            print("DEBUG: MainWindow.__init__ CRASHED:")
+            traceback.print_exc()
+            raise        
+    print("DEBUG: MainWindow constructed")  # ← add
     LOGGER.info("Main window created.")
     return window
 

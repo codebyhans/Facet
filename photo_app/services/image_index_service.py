@@ -63,6 +63,9 @@ class ImageIndexService:
             logger.exception(f"Scan error: {exc}")
             return ImageIndexResult(scanned=0, inserted=0, skipped=0)
         
+        # Single DB query to fetch all already-indexed paths — avoids N+1 sessions
+        existing_paths: set[str] = set(self._image_repository.list_all_paths())
+
         staged: list[ImageEntity] = []
         skipped = 0
         thumbnail_failures = 0
@@ -76,7 +79,7 @@ class ImageIndexService:
                     on_progress(idx + 1, len(scanned_files))
             
             try:
-                if self._image_repository.exists_by_path(file_path):
+                if file_path in existing_paths:
                     continue
 
                 # Skip expensive metadata extraction during indexing

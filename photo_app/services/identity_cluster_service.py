@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from itertools import combinations
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -64,49 +64,119 @@ class TemporalIdentityClusterService:
         self._ann = RandomProjectionAnnIndex()
         self._index_dirty = True
 
-    def index_new_faces(self, limit: int | None = None) -> int:
-        """Assign newly detected faces into identity clusters."""
+    def index_new_faces(
+        self,
+        limit: int | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> int:
+        """Assign newly detected faces into identity clusters.
+
+        Optimised for large batches:
+        - ANN index built once and updated incrementally (no per-face DB rebuild)
+        - Cluster state recalculated once per cluster after all assignments
+        - Person assignment cached per cluster to avoid repeated DB reads
+        """
         staged = self._face_repository.list_without_cluster_membership(limit=limit)
         if not staged:
             return 0
 
         image_by_id = self._image_map()
-        active_face_map = {
-            face.id: face for face in self._face_repository.list_all_active() if face.id is not None
-        }
+
+        # Build ANN index once from current cluster state
         self._ensure_ann_index()
 
-        for face in staged:
+        # Track which clusters receive new faces — refresh each once at the end
+        affected_cluster_ids: set[int] = set()
+
+        # Cache person lookups per cluster to avoid N repeated find_by_cluster_id calls
+        cluster_person_cache: dict[int, Person | None] = {}  # cluster_id → Person | None
+
+        total = len(staged)
+        for idx, face in enumerate(staged, start=1):
             if face.id is None:
                 continue
+
             vector = _normalize(np.frombuffer(face.embedding, dtype=np.float32))
             age_bucket = self._age_bucket_for_face(face, image_by_id=image_by_id)
             match = self._match_cluster(vector, age_bucket=age_bucket)
             timestamp = now_utc()
 
             if match is None:
+                # New cluster — create it and add its vector to the in-memory ANN
+                # index directly, without triggering a full DB reload
                 cluster = self._cluster_repository.create_cluster(
                     vector.astype(np.float32).tobytes(),
                     created_at=timestamp,
                 )
                 cluster_id = cluster.id
                 confidence = 1.0
-                self._index_dirty = True
+                if cluster_id is not None:
+                    # Add to in-memory index so subsequent faces can match it
+                    self._ann.add_vector(cluster_id, vector)
+                    # Rebuild projection signatures for the new vector
+                    # (mark dirty so _ensure_ann_index rebuilds cleanly next time
+                    # this is called from outside the batch)
+                    self._index_dirty = True
             else:
                 cluster_id = match.cluster_id
                 confidence = match.confidence
 
             if cluster_id is None:
                 continue
+
             self._cluster_repository.upsert_membership(
                 face_id=face.id,
                 cluster_id=cluster_id,
                 confidence=confidence,
                 assigned_at=timestamp,
             )
-            self._refresh_cluster_state(cluster_id, faces_by_id=active_face_map, image_by_id=image_by_id)
-            self._sync_person_assignment(face, cluster_id)
-            self._index_dirty = True
+            affected_cluster_ids.add(cluster_id)
+
+            # Sync person assignment with cache
+            if cluster_id not in cluster_person_cache:
+                cluster_person_cache[cluster_id] = (
+                    self._person_repository.find_by_cluster_id(cluster_id)
+                )
+            bound_person = cluster_person_cache[cluster_id]
+
+            if bound_person is None and face.person_id is not None:
+                self._person_repository.bind_cluster(face.person_id, cluster_id)
+                bound_person = self._person_repository.get(face.person_id)
+                cluster_person_cache[cluster_id] = bound_person
+
+            if bound_person is None:
+                created = self._person_repository.create(
+                    Person(
+                        id=None,
+                        name=None,
+                        created_at=now_utc(),
+                        birth_date=None,
+                        identity_cluster_id=cluster_id,
+                    )
+                )
+                bound_person = created
+                cluster_person_cache[cluster_id] = bound_person
+
+            if bound_person is not None and bound_person.id is not None:
+                self._face_repository.assign_person_auto([face.id], bound_person.id)
+
+            # Call progress callback after all assignments for this face are done
+            if on_progress is not None:
+                on_progress(idx, total)
+
+        # Refresh cluster state once per affected cluster (not once per face)
+        if affected_cluster_ids:
+            active_face_map = {
+                face.id: face
+                for face in self._face_repository.list_all_active()
+                if face.id is not None
+            }
+            for cluster_id in affected_cluster_ids:
+                self._refresh_cluster_state(
+                    cluster_id,
+                    faces_by_id=active_face_map,
+                    image_by_id=image_by_id,
+                )
 
         return len(staged)
 
@@ -194,30 +264,71 @@ class TemporalIdentityClusterService:
         return len(clusters)
 
     def detect_and_merge_duplicate_clusters(self) -> int:
-        """Merge clusters whose centroids exceed merge threshold."""
-        clusters = [cluster for cluster in self._cluster_repository.list_clusters() if cluster.id is not None]
-        vectors = {
-            int(cluster.id): _normalize(
-                np.frombuffer(cluster.canonical_embedding, dtype=np.float32)
-            )
-            for cluster in clusters
-        }
+        """Merge clusters whose centroids exceed merge threshold.
+
+        Uses the ANN index to find candidates rather than checking all pairs,
+        reducing complexity from O(N²) to O(N × ann_candidate_limit).
+        """
+        clusters = [
+            c for c in self._cluster_repository.list_clusters()
+            if c.id is not None
+        ]
+        if not clusters:
+            return 0
+
+        # Build a fresh ANN index over current cluster centroids
+        vectors: dict[int, np.ndarray] = {}
+        for cluster in clusters:
+            if cluster.id is not None and cluster.canonical_embedding:
+                vectors[cluster.id] = _normalize(
+                    np.frombuffer(cluster.canonical_embedding, dtype=np.float32)
+                )
+
+        if len(vectors) < 2:
+            return 0
+
+        self._ann.build(vectors)
+        self._index_dirty = False
+
         merged = 0
-        for left, right in combinations(vectors.keys(), 2):
-            if left not in vectors or right not in vectors:
-                continue                          # already merged away
-            similarity = float(np.dot(vectors[left], vectors[right]))
-            if similarity < self._config.merge_threshold:
+        already_merged: set[int] = set()
+
+        for cluster_id, vector in vectors.items():
+            if cluster_id in already_merged:
                 continue
-            if self.merge_clusters(source_cluster_id=right, target_cluster_id=left):
-                merged += 1
-                vectors.pop(right, None)
-                # Refresh left's centroid so later pairs use the post-merge value
-                updated = self._cluster_repository.get_cluster(left)
-                if updated is not None:
-                    vectors[left] = _normalize(
-                        np.frombuffer(updated.canonical_embedding, dtype=np.float32)
-                    )
+
+            # Query ANN for nearest neighbours (excludes self if not in results)
+            candidates = self._ann.query(vector, limit=self._config.ann_candidate_limit + 1)
+
+            for candidate in candidates:
+                other_id = candidate.item_id
+                if other_id == cluster_id:
+                    continue
+                if other_id in already_merged:
+                    continue
+
+                # Check current vector for other (may have been updated by a merge)
+                other_vec = vectors.get(other_id)
+                if other_vec is None:
+                    continue
+
+                similarity = float(np.dot(vector, other_vec))
+                if similarity < self._config.merge_threshold:
+                    continue
+
+                if self.merge_clusters(source_cluster_id=other_id, target_cluster_id=cluster_id):
+                    merged += 1
+                    already_merged.add(other_id)
+                    vectors.pop(other_id, None)
+
+                    # Refresh the surviving cluster's centroid
+                    updated = self._cluster_repository.get_cluster(cluster_id)
+                    if updated is not None and updated.canonical_embedding:
+                        vectors[cluster_id] = _normalize(
+                            np.frombuffer(updated.canonical_embedding, dtype=np.float32)
+                        )
+
+        self._index_dirty = True  # mark dirty so next use rebuilds with merged state
         return merged
 
     def _match_cluster(self, vector: np.ndarray, *, age_bucket: str | None) -> ClusterMatch | None:
@@ -363,8 +474,9 @@ class TemporalIdentityClusterService:
             return
         clusters = [cluster for cluster in self._cluster_repository.list_clusters() if cluster.id is not None]
         vectors = {
-            int(cluster.id): _normalize(np.frombuffer(cluster.canonical_embedding, dtype=np.float32))
+            cluster.id: _normalize(np.frombuffer(cluster.canonical_embedding, dtype=np.float32))
             for cluster in clusters
+            if cluster.id is not None
         }
         self._ann.build(vectors)
         self._index_dirty = False

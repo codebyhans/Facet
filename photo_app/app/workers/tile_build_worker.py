@@ -11,6 +11,7 @@ class TileBuildWorkerSignals(QObject):
     result_ready = Signal(object)
     error = Signal(str)
     progress = Signal(int)
+    progress_detailed = Signal(int, int)  # (current, total) — new
     finished = Signal()
 
 
@@ -28,7 +29,14 @@ class TileBuildWorker(QRunnable):
     def run(self) -> None:
         try:
             self.signals.progress.emit(5)
-            result = self._fn(*self._args, **self._kwargs)
+
+            def on_progress(current: int, total: int) -> None:
+                try:
+                    self.signals.progress_detailed.emit(current, total)
+                except RuntimeError:
+                    pass
+
+            result = self._fn(*self._args, on_progress=on_progress, **self._kwargs)
             self.signals.progress.emit(100)
             self.signals.result_ready.emit(result)
         except Exception as exc:  # noqa: BLE001

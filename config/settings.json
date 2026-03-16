@@ -70,67 +70,32 @@
       ]
     },
     {
-      "node_id": "f-6f7d3f44fed44223a8c2f15ad68265da",
-      "name": "test",
-      "kind": "folder",
-      "album_id": null,
-      "query_definition": null,
-      "children": [
-        {
-          "node_id": "f-180304b9d87b4b79ac9d8e68a56f9d37",
-          "name": "test",
-          "kind": "folder",
-          "album_id": null,
-          "query_definition": null,
-          "children": []
-        }
-      ]
-    },
-    {
-      "node_id": "f-9ecb7bc525a34bdf891209cd2655d683",
-      "name": "Voksne",
-      "kind": "folder",
-      "album_id": null,
-      "query_definition": null,
-      "children": [
-        {
-          "node_id": "f-e66311f013c245dcbd982cf742193cb9",
-          "name": "Nina",
-          "kind": "folder",
-          "album_id": null,
-          "query_definition": null,
-          "children": [
-            {
-              "node_id": "v-2",
-              "name": "Nina",
-              "kind": "virtual",
-              "album_id": 2,
-              "query_definition": {
-                "person_ids": [
-                  1
-                ],
-                "cluster_ids": [],
-                "tag_names": [],
-                "flags": [],
-                "rating_min": null,
-                "quality_min": null,
-                "camera_models": [],
-                "date_from": null,
-                "date_to": null,
-                "location_name": null,
-                "gps_radius_km": null
-              },
-              "children": []
-            }
-          ]
-        }
-      ]
+      "node_id": "v-2",
+      "name": "Nina",
+      "kind": "virtual",
+      "album_id": 2,
+      "query_definition": {
+        "person_ids": [
+          1
+        ],
+        "cluster_ids": [],
+        "tag_names": [],
+        "flags": [],
+        "rating_min": null,
+        "quality_min": null,
+        "camera_models": [],
+        "date_from": null,
+        "date_to": null,
+        "location_name": null,
+        "gps_radius_km": null
+      },
+      "children": []
     }
   ],
   "splitter_widths": [
-    434,
-    1157,
-    319
+    362,
+    1255,
+    293
   ],
   "last_opened_album": 1
 }

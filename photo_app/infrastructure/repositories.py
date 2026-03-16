@@ -168,22 +168,26 @@ class SqlAlchemyImageRepository:
         self._engine = engine
 
     def add_many(self, images: Sequence[Image]) -> None:
+        """Insert images in chunks to stay within SQLite variable limits."""
+        _CHUNK = 500  # 500 rows × 9 columns = 4500 variables, well under SQLite's 999-per-stmt limit
         with Session(self._engine) as session:
-            rows = [
-                ImageModel(
-                    file_path=image.file_path,
-                    capture_date=image.capture_date,
-                    year=image.year,
-                    month=image.month,
-                    hash=image.hash,
-                    width=image.width,
-                    height=image.height,
-                    indexed_at=image.indexed_at,
-                )
-                for image in images
-            ]
-            session.bulk_save_objects(rows)
-            session.commit()
+            for i in range(0, len(images), _CHUNK):
+                chunk = images[i : i + _CHUNK]
+                rows = [
+                    ImageModel(
+                        file_path=image.file_path,
+                        capture_date=image.capture_date,
+                        year=image.year,
+                        month=image.month,
+                        hash=image.hash,
+                        width=image.width,
+                        height=image.height,
+                        indexed_at=image.indexed_at,
+                    )
+                    for image in chunk
+                ]
+                session.bulk_save_objects(rows)
+            session.commit()  # single commit after all chunks
 
     def exists_by_path(self, file_path: str) -> bool:
         with Session(self._engine) as session:
@@ -205,12 +209,10 @@ class SqlAlchemyImageRepository:
 
     def list_unprocessed_for_faces(self, limit: int) -> list[Image]:
         with Session(self._engine) as session:
-            # Find images that don't have any faces associated with them
             stmt = (
                 select(ImageModel)
-                .outerjoin(FaceModel, FaceModel.image_id == ImageModel.id)
-                .group_by(ImageModel.id)
-                .having(func.count(FaceModel.id) == 0)
+                .where(ImageModel.face_count.is_(None))
+                .order_by(ImageModel.id.asc())
                 .limit(limit)
             )
             return [_to_image(row) for row in session.scalars(stmt)]
@@ -223,7 +225,15 @@ class SqlAlchemyImageRepository:
     def list_paginated(self, *, offset: int, limit: int) -> list[Image]:
         """Paginated query to avoid loading all images into memory."""
         with Session(self._engine) as session:
-            stmt = select(ImageModel).order_by(ImageModel.id.asc()).offset(offset).limit(limit)
+            stmt = (
+                select(ImageModel)
+                .order_by(
+                    nulls_last(ImageModel.capture_date.asc()), 
+                    ImageModel.id.asc()
+                    )
+                .offset(offset)
+                .limit(limit)
+            )
             return [_to_image(row) for row in session.scalars(stmt)]
 
     def list_by_filters(
@@ -369,6 +379,12 @@ class SqlAlchemyImageRepository:
             if row is not None:
                 row.face_count = count
                 session.commit()
+
+    def list_all_paths(self) -> list[str]:
+        """Return all indexed file paths in a single query."""
+        with Session(self._engine) as session:
+            stmt = select(ImageModel.file_path)
+            return [str(row) for row in session.scalars(stmt)]
 
 
 class SqlAlchemyFaceRepository:

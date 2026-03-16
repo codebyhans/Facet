@@ -153,36 +153,50 @@ class GalleryViewModel(QObject):
             self.error.emit(f"Error loading tile {tile_index}: {exc}")
 
     def _ensure_tiles_then_load(self) -> None:
+        """Start page load immediately; build missing tiles in parallel."""
+        # Load the page right away — items with no tile yet show as placeholders
+        self._load_page(append=False)
+
+        # Build missing tiles in the background; when done, refresh visible tiles
         if self._tile_building:
-            return
+            return  # already building — don't start a second worker
         self._tile_building = True
-        captured_epoch = self._epoch                          # capture now
+        captured_epoch = self._epoch
 
         worker = TileBuildWorker(self._tile_store.build_missing_tiles)
         worker.signals.result_ready.connect(self._on_tile_build_result)
         worker.signals.error.connect(self._on_error)
+        worker.signals.progress_detailed.connect(self._on_tile_build_progress)
 
-        def on_tile_build_finished() -> None:                 # epoch-aware closure
-            self._active_tile_worker = None                   # release reference when done
+        def on_tile_build_finished() -> None:
+            self._active_tile_worker = None
             self._on_tile_build_finished(epoch=captured_epoch)
 
         worker.signals.finished.connect(on_tile_build_finished)
-        self._active_tile_worker = worker                     # keep alive until finished
+        self._active_tile_worker = worker
         self._thread_pool.start(worker)
-        # DO NOT load page here - wait for tiles to finish first
 
     def _on_tile_build_result(self, result: object) -> None:
         built_images = int(getattr(result, "images_built", 0))
         built_tiles = int(getattr(result, "tiles_built", 0))
         self.status.emit(f"Tile cache updated: {built_images} images, {built_tiles} tiles")
 
+    def _on_tile_build_progress(self, current: int, total: int) -> None:
+        """Update status bar with tile build progress."""
+        self.status.emit(f"Building thumbnails ({current}/{total})…")
+
     def _on_tile_build_finished(self, *, epoch: int) -> None:
         print(f"[GALLERY] Tile build finished: epoch={epoch}, self._epoch={self._epoch}")
         if epoch != self._epoch:
-            return
+            # Request changed while tiles were building — tiles are still valid.
+            # Load a page for the current state rather than discarding the result.
+            logger.debug(
+                f"Tile build epoch mismatch ({epoch} vs {self._epoch}), "
+                "loading current state"
+            )
+        print(f"DEBUG: tile build finished, epoch={epoch}, self._epoch={self._epoch}")
         self._tile_building = False
         self.tile_building_finished.emit()
-        print(f"[GALLERY] Tile build epoch OK, calling _load_page(append=False)")
         self._load_page(append=False)
 
     def _load_page(self, *, append: bool) -> None:
@@ -230,12 +244,21 @@ class GalleryViewModel(QObject):
             
         items: list[PhotoGridItem] = []
         page_items = getattr(page, "items", [])
+
+        # Batch lookup: one DB query for all image IDs in this page
+        image_ids = [
+            int(getattr(image, "id", 0))
+            for image in page_items
+            if isinstance(getattr(image, "id", None), int)
+        ]
+        tile_map = self._tile_store.get_image_tiles_batch(image_ids) if image_ids else {}
+
         for image in page_items:
             image_id = getattr(image, "id", None)
             image_hash = getattr(image, "hash", None)
             if not isinstance(image_id, int) or not isinstance(image_hash, str):
                 continue
-            tile_lookup = self._tile_store.get_image_tile(image_id)
+            tile_lookup = tile_map.get(image_id)
             items.append(
                 PhotoGridItem(
                     image_id=image_id,
@@ -246,13 +269,13 @@ class GalleryViewModel(QObject):
                         None if tile_lookup is None else int(tile_lookup.tile_index)
                     ),
                     position_in_tile=(
-                        None
-                        if tile_lookup is None
+                        None if tile_lookup is None
                         else int(tile_lookup.position_in_tile)
                     ),
                     flag=getattr(image, "flag", None),
                 )
             )
+
         self._offset += len(items)
         self._has_more = len(items) >= self._page_size
         self.page_ready.emit(items, append)
@@ -338,13 +361,16 @@ class GalleryViewModel(QObject):
         """Cancel any currently running operation."""
         if self._current_operation_id is not None:
             logger.info(f"Cancelling operation {self._current_operation_id}")
-            # Cancel tile building if in progress
-            if self._tile_building:
+            # Only reset _tile_building if there is no worker still running.
+            # Setting it False while a worker is alive would allow a second
+            # concurrent tile build to start, causing UNIQUE constraint errors.
+            if self._tile_building and self._active_tile_worker is None:
                 self._tile_building = False
             # Cancel page loading if in progress
             if self._loading_page:
                 self._loading_page = False
-            self._active_tile_worker = None   # release GC reference
+            # Do NOT null _active_tile_worker here — let the worker's finished
+            # handler release it so the guard above stays effective.
             self._active_page_worker = None   # release GC reference
             self._current_operation_id = None
 

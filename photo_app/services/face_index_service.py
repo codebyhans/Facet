@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+
+import logging
 
 from photo_app.domain.models import Face, Person
 from photo_app.domain.models import Image as ImageEntity
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from photo_app.domain.repositories import (
@@ -61,29 +66,38 @@ class FaceIndexService:
         self._identity_cluster_service = dependencies.identity_cluster_service
         self._identity_maintenance_jobs = dependencies.identity_maintenance_jobs
 
-    def index_faces(self, limit: int = 128) -> FaceIndexResult:
-        """Detect faces, persist embeddings, and assign cluster person IDs."""
+    def index_faces(
+        self,
+        limit: int = 128,
+        on_progress: Callable[[int, int], None] | None = None,
+        skip_clustering: bool = False,
+    ) -> FaceIndexResult:
+        """Detect faces, persist embeddings, and optionally assign cluster person IDs."""
         images = self._image_repository.list_unprocessed_for_faces(limit)
+        total = len(images)
         staged_faces: list[Face] = []
 
-        for image in images:
+        for current, image in enumerate(images, start=1):
             if image.id is None:
                 continue
             new_faces = self._extract_faces_for_image(image)
             staged_faces.extend(new_faces)
             self._image_repository.update_face_count(image.id, len(new_faces))
+            if on_progress is not None:
+                on_progress(current, total)
 
         if staged_faces:
             self._face_repository.add_many(staged_faces)
 
-        if self._identity_cluster_service is None:
-            self._cluster_all_faces()
-        else:
-            self._identity_cluster_service.index_new_faces()
-        if self._identity_maintenance_jobs is not None:
-            self._identity_maintenance_jobs.run_all()
-        if staged_faces and self._query_cache_service is not None:
-            self._query_cache_service.invalidate_all()
+        if not skip_clustering:
+            if self._identity_cluster_service is None:
+                self._cluster_all_faces()
+            else:
+                self._identity_cluster_service.index_new_faces()
+            if self._identity_maintenance_jobs is not None:
+                self._identity_maintenance_jobs.run_all()
+            if self._query_cache_service is not None:
+                self._query_cache_service.invalidate_all()
 
         return FaceIndexResult(
             processed_images=len(images),
@@ -112,8 +126,15 @@ class FaceIndexService:
         return FaceIndexResult(processed_images=1, detected_faces=len(staged_faces))
 
     def _extract_faces_for_image(self, image: ImageEntity) -> list[Face]:
-        with Image.open(image.file_path) as image_file:
-            np_image = np.array(image_file.convert("RGB"))
+        try:
+            with Image.open(image.file_path) as image_file:
+                np_image = np.array(image_file.convert("RGB"))
+        except (UnidentifiedImageError, OSError, PermissionError) as exc:
+            logger.warning("Skipping %s: %s", image.file_path, exc)
+            return []
+        except Exception as exc:
+            logger.exception("Unexpected error opening %s: %s", image.file_path, exc)
+            return []
 
         boxes = self._detector.detect(np_image)
         if image.id is None:

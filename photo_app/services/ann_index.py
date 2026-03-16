@@ -52,6 +52,10 @@ class RandomProjectionAnnIndex:
                 key = self._signature(vector, projection)
                 self._buckets[idx].setdefault(key, []).append(item_id)
 
+    def add_vector(self, item_id: int, vector: np.ndarray) -> None:
+        """Add a single vector to the index without rebuilding projections."""
+        self._vectors[item_id] = vector.astype(np.float32)
+
     def query(self, vector: np.ndarray, limit: int = 32) -> list[AnnNeighbor]:
         """Return top cosine candidates by approximate bucket lookup."""
         if not self._vectors:

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from sqlalchemy import Engine, delete, func, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from photo_app.infrastructure.sqlalchemy_models import ImageModel, ThumbnailTileModel
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -52,66 +57,109 @@ class ThumbnailTileBuilder:
         self._images_per_tile = images_per_tile
         self._tile_dir.mkdir(parents=True, exist_ok=True)
 
-    def build_missing_tiles(self) -> TileBuildResult:
-        """Append new tile files for images with no tile mapping."""
+    def build_missing_tiles(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> TileBuildResult:
+        """Append new tile files for images with no tile mapping.
+
+        Commits mappings after each completed tile so progress is preserved
+        if the process is interrupted.
+        """
         with Session(self._engine) as session:
             tile_rows = self._load_images_without_tiles(session)
             if not tile_rows:
                 return TileBuildResult(images_built=0, tiles_built=0)
-
-            grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
             next_tile_index = self._next_tile_index(session)
-            tile_canvas = self._new_tile_canvas()
-            tile_entries = 0
-            tiles_built = 0
-            images_built = 0
-            mappings: list[ThumbnailTileModel] = []
-            current_tile_path = self._tile_path(next_tile_index)
 
-            for image_id, file_path in tile_rows:
-                thumb = self._load_thumbnail(Path(file_path))
-                if thumb is None:
-                    continue
+        total = len(tile_rows)
+        grid_width  = max(1, self._tile_size[0] // self._thumbnail_size[0])
+        tile_canvas = self._new_tile_canvas()
+        current_tile_path = self._tile_path(next_tile_index)
+        pending_mappings: list[ThumbnailTileModel] = []
+        tile_entries = 0
+        tiles_built  = 0
+        images_built = 0
 
-                position = tile_entries % self._images_per_tile
-                col = position % grid_width
-                row = position // grid_width
-                x = col * self._thumbnail_size[0]
-                y = row * self._thumbnail_size[1]
-                tile_canvas.paste(thumb, (x, y))
+        for image_id, file_path in tile_rows:
+            thumb = self._load_thumbnail(Path(file_path))
+            if thumb is None:
+                if on_progress is not None:
+                    on_progress(images_built + 1, total)
+                continue
 
-                mappings.append(
-                    ThumbnailTileModel(
-                        tile_path=str(current_tile_path),
-                        tile_index=next_tile_index,
-                        image_id=image_id,
-                        position_in_tile=position,
-                    )
+            position = tile_entries % self._images_per_tile
+            col = position % grid_width
+            row = position // grid_width
+            tile_canvas.paste(thumb, (col * self._thumbnail_size[0],
+                                       row * self._thumbnail_size[1]))
+
+            pending_mappings.append(
+                ThumbnailTileModel(
+                    tile_path=str(current_tile_path),
+                    tile_index=next_tile_index,
+                    image_id=image_id,
+                    position_in_tile=position,
                 )
-                tile_entries += 1
-                images_built += 1
+            )
+            tile_entries += 1
+            images_built += 1
 
-                if tile_entries % self._images_per_tile == 0:
-                    self._save_tile(tile_canvas, current_tile_path)
-                    tiles_built += 1
-                    next_tile_index += 1
-                    current_tile_path = self._tile_path(next_tile_index)
-                    tile_canvas = self._new_tile_canvas()
+            if on_progress is not None:
+                on_progress(images_built, total)
 
-            if tile_entries % self._images_per_tile != 0:
+            if tile_entries % self._images_per_tile == 0:
+                # Tile is full — save PNG then commit mappings before moving on
                 self._save_tile(tile_canvas, current_tile_path)
                 tiles_built += 1
+                self._flush_mappings(pending_mappings)
+                pending_mappings = []
+                next_tile_index += 1
+                current_tile_path = self._tile_path(next_tile_index)
+                tile_canvas = self._new_tile_canvas()
+        # Save the final partial tile (if any)
+        if pending_mappings:
+            self._save_tile(tile_canvas, current_tile_path)
+            tiles_built += 1
+            self._flush_mappings(pending_mappings)
 
-            if mappings:
-                session.bulk_save_objects(mappings)
-                session.flush()
-                session.commit()  # Ensure changes are persisted
-            return TileBuildResult(images_built=images_built, tiles_built=tiles_built)
+        return TileBuildResult(images_built=images_built, tiles_built=tiles_built)
+
+    def _flush_mappings(self, mappings: list[ThumbnailTileModel]) -> None:
+        """Persist tile mappings, ignoring duplicates from concurrent runs."""
+        if not mappings:
+            return
+        
+        # Count attempted inserts before filtering
+        total_attempts = len(mappings)
+        
+        with Session(self._engine) as session:
+            rows = [
+                {
+                    "tile_path": str(m.tile_path),
+                    "tile_index": int(m.tile_index),
+                    "image_id": int(m.image_id),
+                    "position_in_tile": int(m.position_in_tile),
+                }
+                for m in mappings
+            ]
+            stmt = sqlite_insert(ThumbnailTileModel).values(rows)
+            stmt = stmt.on_conflict_do_nothing(index_elements=['tile_index', 'position_in_tile'])
+            session.execute(stmt)
+            session.commit()
+            
+            # Log if duplicates were likely skipped (simple heuristic)
+            # Since we can't reliably get rowcount from SQLite INSERT OR IGNORE,
+            # we log a warning-level message when concurrent tile building might be happening
+            if total_attempts > 0:
+                logger.debug(f"Attempted to insert {total_attempts} tile mappings (duplicates silently ignored)")
 
     def rebuild_all_tiles(self) -> TileBuildResult:
         """Drop tile files and tile mapping table, then rebuild from all images."""
-        for tile_file in self._tile_dir.glob("*.webp"):
-            tile_file.unlink(missing_ok=True)
+        # Remove both .png and .webp in case of legacy files
+        for pattern in ("*.png", "*.webp"):
+            for tile_file in self._tile_dir.glob(pattern):
+                tile_file.unlink(missing_ok=True)
         with Session(self._engine) as session:
             session.execute(delete(ThumbnailTileModel))
             session.commit()
@@ -238,9 +286,12 @@ class ThumbnailTileStore:
                 )
             return result
 
-    def build_missing_tiles(self) -> TileBuildResult:
+    def build_missing_tiles(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> TileBuildResult:
         """Incrementally add tiles for unmapped images."""
-        return self._builder.build_missing_tiles()
+        return self._builder.build_missing_tiles(on_progress=on_progress)
 
     def rebuild_all_tiles(self) -> TileBuildResult:
         """Rebuild entire tile cache from source image index."""

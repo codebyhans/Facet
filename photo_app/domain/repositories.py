@@ -81,6 +81,9 @@ class ImageRepository(Protocol):
     def update_flag(self, image_id: int, flag: str | None) -> None:
         """Update the flag for an image."""
 
+    def list_all_paths(self) -> list[str]:
+        """Return all indexed file paths in a single query."""
+
 
 class FaceRepository(Protocol):
     """Persistence port for faces."""
