@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
-    QCheckBox,
-    QMessageBox,
 )
 
 from photo_app.app.widgets.face_detection_widget import FaceDetectionWidget
@@ -39,16 +39,16 @@ class ImageDetailPanel(QWidget):
     reindex_requested = Signal(str)  # Emitted when user requests re-indexing (file_path)
 
     def __init__(
-        self, 
+        self,
         parent: QWidget | None = None,
-        settings: "AppSettings | None" = None,
-        face_review_service: "FaceReviewService | None" = None,
+        settings: AppSettings | None = None,
+        face_review_service: FaceReviewService | None = None,
     ) -> None:
         super().__init__(parent)
         self._settings = settings
         self._face_review_service = face_review_service
-        self._current_item: "PhotoGridItem | None" = None
-        self._items: list["PhotoGridItem"] = []
+        self._current_item: PhotoGridItem | None = None
+        self._items: list[PhotoGridItem] = []
         self._current_index = 0
         self._zoom = 1.0
         self._zoom_mode = "fit"  # "fit" or "100%"
@@ -56,7 +56,7 @@ class ImageDetailPanel(QWidget):
         # Image display using FaceDetectionWidget
         self._image_label = FaceDetectionWidget()
         self._image_label.setStyleSheet("background-color: #1e1e1e; color: white;")
-        
+
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidget(self._image_label)
         self._scroll_area.setWidgetResizable(True)
@@ -69,25 +69,25 @@ class ImageDetailPanel(QWidget):
 
         # Navigation and zoom buttons
         nav_layout = QHBoxLayout()
-        
+
         self._prev_btn = QPushButton("← Previous")
         self._prev_btn.clicked.connect(self._show_previous)
-        
+
         self._close_btn = QPushButton("Back to Gallery")
         self._close_btn.clicked.connect(self._on_close_requested)
-        
+
         self._next_btn = QPushButton("Next →")
         self._next_btn.clicked.connect(self._show_next)
-        
+
         # Zoom mode buttons
         self._zoom_fit_btn = QPushButton("Fit")
         self._zoom_fit_btn.clicked.connect(self._set_zoom_fit)
         self._zoom_fit_btn.setMaximumWidth(60)
-        
+
         self._zoom_100_btn = QPushButton("100%")
         self._zoom_100_btn.clicked.connect(self._set_zoom_100)
         self._zoom_100_btn.setMaximumWidth(60)
-        
+
         # Re-index faces button
         self._reindex_btn = QPushButton("Re-index faces")
         self._reindex_btn.setToolTip(
@@ -96,15 +96,15 @@ class ImageDetailPanel(QWidget):
         )
         self._reindex_btn.clicked.connect(self._on_reindex_requested)
         self._reindex_btn.setMaximumWidth(120)
-        
+
         # Face bounding box checkbox
         self._bbox_checkbox = QCheckBox("Show Face Bounding Boxes")
         self._bbox_checkbox.setChecked(False)
         self._bbox_checkbox.stateChanged.connect(self._on_bbox_toggle)
-        
+
         # Update button style to show active zoom mode
         self._update_zoom_button_styles()
-        
+
         nav_layout.addWidget(self._prev_btn)
         nav_layout.addWidget(self._zoom_fit_btn)
         nav_layout.addWidget(self._zoom_100_btn)
@@ -125,8 +125,8 @@ class ImageDetailPanel(QWidget):
         self.setStyleSheet("background-color: #1e1e1e;")
 
     def load_image(
-        self, 
-        items: list["PhotoGridItem"], 
+        self,
+        items: list[PhotoGridItem],
         selected_index: int
     ) -> None:
         """Load image list and show image at selected_index.
@@ -152,30 +152,30 @@ class ImageDetailPanel(QWidget):
         """
         if not self._items or self._current_index >= len(self._items):
             return 1.0
-        
+
         if self._zoom_mode == "100%":
             return 1.0
-        elif self._zoom_mode == "fit":
+        if self._zoom_mode == "fit":
             # Calculate zoom to fit image in viewport
             viewport = self._scroll_area.viewport()
             viewport_width = viewport.width()
             viewport_height = viewport.height()
-            
+
             # If viewport not yet laid out, skip fit calculation
             if viewport_width <= 0 or viewport_height <= 0:
                 return 1.0
-            
+
             item = self._items[self._current_index]
             try:
                 pixmap = QPixmap(str(Path(item.file_path)))
                 if pixmap.isNull():
                     return 1.0
-                
+
                 # Calculate zoom to fit image with aspect ratio preserved
                 width_ratio = viewport_width / pixmap.width()
                 height_ratio = viewport_height / pixmap.height()
                 zoom = min(width_ratio, height_ratio)
-                
+
                 # Constrain between 0.2 and 3.0
                 return max(0.2, min(3.0, zoom))
             except Exception:
@@ -201,7 +201,7 @@ class ImageDetailPanel(QWidget):
         """Update button styles to indicate active zoom mode."""
         active_style = "background-color: #4a9eff; font-weight: bold;"
         inactive_style = ""
-        
+
         if self._zoom_mode == "fit":
             self._zoom_fit_btn.setStyleSheet(active_style)
             self._zoom_100_btn.setStyleSheet(inactive_style)
@@ -228,7 +228,7 @@ class ImageDetailPanel(QWidget):
             self._image_label.setText("Error loading image")
             self._info_label.setText(f"Error: Could not load {item.file_path}")
             return
-        
+
         if pixmap.isNull():
             self._image_label.setText("Could not load image")
             self._info_label.setText(f"Error: Failed to load {item.file_path}")
@@ -236,7 +236,7 @@ class ImageDetailPanel(QWidget):
             # For fit mode, recalculate zoom if this is first render of new image
             if self._zoom_mode == "fit":
                 self._zoom = self._calculate_zoom_for_mode()
-            
+
             # Scale image with zoom
             scaled = pixmap.scaled(
                 int(pixmap.width() * self._zoom),
@@ -245,7 +245,7 @@ class ImageDetailPanel(QWidget):
                 Qt.TransformationMode.SmoothTransformation,
             )
             self._image_label.set_image(scaled, zoom_factor=self._zoom)
-            
+
             # Load and set faces if service available
             if self._face_review_service is not None:
                 try:

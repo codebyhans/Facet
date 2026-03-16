@@ -39,7 +39,7 @@ class ClusterImageInspectorWidget(QWidget):
         # Face detection widget
         self._face_detection_widget = FaceDetectionWidget()
         self._face_detection_widget.setStyleSheet("background-color: #1e1e1e; color: white;")
-        
+
         # Scroll area for the face detection widget
         scroll_area = QScrollArea()
         scroll_area.setWidget(self._face_detection_widget)
@@ -49,36 +49,36 @@ class ClusterImageInspectorWidget(QWidget):
         # Toolbar
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         # Faces checkbox
         from PySide6.QtWidgets import QCheckBox
         self._faces_checkbox = QCheckBox("Faces")
         self._faces_checkbox.setStyleSheet("color: #888888; font-size: 11px;")
         self._faces_checkbox.stateChanged.connect(self._on_faces_toggled)
         toolbar_layout.addWidget(self._faces_checkbox)
-        
+
         # Spacer
         toolbar_layout.addStretch()
-        
+
         # Face action area (initially hidden)
         self._face_action_layout = QHBoxLayout()
         self._face_action_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self._face_dropdown = QComboBox()
         self._face_dropdown.setMaximumWidth(200)
         self._face_dropdown.setMinimumWidth(120)
         self._face_action_layout.addWidget(self._face_dropdown)
-        
+
         self._delete_face_btn = QPushButton("Delete face")
         self._delete_face_btn.setMaximumWidth(100)
         self._delete_face_btn.clicked.connect(self._on_delete_face)
         self._face_action_layout.addWidget(self._delete_face_btn)
-        
+
         self._reassign_face_btn = QPushButton("Reassign face…")
         self._reassign_face_btn.setMaximumWidth(120)
         self._reassign_face_btn.clicked.connect(self._on_reassign_face)
         self._face_action_layout.addWidget(self._reassign_face_btn)
-        
+
         # Add face action area to toolbar
         toolbar_layout.addLayout(self._face_action_layout)
 
@@ -87,9 +87,9 @@ class ClusterImageInspectorWidget(QWidget):
         layout.addWidget(scroll_area, 1)
         layout.addLayout(toolbar_layout)
         layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self.setStyleSheet("background-color: #1e1e1e;")
-        
+
         # Initially show placeholder
         self.show_placeholder()
 
@@ -108,7 +108,7 @@ class ClusterImageInspectorWidget(QWidget):
         """
         self._current_file_path = file_path
         self._faces = faces
-        
+
         # Load image with fit-to-panel zoom
         try:
             from PySide6.QtGui import QPixmap
@@ -117,24 +117,24 @@ class ClusterImageInspectorWidget(QWidget):
                 self._face_detection_widget.setText("Could not load image")
                 self._update_face_action_visibility()
                 return
-            
+
             # Calculate fit-to-panel zoom
             viewport_width = self.width()
             viewport_height = self.height()
-            
+
             # If viewport not yet laid out, use widget size
             if viewport_width <= 0 or viewport_height <= 0:
                 viewport_width = self.width()
                 viewport_height = self.height()
-            
+
             # Calculate zoom to fit image with aspect ratio preserved
             width_ratio = viewport_width / pixmap.width() if pixmap.width() > 0 else 1.0
             height_ratio = viewport_height / pixmap.height() if pixmap.height() > 0 else 1.0
             zoom = min(width_ratio, height_ratio)
-            
+
             # Constrain between 0.2 and 3.0
             zoom = max(0.2, min(3.0, zoom))
-            
+
             # Scale image
             scaled = pixmap.scaled(
                 int(pixmap.width() * zoom),
@@ -142,14 +142,14 @@ class ClusterImageInspectorWidget(QWidget):
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
-            
+
             self._face_detection_widget.set_image(scaled, zoom_factor=zoom)
             self._face_detection_widget.set_faces(faces)
             self._face_detection_widget.set_show_bboxes(self._faces_checkbox.isChecked())
-            
+
         except Exception:
             self._face_detection_widget.setText("Error loading image")
-        
+
         self._update_face_action_visibility()
 
     def set_available_persons(self, persons: list[str]) -> None:
@@ -191,7 +191,7 @@ class ClusterImageInspectorWidget(QWidget):
         current_index = self._face_dropdown.currentIndex()
         if current_index >= 0:
             face_id = self._face_dropdown.itemData(current_index)
-            
+
             # Show input dialog for person name
             from PySide6.QtWidgets import QInputDialog
             name, ok = QInputDialog.getItem(

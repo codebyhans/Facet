@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from photo_app.app.widgets import AdvancedFilterEditorDialog
-from photo_app.domain.value_objects import AlbumQuery
 
 if TYPE_CHECKING:
     from photo_app.services.album_service import AlbumService
@@ -75,11 +74,11 @@ class FilterDialogIntegration:
         # Get available options for dropdowns
         all_persons = self.album_service.list_all_persons()
         all_tags = self.tags_service.get_all_tags()
-        
+
         # Get available cameras from image repository
         # This would be a new method you might add to the service
         all_cameras = self._get_available_cameras()
-        
+
         # Create and show dialog
         dialog = AdvancedFilterEditorDialog(
             parent=parent_widget,
@@ -88,7 +87,7 @@ class FilterDialogIntegration:
             available_cameras=sorted(all_cameras),
             current_query=current_album.query_definition if current_album else None,
         )
-        
+
         if dialog.exec() == dialog.Accepted:
             return dialog
         return None

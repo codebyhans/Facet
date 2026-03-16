@@ -20,7 +20,6 @@ def upgrade() -> None:
     """Merge the two migration branches."""
     # The flag column should already exist from 0009_add_image_flag
     # This migration just resolves the branching conflict
-    pass
 
 
 def downgrade() -> None:

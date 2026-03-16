@@ -53,7 +53,7 @@ class PersonStackListItemWidget(QWidget):
 
         # Info (name and count)
         info_layout = QVBoxLayout()
-        
+
         name_label = QLabel()
         if self.stack.person_name:
             name_label.setText(self.stack.person_name)
@@ -65,7 +65,7 @@ class PersonStackListItemWidget(QWidget):
         count_label = QLabel(f"{self.stack.image_count} images")
         count_label.setStyleSheet("font-size: 10px; color: #999;")
         info_layout.addWidget(count_label)
-        
+
         info_layout.addStretch()
         layout.addLayout(info_layout, 1)
 
@@ -110,7 +110,7 @@ class PersonStackWidget(QListWidget):
         selected_items = self.selectedItems()
         if not selected_items:
             return
-        
+
         item = selected_items[0]
         idx = self.row(item)
         if idx >= 0:

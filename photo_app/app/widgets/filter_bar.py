@@ -36,14 +36,14 @@ class FilterPill(QToolButton):
         self._label = label
         self._is_active = False
         self._dropdown_widget: QWidget | None = None
-        
+
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.setText(label)
         self.setCheckable(True)
         self.setChecked(False)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        
+
         # Style the button to look like a pill
         self.setStyleSheet("""
             QToolButton {
@@ -210,12 +210,12 @@ class RatingFilterPill(FilterPill):
             rating_min = query.get("rating_min")
         else:
             rating_min = getattr(query, "rating_min", None)
-        
+
         if rating_min is None:
             self._rating = 0
         else:
             self._rating = int(rating_min) if rating_min else 0
-        
+
         self._update_display()
         # Update button states
         for i, btn in enumerate(self._rating_buttons):
@@ -256,7 +256,7 @@ class PeopleFilterPill(FilterPill):
         self._and_btn.setCheckable(True)
         self._and_btn.setChecked(self._logic == "AND")
         self._and_btn.clicked.connect(self._on_logic_changed)
-        
+
         self._or_btn = QPushButton("OR")
         self._or_btn.setCheckable(True)
         self._or_btn.setChecked(self._logic == "OR")
@@ -336,7 +336,7 @@ class PeopleFilterPill(FilterPill):
                     person_id = widget.property("person_id")
                     if person_id is not None:
                         self._person_ids.append(int(person_id))
-        
+
         self.filter_changed.emit()
         self._update_display()
 
@@ -368,21 +368,21 @@ class PeopleFilterPill(FilterPill):
         else:
             person_ids = list(getattr(query, "person_ids", []))
             logic = "OR"  # Default logic for old queries
-        
+
         self._person_ids = list(person_ids) if person_ids else []
         self._logic = logic
-        
+
         # Update checkbox states
         for i in range(self._people_layout.count()):
             widget = self._people_layout.itemAt(i).widget()
             if isinstance(widget, QCheckBox):
                 person_id = widget.property("person_id")
                 widget.setChecked(person_id in self._person_ids)
-        
+
         # Update logic buttons
         self._and_btn.setChecked(self._logic == "AND")
         self._or_btn.setChecked(self._logic == "OR")
-        
+
         self._update_display()
 
 
@@ -448,13 +448,13 @@ class DateFilterPill(FilterPill):
         dropdown.installEventFilter(self)
 
         self.set_dropdown_widget(dropdown)
-        
+
         # Add signal connections for date changes
         self._date_from_check.toggled.connect(self._on_date_changed)
         self._date_from_edit.dateChanged.connect(self._on_date_changed)
         self._date_to_check.toggled.connect(self._on_date_changed)
         self._date_to_edit.dateChanged.connect(self._on_date_changed)
-        
+
         self._update_display()
 
     def _on_date_changed(self) -> None:
@@ -463,12 +463,12 @@ class DateFilterPill(FilterPill):
             self._date_from = self._date_from_edit.date().toPython()
         else:
             self._date_from = None
-            
+
         if self._date_to_check.isChecked():
             self._date_to = self._date_to_edit.date().toPython()
         else:
             self._date_to = None
-            
+
         self.filter_changed.emit()
         self._update_display()
 
@@ -500,7 +500,7 @@ class DateFilterPill(FilterPill):
         else:
             date_from = getattr(query, "date_from", None)
             date_to = getattr(query, "date_to", None)
-        
+
         if date_from:
             if isinstance(date_from, date):
                 self._date_from = date_from
@@ -526,7 +526,7 @@ class DateFilterPill(FilterPill):
             self._date_to = None
             self._date_to_check.setChecked(False)
             self._date_to_edit.setEnabled(False)
-        
+
         self._update_display()
 
 
@@ -628,9 +628,9 @@ class FlagFilterPill(FilterPill):
         else:
             # Old queries might not have flags, so we skip setting them
             flags = []
-        
+
         self._flags = list(flags) if flags else []
-        
+
         # Update checkbox states
         self._keep_check.setChecked("keep" in self._flags)
         self._undecided_check.setChecked("undecided" in self._flags)
@@ -638,7 +638,7 @@ class FlagFilterPill(FilterPill):
         self._not_discarded_check.setChecked(
             "keep" in self._flags and "undecided" in self._flags and "discard" not in self._flags
         )
-        
+
         self._update_display()
 
 
@@ -651,7 +651,7 @@ class FilterBarWidget(QFrame):
         super().__init__(parent)
         self.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Sunken)
         self.setLineWidth(1)
-        
+
         # Initialize filter pills
         self._rating_pill = RatingFilterPill()
         self._people_pill = PeopleFilterPill()

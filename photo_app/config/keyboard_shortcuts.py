@@ -27,7 +27,7 @@ class KeyboardShortcuts(NamedTuple):
     BATCH_FACES: str = "Ctrl+B"  # Batch face tagging
     NEW_VIRTUAL_ALBUM: str = "Ctrl+Alt+A"  # Create virtual album from filter
     FIND_ALBUM: str = "Ctrl+F"  # Find/filter albums
-    
+
     # Image flagging
     FLAG_KEEP: str = "P"  # Mark image as keep
     FLAG_DISCARD: str = "X"  # Mark image as discard

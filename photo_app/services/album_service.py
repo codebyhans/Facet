@@ -101,22 +101,22 @@ class AlbumService:
             if album is None:
                 logger.warning(f"Album {album_id} not found")
                 return AlbumPage(items=[], offset=offset, limit=limit)
-            
+
             # Combine album query with filter query if provided
             if query_definition:
                 # Parse the filter query
                 filter_query = parse_album_query(query_definition)
-                
+
                 # Combine with album query - filter takes precedence
-                combined_person_ids = filter_query.person_ids if filter_query.person_ids else album.query_definition.person_ids
-                combined_cluster_ids = filter_query.cluster_ids if filter_query.cluster_ids else album.query_definition.cluster_ids
-                combined_date_from = filter_query.date_from if filter_query.date_from else album.query_definition.date_from
-                combined_date_to = filter_query.date_to if filter_query.date_to else album.query_definition.date_to
-                combined_tag_names = filter_query.tag_names if filter_query.tag_names else album.query_definition.tag_names
+                combined_person_ids = filter_query.person_ids or album.query_definition.person_ids
+                combined_cluster_ids = filter_query.cluster_ids or album.query_definition.cluster_ids
+                combined_date_from = filter_query.date_from or album.query_definition.date_from
+                combined_date_to = filter_query.date_to or album.query_definition.date_to
+                combined_tag_names = filter_query.tag_names or album.query_definition.tag_names
                 combined_rating_min = filter_query.rating_min if filter_query.rating_min is not None else album.query_definition.rating_min
                 combined_quality_min = filter_query.quality_min if filter_query.quality_min is not None else album.query_definition.quality_min
-                combined_camera_models = filter_query.camera_models if filter_query.camera_models else album.query_definition.camera_models
-                combined_flags = filter_query.flags if filter_query.flags else getattr(album.query_definition, 'flags', ())
+                combined_camera_models = filter_query.camera_models or album.query_definition.camera_models
+                combined_flags = filter_query.flags or getattr(album.query_definition, "flags", ())
             else:
                 # Use album query only
                 combined_person_ids = album.query_definition.person_ids
@@ -127,8 +127,8 @@ class AlbumService:
                 combined_rating_min = album.query_definition.rating_min
                 combined_quality_min = album.query_definition.quality_min
                 combined_camera_models = album.query_definition.camera_models
-                combined_flags = getattr(album.query_definition, 'flags', ())
-            
+                combined_flags = getattr(album.query_definition, "flags", ())
+
             if self._query_cache_service is None:
                 images = self._image_repository.list_by_filters(
                     person_ids=combined_person_ids,
@@ -162,7 +162,7 @@ class AlbumService:
                     limit=limit,
                 )
                 return AlbumPage(items=images, offset=offset, limit=limit)
-            
+
             images = self._query_cache_service.get_album_images(
                 album_id=album_id,
                 offset=offset,
@@ -207,7 +207,7 @@ class AlbumService:
                 limit=limit,
             )
             return AlbumPage(items=images, offset=offset, limit=limit)
-        
+
         # Use paginated query to avoid loading all images into memory
         items = self._image_repository.list_paginated(offset=offset, limit=limit)
         return AlbumPage(items=items, offset=offset, limit=limit)

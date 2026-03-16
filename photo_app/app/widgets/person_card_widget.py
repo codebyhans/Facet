@@ -5,20 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal, QEvent
-from PySide6.QtGui import QPixmap, QMouseEvent, QContextMenuEvent, QEnterEvent
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QContextMenuEvent, QEnterEvent, QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QMenu,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
-    QMenu,
 )
 
 if TYPE_CHECKING:
-    from photo_app.services.face_review_service import PersonStackSummary
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
+    from photo_app.services.face_review_service import PersonStackSummary
 
 
 class PersonCardWidget(QWidget):
@@ -27,8 +27,8 @@ class PersonCardWidget(QWidget):
     person_clicked = Signal(int, object)  # person_id, PersonStackSummary
 
     def __init__(
-        self, 
-        stack: PersonStackSummary, 
+        self,
+        stack: PersonStackSummary,
         tile_store: ThumbnailTileStore | None = None,
         parent: QWidget | None = None
     ):
@@ -48,7 +48,7 @@ class PersonCardWidget(QWidget):
         # Cover image area
         cover_layout = QHBoxLayout()
         cover_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self._cover_label = QLabel()
         self._cover_label.setFixedSize(120, 120)
         self._cover_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -104,7 +104,7 @@ class PersonCardWidget(QWidget):
     def load_cover_image(self) -> None:
         """Load the cover image for this person using thumbnail tiles."""
         self._cover_label.clear()
-        
+
         # Try to use thumbnail tile first for performance
         if self._tile_store and self.stack.cover_image_id is not None:
             try:
@@ -115,9 +115,9 @@ class PersonCardWidget(QWidget):
                     if not tile_pixmap.isNull():
                         # Crop the specific thumbnail from the tile
                         cropped = tile_pixmap.copy(
-                            tile_lookup.x, 
-                            tile_lookup.y, 
-                            tile_lookup.width, 
+                            tile_lookup.x,
+                            tile_lookup.y,
+                            tile_lookup.width,
                             tile_lookup.height
                         )
                         scaled = cropped.scaled(
@@ -129,7 +129,7 @@ class PersonCardWidget(QWidget):
                         return
             except Exception:
                 pass
-        
+
         # Fallback to loading full image if tile system fails
         if self.stack.cover_image_path:
             try:
@@ -177,38 +177,34 @@ class PersonCardWidget(QWidget):
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         """Handle right-click context menu."""
-        from PySide6.QtWidgets import QMenu
-        
+
         menu = QMenu(self)
-        
+
         # Reclassify action
         reclassify_action = menu.addAction("Reclassify Person")
         reclassify_action.triggered.connect(self._on_reclassify)
-        
+
         # Merge action
         merge_action = menu.addAction("Merge with...")
         merge_action.triggered.connect(self._on_merge)
-        
+
         # Delete action
         delete_action = menu.addAction("Delete Person")
         delete_action.triggered.connect(self._on_delete)
-        
+
         menu.exec(event.globalPos())
 
     def _on_reclassify(self) -> None:
         """Handle reclassify action."""
         # Emit signal to parent for reclassification
-        pass
 
     def _on_merge(self) -> None:
         """Handle merge action."""
         # Emit signal to parent for merge
-        pass
 
     def _on_delete(self) -> None:
         """Handle delete action."""
         # Emit signal to parent for delete
-        pass
 
 
 

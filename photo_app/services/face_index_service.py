@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -8,8 +9,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
-
-import logging
 
 from photo_app.domain.models import Face, Person
 from photo_app.domain.models import Image as ImageEntity
@@ -25,7 +24,9 @@ if TYPE_CHECKING:
     from photo_app.ml.clustering import AgeAwareClustering
     from photo_app.ml.protocols import EmbeddingModel, FaceDetector
     from photo_app.services.album_query_cache_service import AlbumQueryCacheService
-    from photo_app.services.identity_cluster_service import TemporalIdentityClusterService
+    from photo_app.services.identity_cluster_service import (
+        TemporalIdentityClusterService,
+    )
     from photo_app.services.identity_maintenance_jobs import IdentityMaintenanceJobs
 
 

@@ -159,7 +159,7 @@ class AdvancedFilterEditorDialog(QDialog):
                     self._date_from.setDate(dt.date())
                 except ValueError:
                     pass
-            elif hasattr(date_from, 'date'):  # QDate object
+            elif hasattr(date_from, "date"):  # QDate object
                 self._date_from.setDate(date_from)
             else:
                 try:
@@ -177,7 +177,7 @@ class AdvancedFilterEditorDialog(QDialog):
                     self._date_to.setDate(dt.date())
                 except ValueError:
                     pass
-            elif hasattr(date_to, 'date'):  # QDate object
+            elif hasattr(date_to, "date"):  # QDate object
                 self._date_to.setDate(date_to)
             else:
                 try:

@@ -35,9 +35,9 @@ class AlbumViewModel(QObject):
         self._face_review_service = face_review_service
         self._settings_path = settings_path
         self._state = self._load_state()
-        
+
         # Store reference to image repository for flag updates
-        if hasattr(album_service, '_image_repository'):
+        if hasattr(album_service, "_image_repository"):
             self._image_repository = album_service._image_repository
         else:
             self._image_repository = None

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
 import os
+from datetime import date
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap

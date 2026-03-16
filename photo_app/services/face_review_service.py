@@ -15,7 +15,9 @@ if TYPE_CHECKING:
     )
     from photo_app.domain.value_objects import BoundingBox
     from photo_app.services.album_query_cache_service import AlbumQueryCacheService
-    from photo_app.services.identity_cluster_service import TemporalIdentityClusterService
+    from photo_app.services.identity_cluster_service import (
+        TemporalIdentityClusterService,
+    )
 
 
 @dataclass(frozen=True)
@@ -226,12 +228,12 @@ class FaceReviewService:
         cleaned = name.strip()
         if not cleaned:
             return
-        
+
         # Check for name uniqueness
         existing_person = self._person_repository.get_by_name(cleaned)
         if existing_person is not None and existing_person.id != person_id:
             raise ValueError(f"Person name '{cleaned}' already exists")
-        
+
         self._person_repository.update_name(person_id, cleaned)
         if self._query_cache_service is not None:
             self._query_cache_service.invalidate_all()

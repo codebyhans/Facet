@@ -17,7 +17,7 @@ class ClusterImageGridWidget(QListView):
     """Icon-mode photo list for cluster image gallery in person detail view."""
 
     def __init__(
-        self, 
+        self,
         tile_store: ThumbnailTileStore | None = None,
         parent: QListView | None = None
     ) -> None:
@@ -44,16 +44,16 @@ class ClusterImageGridWidget(QListView):
         viewport_width = self.viewport().width()
         if viewport_width <= 0:
             return
-            
+
         # Use 80x80 as base thumbnail size (matching current implementation)
         thumb_w, thumb_h = 80, 80
-        
+
         # Calculate how many thumbnails fit per row (minimum 1)
         cols = max(1, viewport_width // thumb_w)
-        
+
         # Calculate cell width to fill the viewport evenly
         cell_w = viewport_width // cols
-        
+
         # Set grid size - add some padding for spacing
         spacing_padding = 16  # Space for spacing between items
         self.setGridSize(QSize(cell_w, thumb_h + spacing_padding))
@@ -63,6 +63,6 @@ class ClusterImageGridWidget(QListView):
         model = self.model()
         if isinstance(model, ClusterImageModel):
             model.set_images(
-                list(stack.sample_image_paths), 
+                list(stack.sample_image_paths),
                 list(stack.sample_image_ids)
             )

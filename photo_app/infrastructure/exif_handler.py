@@ -9,7 +9,6 @@ from typing import Any
 
 import piexif
 from PIL import Image as PILImage
-from PIL.Image import Image as PILImageType
 
 logger = logging.getLogger(__name__)
 
@@ -226,13 +225,13 @@ class ExifMetadataHandler:
 
         if "rating" in metadata and metadata["rating"] is not None:
             rating = metadata["rating"]
-            xmp_content += f'      <xmp:Rating>{rating}</xmp:Rating>\n'
+            xmp_content += f"      <xmp:Rating>{rating}</xmp:Rating>\n"
 
         if "user_comment" in metadata and metadata["user_comment"] is not None:
             comment = metadata["user_comment"]
             xmp_content += f"      <dc:description>{comment}</dc:description>\n"
 
-        if "keywords" in metadata and metadata["keywords"]:
+        if metadata.get("keywords"):
             keywords = metadata["keywords"]
             xmp_content += "      <dc:subject>\n"
             xmp_content += "        <rdf:Bag>\n"

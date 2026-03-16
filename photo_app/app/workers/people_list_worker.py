@@ -25,12 +25,12 @@ class PeopleListWorkerSignals(QObject):
 
 class PeopleListWorker(QRunnable):
     """Background worker for loading people lists."""
-    
+
     def __init__(
         self,
         face_review_service: FaceReviewService,
         *,
-        tile_store: "ThumbnailTileStore | None" = None,
+        tile_store: ThumbnailTileStore | None = None,
         min_image_count: int = 3,
         sample_limit: int = 20,
         show_unnamed: bool = False,

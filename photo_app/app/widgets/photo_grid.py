@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QModelIndex, QSize, Signal, QTimer, QEvent, Qt
-from PySide6.QtGui import QShowEvent, QKeyEvent, QMouseEvent
+from PySide6.QtCore import QEvent, QModelIndex, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QShowEvent
 from PySide6.QtWidgets import QListView
 
 from photo_app.app.models.photo_grid_model import PhotoGridModel
@@ -33,27 +33,27 @@ class PhotoGridWidget(QListView):
         self.setIconSize(QSize(180, 180))
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.doubleClicked.connect(self._on_double_click)
-        
+
         # Set custom delegate for flag badges and hover buttons
         self.setItemDelegate(PhotoGridDelegate(self))
-        
+
         # Timer to debounce tile requests after model changes
         self._tile_request_timer = QTimer()
         self._tile_request_timer.setSingleShot(True)
         self._tile_request_timer.setInterval(50)  # 50ms debounce
         self._tile_request_timer.timeout.connect(self._notify_visible_items)
-        
+
         self._first_show = True
-        
+
         # Connect model signals to trigger tile loading when data changes
         model.rowsInserted.connect(self._on_model_structure_changed)
-        
+
         # Connect flag change signal from delegate
         self.itemDelegate().flagChanged.connect(self._on_flag_changed)
-        
+
         # Enable keyboard events
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        
+
         # Enable mouse tracking for hover events
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
@@ -68,23 +68,23 @@ class PhotoGridWidget(QListView):
         viewport_width = self.viewport().width()
         if viewport_width <= 0:
             return
-            
+
         # Use the configured thumbnail size from the model
         model = self.model()
-        if model is not None and hasattr(model, 'thumbnail_size'):
+        if model is not None and hasattr(model, "thumbnail_size"):
             thumbnail_size = model.thumbnail_size
         else:
             # Fallback to default size
             thumbnail_size = (128, 128)
-            
+
         thumb_w, thumb_h = thumbnail_size
-        
+
         # Calculate how many thumbnails fit per row (minimum 1)
         cols = max(1, viewport_width // thumb_w)
-        
+
         # Calculate cell width to fill the viewport evenly
         cell_w = viewport_width // cols
-        
+
         # Set grid size - add some padding for spacing and labels
         label_padding = 20  # Space for labels if any
         self.setGridSize(QSize(cell_w, thumb_h + label_padding))
@@ -107,7 +107,7 @@ class PhotoGridWidget(QListView):
         model = self.model()
         if not isinstance(model, PhotoGridModel):
             return
-        
+
         # Get viewport dimensions
         viewport_rect = self.viewport().rect()
         if viewport_rect.isEmpty():
@@ -120,7 +120,7 @@ class PhotoGridWidget(QListView):
             bottom_index = self.indexAt(viewport_rect.bottomLeft())
             first = max(0, top_index.row()) if top_index.isValid() else 0
             last = bottom_index.row() if bottom_index.isValid() else max(first, model.rowCount() - 1)
-        
+
         # Always request tiles for the range, even if empty
         model.notify_visible_rows(first, max(first, last))
 
@@ -140,7 +140,7 @@ class PhotoGridWidget(QListView):
     def _on_flag_changed(self, index: QModelIndex, flag_value: str | None) -> None:
         """Handle flag change from delegate."""
         # Emit a signal to notify the view model about the flag change
-        if hasattr(self, 'flagChanged'):
+        if hasattr(self, "flagChanged"):
             self.flagChanged.emit(index, flag_value)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
@@ -152,7 +152,7 @@ class PhotoGridWidget(QListView):
         # Get the current index
         current_index = self.currentIndex()
         model = self.model()
-        
+
         if not isinstance(model, PhotoGridModel):
             super().keyPressEvent(event)
             return
@@ -160,7 +160,7 @@ class PhotoGridWidget(QListView):
         # Handle flagging shortcuts
         key = event.key()
         modifiers = event.modifiers()
-        
+
         if key == Qt.Key.Key_P and modifiers == Qt.KeyboardModifier.NoModifier:
             # P = keep
             self._on_flag_changed(current_index, "keep")

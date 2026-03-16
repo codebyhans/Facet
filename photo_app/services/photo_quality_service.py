@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from photo_app.ml.quality_scorer import QualityScorer
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

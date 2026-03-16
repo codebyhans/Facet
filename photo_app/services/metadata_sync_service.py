@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from photo_app.infrastructure.exif_handler import ExifMetadataHandler
-
-if TYPE_CHECKING:
-    from photo_app.domain.models import Image
 
 logger = logging.getLogger(__name__)
 

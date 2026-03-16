@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt
-from PySide6.QtGui import QColor, QIcon
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QStyle
 
 
@@ -18,7 +18,7 @@ class AlbumTreeNode:
     album_id: int | None = None
     parent_id: str | None = None
     query_definition: dict[str, object] | None = None
-    children: list["AlbumTreeNode"] = field(default_factory=list)
+    children: list[AlbumTreeNode] = field(default_factory=list)
 
 
 class AlbumTreeModel(QAbstractItemModel):
@@ -39,7 +39,7 @@ class AlbumTreeModel(QAbstractItemModel):
         node = self._node_from_index(parent)
         return len(node.children)
 
-    def index(self, row: int, column: int, parent: QModelIndex = QModelIndex()) -> QModelIndex:  # noqa: N802,E501
+    def index(self, row: int, column: int, parent: QModelIndex = QModelIndex()) -> QModelIndex:  # noqa: E501
         if row < 0 or column != 0:
             return QModelIndex()
         parent_node = self._node_from_index(parent)
@@ -48,7 +48,7 @@ class AlbumTreeModel(QAbstractItemModel):
         child = parent_node.children[row]
         return self.createIndex(row, column, child)
 
-    def parent(self, index: QModelIndex) -> QModelIndex:  # noqa: N802
+    def parent(self, index: QModelIndex) -> QModelIndex:
         if not index.isValid():
             return QModelIndex()
         node = self._node_from_index(index)

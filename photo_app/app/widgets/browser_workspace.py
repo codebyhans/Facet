@@ -114,7 +114,7 @@ class FilmstripView(QListView):
             )
             self.scrollTo(new_index)
             self.currentImageChanged.emit(new_index)
-            return
+            return None
         if key == Qt.Key.Key_Left and row > 0:
             new_index = model.index(row - 1, 0)
             self.setCurrentIndex(new_index)
@@ -124,7 +124,7 @@ class FilmstripView(QListView):
             )
             self.scrollTo(new_index)
             self.currentImageChanged.emit(new_index)
-            return
+            return None
         super().keyPressEvent(event)
 
 

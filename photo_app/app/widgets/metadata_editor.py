@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QGroupBox,
     QLabel,
@@ -65,20 +65,20 @@ class MetadataEditorPanel(QWidget):
         # EXIF info
         exif_group = QGroupBox("EXIF & File Info")
         exif_layout = QVBoxLayout()
-        
+
         # Create scrollable area for EXIF data
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         exif_container = QWidget()
         exif_container_layout = QVBoxLayout(exif_container)
-        
+
         self._exif_labels: dict[str, QLabel] = {}
         for field in ["File", "Camera", "Lens", "Date", "GPS", "ISO", "Shutter", "Aperture"]:
             label = QLabel(f"{field}: —")
             label.setWordWrap(True)
             exif_container_layout.addWidget(label)
             self._exif_labels[field] = label
-        
+
         exif_container_layout.addStretch()
         scroll.setWidget(exif_container)
         exif_layout.addWidget(scroll)
@@ -94,7 +94,7 @@ class MetadataEditorPanel(QWidget):
             image: Image domain model or None to clear
         """
         self._current_image = image
-        
+
         if image is None:
             self._clear_display()
             return

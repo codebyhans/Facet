@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from blake3 import blake3
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -54,7 +55,7 @@ class ImageIndexService:
         """
         import logging
         logger = logging.getLogger(__name__)
-        
+
         scanned_files: list[ScannedFile] = []
         try:
             scanned_files = self._file_scanner.scan(root)
@@ -62,7 +63,7 @@ class ImageIndexService:
         except Exception as exc:
             logger.exception(f"Scan error: {exc}")
             return ImageIndexResult(scanned=0, inserted=0, skipped=0)
-        
+
         # Single DB query to fetch all already-indexed paths — avoids N+1 sessions
         existing_paths: set[str] = set(self._image_repository.list_all_paths())
 
@@ -72,12 +73,12 @@ class ImageIndexService:
 
         for idx, scanned in enumerate(scanned_files):
             file_path = str(scanned.file_path)
-            
+
             # Report progress every 10 files
             if idx % 10 == 0 or idx == len(scanned_files) - 1:
                 if on_progress:
                     on_progress(idx + 1, len(scanned_files))
-            
+
             try:
                 if file_path in existing_paths:
                     continue
@@ -86,7 +87,7 @@ class ImageIndexService:
                 # Use folder date and placeholder dimensions to avoid PIL crashes on malformed images
                 capture_date = scanned.folder_date
                 width, height = 0, 0
-                
+
                 # Use path-based hash instead of reading file to avoid crashes
                 from hashlib import md5
                 image_hash = md5(file_path.encode()).hexdigest()
@@ -102,10 +103,10 @@ class ImageIndexService:
                     indexed_at=now_utc(),
                 )
                 staged.append(entity)
-                
+
                 # Skip thumbnail generation during indexing - generate on-demand while browsing
                 # This prevents crashes from problematic image files
-                    
+
             except (OSError, UnidentifiedImageError, PermissionError, IsADirectoryError):
                 skipped += 1
                 continue
@@ -130,7 +131,7 @@ class ImageIndexService:
 
         if thumbnail_failures > 0:
             logger.info(f"Skipped {thumbnail_failures} thumbnails during indexing (can be regenerated)")
-        
+
         logger.info(f"Index complete: scanned={len(scanned_files)}, inserted={len(staged)}, skipped={skipped}")
         return ImageIndexResult(
             scanned=len(scanned_files),
@@ -152,7 +153,7 @@ class ImageIndexService:
                     if not block:
                         break
                     h.update(block)
-        except (OSError, IOError) as exc:
+        except OSError as exc:
             import logging
             logging.warning(f"Hash computation failed for {file_path}: {exc}")
             # Fallback: use file size and name

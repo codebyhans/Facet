@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -16,7 +17,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
-    QGridLayout,
     QWidget,
 )
 
@@ -26,7 +26,10 @@ from photo_app.app.widgets.person_card_widget import PersonCardWidget
 from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
 if TYPE_CHECKING:
-    from photo_app.services.face_review_service import FaceReviewService, PersonStackSummary
+    from photo_app.services.face_review_service import (
+        FaceReviewService,
+        PersonStackSummary,
+    )
 
 
 class PeopleBrowser(QWidget):
@@ -46,8 +49,8 @@ class PeopleBrowser(QWidget):
 
     def __init__(
         self,
-        face_review_service: "FaceReviewService | None" = None,
-        tile_store: "ThumbnailTileStore | None" = None,
+        face_review_service: FaceReviewService | None = None,
+        tile_store: ThumbnailTileStore | None = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -55,7 +58,7 @@ class PeopleBrowser(QWidget):
         self._tile_store = tile_store
         self._current_stacks: list[PersonStackSummary] = []
         self._current_person_id: int | None = None
-        
+
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -119,7 +122,7 @@ class PeopleBrowser(QWidget):
         scroll_area.setWidget(self._grid_widget)
         scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
         layout.addWidget(scroll_area, 1)
-        
+
         # Store reference to scroll area for responsive grid
         self._stacks_scroll_area = scroll_area
 
@@ -182,36 +185,36 @@ class PeopleBrowser(QWidget):
         # Two-column layout for image grid and inspector
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
-        
+
         # Left pane: Image grid
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         gallery_label = QLabel("All images containing this person:")
         gallery_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 8px 0px 4px 0px; color: #cccccc;")
         left_layout.addWidget(gallery_label)
-        
+
         self._cluster_image_grid = ClusterImageGridWidget()
         self._cluster_image_grid.setStyleSheet("background-color: #1e1e1e;")
-        
+
         # Scroll area for image grid
         image_scroll_area = QScrollArea()
         image_scroll_area.setWidgetResizable(True)
         image_scroll_area.setWidget(self._cluster_image_grid)
         image_scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
         left_layout.addWidget(image_scroll_area, 1)
-        
+
         splitter.addWidget(left_pane)
-        
+
         # Right pane: Image inspector
         self._inspector = ClusterImageInspectorWidget()
         splitter.addWidget(self._inspector)
-        
+
         # Set sizes: left min 250, initial 300; right min 350
         splitter.setSizes([300, 350])
         splitter.setMinimumWidth(600)  # Ensure minimum total width
-        
+
         layout.addWidget(splitter, 1)
 
         # Connect signals
@@ -292,7 +295,7 @@ class PeopleBrowser(QWidget):
             self._person_name_input.setPlaceholderText("")
         else:
             self._person_name_input.setText("")
-            self._person_name_input.setPlaceholderText(f"Name this person...")
+            self._person_name_input.setPlaceholderText("Name this person...")
 
         # Update image count
         self._image_count_label.setText(f"{stack.image_count} images in this cluster")
@@ -312,7 +315,7 @@ class PeopleBrowser(QWidget):
         """Show person detail view for the selected person."""
         # For now, just emit the signal to main window
         # The main window will handle showing the detail view
-        person_id = getattr(person, 'id', 0) if person is not None else 0
+        person_id = getattr(person, "id", 0) if person is not None else 0
         self.person_selected.emit(person_id, faces)
 
     def _on_person_card_clicked(self, person_id: int, stack: PersonStackSummary) -> None:
@@ -327,7 +330,7 @@ class PeopleBrowser(QWidget):
 
     def _on_save_person_name(self) -> None:
         """Handle save person name."""
-        if not hasattr(self, '_current_stack') or getattr(self, '_current_stack', None) is None:
+        if not hasattr(self, "_current_stack") or getattr(self, "_current_stack", None) is None:
             return
 
         name = self._person_name_input.text().strip()
@@ -335,7 +338,7 @@ class PeopleBrowser(QWidget):
             return
 
         # Get current person ID from the stack
-        current_stack = getattr(self, '_current_stack', None)
+        current_stack = getattr(self, "_current_stack", None)
         if current_stack is not None:
             person_id = current_stack.person_id
             # Emit a signal to rename the person
@@ -343,10 +346,10 @@ class PeopleBrowser(QWidget):
 
     def _on_merge_person(self) -> None:
         """Handle merge person button click."""
-        if not hasattr(self, '_current_stack') or getattr(self, '_current_stack', None) is None:
+        if not hasattr(self, "_current_stack") or getattr(self, "_current_stack", None) is None:
             return
 
-        current_stack = getattr(self, '_current_stack', None)
+        current_stack = getattr(self, "_current_stack", None)
         if current_stack is not None:
             person_id = current_stack.person_id
             # Emit a signal to merge the person
@@ -355,15 +358,15 @@ class PeopleBrowser(QWidget):
     def _on_cluster_image_activated(self, index) -> None:
         """Handle image selection in the cluster grid."""
         model = self._cluster_image_grid.model()
-        if not hasattr(model, '_image_paths'):
+        if not hasattr(model, "_image_paths"):
             return
         row = index.row()
         file_path = model._image_paths[row] if row < len(model._image_paths) else None
         if file_path is None:
             return
-        
+
         self._current_inspector_path = file_path
-        
+
         # Load faces via service
         faces = []
         if self._face_review_service is not None:
@@ -371,7 +374,7 @@ class PeopleBrowser(QWidget):
                 faces = self._face_review_service.faces_for_image_path(file_path)
             except Exception:
                 faces = []
-        
+
         # Populate person names for reassign dropdown
         # Populate reassign dropdown with ALL named persons in the library
         person_names: list[str] = []
@@ -403,7 +406,7 @@ class PeopleBrowser(QWidget):
                 )
             except Exception:
                 pass
-        
+
         # Populate reassign dropdown with ALL named persons in the library
         person_names: list[str] = []
         if self._face_review_service is not None:
@@ -419,7 +422,7 @@ class PeopleBrowser(QWidget):
                 person_names = sorted({
                     f.person_name for f in faces if f.person_name is not None
                 })
-        
+
         self._inspector.set_available_persons(person_names)
         self._inspector.load_image(self._current_inspector_path, faces)
 
@@ -429,7 +432,7 @@ class PeopleBrowser(QWidget):
 
     def _calc_grid_cols(self) -> int:
         """Calculate how many cards fit in the current viewport width."""
-        if not hasattr(self, '_stacks_scroll_area'):
+        if not hasattr(self, "_stacks_scroll_area"):
             return 4
         viewport_w = self._stacks_scroll_area.viewport().width()
         cols = max(1, (viewport_w + self._CARD_SPACING) // (self._CARD_WIDTH + self._CARD_SPACING))
@@ -440,13 +443,13 @@ class PeopleBrowser(QWidget):
         super().resizeEvent(event)
         # Only reflow when showing the stacks view and stacks are loaded
         if (
-            hasattr(self, '_stacked_widget')
+            hasattr(self, "_stacked_widget")
             and self._stacked_widget.currentIndex() == 0
-            and hasattr(self, '_current_stacks')
+            and hasattr(self, "_current_stacks")
             and self._current_stacks
         ):
             new_cols = self._calc_grid_cols()
-            if hasattr(self, '_current_grid_cols') and new_cols != self._current_grid_cols:
+            if hasattr(self, "_current_grid_cols") and new_cols != self._current_grid_cols:
                 self.load_stacks(self._current_stacks, self._current_cover_lookups)
 
     def set_threshold(self, threshold: int) -> None:

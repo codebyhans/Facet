@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCompleter,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -19,7 +18,6 @@ from PySide6.QtWidgets import (
 
 if TYPE_CHECKING:
     from PySide6.QtGui import QKeyEvent
-    from PySide6.QtWidgets import QListWidget as ListWidget
 
 
 class TagEditorWidget(QWidget):

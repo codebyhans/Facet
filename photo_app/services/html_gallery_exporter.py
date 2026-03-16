@@ -86,7 +86,7 @@ class HtmlGalleryExporter:
                     import shutil
 
                     shutil.copy2(src, dest)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(f"Failed to copy image: {exc}")
 
         result = {
@@ -161,14 +161,14 @@ class HtmlGalleryExporter:
         # Build group HTML
         groups_html = ""
         for group_name, images in grouped.items():
-            groups_html += f'<section class="group">\n'
-            groups_html += f'<h2>{group_name}</h2>\n'
+            groups_html += '<section class="group">\n'
+            groups_html += f"<h2>{group_name}</h2>\n"
             groups_html += '<div class="gallery">\n'
 
             for image in images:
                 img_name = Path(image.file_path).name
                 rating_stars = "★" * getattr(image, "rating", 0)
-                groups_html += f'''
+                groups_html += f"""
                 <div class="gallery-item">
                     <img src="images/{img_name}" alt="{Path(image.file_path).stem}" 
                          onclick="openLightbox(this.src)">
@@ -176,7 +176,7 @@ class HtmlGalleryExporter:
                         <p class="rating">{rating_stars}</p>
                     </div>
                 </div>
-                '''
+                """
 
             groups_html += "</div>\n</section>\n"
 

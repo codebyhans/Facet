@@ -4,8 +4,8 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import and_, exists, func, nulls_last, select
-from sqlalchemy.orm import Session
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from photo_app.domain.models import (
     Album,
@@ -21,8 +21,8 @@ from photo_app.infrastructure.sqlalchemy_models import (
     AlbumModel,
     AppSettingModel,
     ClusterEmbeddingModel,
-    FaceModel,
     FaceClusterMembershipModel,
+    FaceModel,
     IdentityClusterModel,
     ImageModel,
     ImageTagModel,
@@ -81,30 +81,30 @@ def _to_face(entity: FaceModel) -> Face:
 def _to_album(entity: AlbumModel) -> Album:
     date_from_raw = cast("str | None", entity.query_definition.get("date_from"))
     date_to_raw = cast("str | None", entity.query_definition.get("date_to"))
-    
+
     # Parse new fields with defaults
     raw_tag_names = entity.query_definition.get("tag_names", [])
     tag_names: tuple[str, ...] = ()
     if isinstance(raw_tag_names, list):
         tag_names = tuple(str(t) for t in raw_tag_names if isinstance(t, str))
-    
+
     raw_camera_models = entity.query_definition.get("camera_models", [])
     camera_models: tuple[str, ...] = ()
     if isinstance(raw_camera_models, list):
         camera_models = tuple(str(m) for m in raw_camera_models if isinstance(m, str))
-    
+
     rating_min = entity.query_definition.get("rating_min")
     quality_min = entity.query_definition.get("quality_min")
     location_name = entity.query_definition.get("location_name")
     gps_radius_km = entity.query_definition.get("gps_radius_km")
-    
+
     # Parse flags
     raw_flags = entity.query_definition.get("flags", [])
     flags: tuple[str, ...] = ()
     if isinstance(raw_flags, list):
         valid_flags = {"keep", "discard", "undecided"}
         flags = tuple(str(f) for f in raw_flags if isinstance(f, str) and f in valid_flags)
-    
+
     query = AlbumQuery(
         person_ids=tuple(int(i) for i in entity.query_definition.get("person_ids", [])),
         cluster_ids=tuple(
@@ -228,7 +228,7 @@ class SqlAlchemyImageRepository:
             stmt = (
                 select(ImageModel)
                 .order_by(
-                    nulls_last(ImageModel.capture_date.asc()), 
+                    nulls_last(ImageModel.capture_date.asc()),
                     ImageModel.id.asc()
                     )
                 .offset(offset)
@@ -280,7 +280,7 @@ class SqlAlchemyImageRepository:
     ) -> list[int]:
         with Session(self._engine) as session:
             stmt = select(ImageModel.id)
-            
+
             # Filter by people
             if person_ids:
                 person_clause = exists(
@@ -291,7 +291,7 @@ class SqlAlchemyImageRepository:
                     )
                 )
                 stmt = stmt.where(person_clause)
-            
+
             # Filter by clusters
             if cluster_ids:
                 cluster_clause = exists(
@@ -307,7 +307,7 @@ class SqlAlchemyImageRepository:
                     )
                 )
                 stmt = stmt.where(cluster_clause)
-            
+
             # Filter by tags
             if tag_names:
                 tag_clause = exists(
@@ -317,19 +317,19 @@ class SqlAlchemyImageRepository:
                     )
                 )
                 stmt = stmt.where(tag_clause)
-            
+
             # Filter by rating
             if rating_min is not None:
                 stmt = stmt.where(ImageModel.rating >= rating_min)
-            
+
             # Filter by quality score
             if quality_min is not None:
                 stmt = stmt.where(ImageModel.quality_score >= quality_min)
-            
+
             # Filter by camera model
             if camera_models:
                 stmt = stmt.where(ImageModel.camera_model.in_(camera_models))
-            
+
             # Filter by date range
             clauses = []
             if date_from is not None:
@@ -338,11 +338,11 @@ class SqlAlchemyImageRepository:
                 clauses.append(ImageModel.capture_date <= date_to)
             if clauses:
                 stmt = stmt.where(and_(*clauses))
-            
+
             # Filter by flags
             if flags:
                 stmt = stmt.where(ImageModel.flag.in_(flags))
-            
+
             stmt = stmt.order_by(
                 nulls_last(ImageModel.capture_date.asc()),
                 ImageModel.id.asc(),

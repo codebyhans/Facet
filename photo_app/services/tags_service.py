@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +118,9 @@ class TagService:
         Returns:
             Dictionary mapping tag names to occurrence counts
         """
-        from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
         from sqlalchemy import func
+
+        from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
 
         with Session(self._engine) as session:
             results = session.execute(
@@ -208,8 +205,9 @@ class TagService:
         Returns:
             List of image IDs
         """
-        from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
         from sqlalchemy import func
+
+        from photo_app.infrastructure.sqlalchemy_models import ImageTagModel
 
         with Session(self._engine) as session:
             tag_names = [t.strip().lower() for t in tag_names if t.strip()]

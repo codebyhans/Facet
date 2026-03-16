@@ -31,21 +31,21 @@ from photo_app.ml.embedding_model import (
     OnnxEmbeddingModel,
 )
 from photo_app.ml.face_detector import InsightFaceDetector
-from photo_app.services.album_service import AlbumService
 from photo_app.services.album_query_cache_service import AlbumQueryCacheService
+from photo_app.services.album_service import AlbumService
 from photo_app.services.face_index_service import (
     FaceIndexDependencies,
     FaceIndexService,
 )
 from photo_app.services.face_review_service import FaceReviewService
-from photo_app.services.image_index_service import ImageIndexService
 from photo_app.services.identity_cluster_service import (
     TemporalIdentityClusterService,
     TemporalIdentityConfig,
 )
 from photo_app.services.identity_maintenance_jobs import IdentityMaintenanceJobs
-from photo_app.services.person_service import PersonService
+from photo_app.services.image_index_service import ImageIndexService
 from photo_app.services.metadata_sync_service import MetadataSyncService
+from photo_app.services.person_service import PersonService
 from photo_app.services.settings_service import RuntimeSettings, SettingsService
 from photo_app.services.tags_service import TagService
 
@@ -213,7 +213,7 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
         LOGGER.exception(
             "Face ML initialization failed; disabling face indexing."
         )
-        
+
     # Create metadata and tags services
     metadata_sync_service = MetadataSyncService(engine)
     tag_service = TagService(engine)
@@ -253,11 +253,11 @@ def build_main_window(settings: AppSettings, engine: Engine) -> MainWindow:
             services.runtime_settings,
             services.thumbnail_tile_store,
         )
-    except Exception as exc:
+    except Exception:
             import traceback
             print("DEBUG: MainWindow.__init__ CRASHED:")
             traceback.print_exc()
-            raise        
+            raise
     print("DEBUG: MainWindow constructed")  # ← add
     LOGGER.info("Main window created.")
     return window

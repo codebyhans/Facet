@@ -108,7 +108,7 @@ class AlbumExportService:
 
                 copied_files.append(str(dest_path))
 
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.exception(f"Failed to export {image.file_path}: {exc}")
                 skipped += 1
 

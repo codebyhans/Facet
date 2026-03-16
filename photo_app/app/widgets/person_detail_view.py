@@ -20,7 +20,10 @@ from PySide6.QtWidgets import (
 from photo_app.app.widgets.person_stack_widget import PersonStackWidget
 
 if TYPE_CHECKING:
-    from photo_app.services.face_review_service import FaceReviewService, PersonStackSummary
+    from photo_app.services.face_review_service import (
+        FaceReviewService,
+        PersonStackSummary,
+    )
 
 
 class PersonDetailView(QWidget):
@@ -30,7 +33,7 @@ class PersonDetailView(QWidget):
 
     def __init__(
         self,
-        face_review_service: "FaceReviewService | None" = None,
+        face_review_service: FaceReviewService | None = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -175,7 +178,7 @@ class PersonDetailView(QWidget):
             thumb_label = QLabel()
             thumb_label.setFixedSize(60, 60)
             thumb_label.setStyleSheet("border: 1px solid #444; background-color: #2a2a2a;")
-            
+
             try:
                 pixmap = QPixmap(str(Path(image_path)))
                 if not pixmap.isNull():
@@ -207,7 +210,7 @@ class PersonDetailView(QWidget):
 
         # Emit signal
         self.person_renamed.emit(self._current_stack.person_id, name)
-        
+
         # Update UI to reflect new name
         if self._face_review_service:
             try:

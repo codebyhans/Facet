@@ -4,11 +4,11 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
-
-from PIL import Image, ImageOps, UnidentifiedImageError
 
 from photo_app.infrastructure.sqlalchemy_models import ImageModel, ThumbnailTileModel
 
@@ -129,10 +129,10 @@ class ThumbnailTileBuilder:
         """Persist tile mappings, ignoring duplicates from concurrent runs."""
         if not mappings:
             return
-        
+
         # Count attempted inserts before filtering
         total_attempts = len(mappings)
-        
+
         with Session(self._engine) as session:
             rows = [
                 {
@@ -144,10 +144,10 @@ class ThumbnailTileBuilder:
                 for m in mappings
             ]
             stmt = sqlite_insert(ThumbnailTileModel).values(rows)
-            stmt = stmt.on_conflict_do_nothing(index_elements=['tile_index', 'position_in_tile'])
+            stmt = stmt.on_conflict_do_nothing(index_elements=["tile_index", "position_in_tile"])
             session.execute(stmt)
             session.commit()
-            
+
             # Log if duplicates were likely skipped (simple heuristic)
             # Since we can't reliably get rowcount from SQLite INSERT OR IGNORE,
             # we log a warning-level message when concurrent tile building might be happening

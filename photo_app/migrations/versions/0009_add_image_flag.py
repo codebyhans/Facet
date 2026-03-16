@@ -23,7 +23,7 @@ def upgrade() -> None:
         batch_op.add_column(
             sa.Column("flag", sa.String(20), nullable=True)
         )
-    
+
     # Create index for flag queries
     op.create_index("ix_images_flag", "images", ["flag"])
 

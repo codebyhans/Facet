@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QPersistentModelIndex, QSize, Qt
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    QSize,
+    Qt,
+)
 from PySide6.QtGui import QPixmap
 
 from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
@@ -12,8 +18,8 @@ class ClusterImageModel(QAbstractListModel):
     """Model for cluster image gallery in person detail view."""
 
     def __init__(
-        self, 
-        image_paths: list[str], 
+        self,
+        image_paths: list[str],
         image_ids: list[int] | None = None,
         tile_store: ThumbnailTileStore | None = None,
         parent: Any | None = None
@@ -98,11 +104,11 @@ class ClusterImageModel(QAbstractListModel):
         """Load thumbnail for the image at the given row using thumbnail tiles."""
         if row < 0 or row >= len(self._image_paths):
             return None
-        
+
         # Check cache first
         if row in self._pixmap_cache:
             return self._pixmap_cache[row]
-        
+
         # Try to use thumbnail tile first for performance
         if self._tile_store and row < len(self._image_ids):
             image_id = self._image_ids[row]
@@ -114,9 +120,9 @@ class ClusterImageModel(QAbstractListModel):
                     if not tile_pixmap.isNull():
                         # Crop the specific thumbnail from the tile
                         cropped = tile_pixmap.copy(
-                            tile_lookup.x, 
-                            tile_lookup.y, 
-                            tile_lookup.width, 
+                            tile_lookup.x,
+                            tile_lookup.y,
+                            tile_lookup.width,
                             tile_lookup.height
                         )
                         # Cache the result
@@ -125,7 +131,7 @@ class ClusterImageModel(QAbstractListModel):
                         return cropped
             except Exception:
                 pass
-        
+
         # Fallback to loading full image if tile system fails
         image_path = self._image_paths[row]
         try:
