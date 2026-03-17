@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
@@ -11,6 +11,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from photo_app.domain.models import Image as ImageEntity
 from photo_app.domain.services import now_utc
+from photo_app.infrastructure.exif_handler import ExifMetadataHandler
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -83,10 +84,10 @@ class ImageIndexService:
                 if file_path in existing_paths:
                     continue
 
-                # Skip expensive metadata extraction during indexing
-                # Use folder date and placeholder dimensions to avoid PIL crashes on malformed images
-                capture_date = scanned.folder_date
-                width, height = 0, 0
+                # Extract EXIF-based capture time (fallback to folder date)
+                capture_date, width, height = self._load_image_metadata(
+                    scanned.file_path, scanned.folder_date
+                )
 
                 # Use path-based hash instead of reading file to avoid crashes
                 image_hash = sha256(file_path.encode()).hexdigest()
@@ -94,8 +95,8 @@ class ImageIndexService:
                     id=None,
                     file_path=file_path,
                     capture_date=capture_date,
-                    year=capture_date.year if capture_date else None,
-                    month=capture_date.month if capture_date else None,
+                    year=capture_date.date().year if capture_date else None,
+                    month=capture_date.date().month if capture_date else None,
                     hash=image_hash,
                     width=width,
                     height=height,
@@ -171,17 +172,30 @@ class ImageIndexService:
         self,
         file_path: Path,
         fallback_date: date | None,
-    ) -> tuple[date | None, int, int]:
+    ) -> tuple[datetime | None, int, int]:
         with Image.open(file_path) as img:
             oriented = ImageOps.exif_transpose(img)
             width, height = oriented.size
             exif = oriented.getexif()
             capture = exif.get(36867)
-            capture_date = fallback_date
+            capture_date: datetime | None = None
             if isinstance(capture, str):
-                raw_value = str(capture).split(" ")[0].replace(":", "-")
+                raw_value = str(capture)
                 try:
-                    capture_date = date.fromisoformat(raw_value)
+                    capture_date = datetime.strptime(
+                        raw_value, "%Y:%m:%d %H:%M:%S"
+                    ).replace(tzinfo=UTC)
                 except ValueError:
-                    capture_date = fallback_date
+                    capture_date = None
+            if capture_date is None:
+                exif_data = ExifMetadataHandler.read_exif(str(file_path))
+                capture_date = exif_data.get("datetime_original")
+            if capture_date is None:
+                capture_date = self._fallback_datetime(fallback_date)
             return capture_date, width, height
+
+    @staticmethod
+    def _fallback_datetime(value: date | None) -> datetime | None:
+        if value is None:
+            return None
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)

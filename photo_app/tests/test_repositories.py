@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import create_engine
 
@@ -23,7 +23,7 @@ def test_image_repository_roundtrip() -> None:
             Image(
                 id=None,
                 file_path="C:/photo.jpg",
-                capture_date=date(2024, 2, 3),
+                capture_date=datetime(2024, 2, 3, tzinfo=UTC),
                 year=2024,
                 month=2,
                 hash="h1",

@@ -148,7 +148,7 @@ class AlbumExportService:
 
         # Add actual values if available
         if image.capture_date:
-            replacements["{date}"] = image.capture_date.isoformat()
+            replacements["{date}"] = image.capture_date.date().isoformat()
 
         if image.rating is not None:
             replacements["{rating}"] = str(image.rating)
@@ -176,7 +176,10 @@ class AlbumExportService:
         """
         # Default: by year/month
         if image.capture_date:
-            return f"{image.capture_date.year}/{image.capture_date.month:02d}"
+            return (
+                f"{image.capture_date.date().year}/"
+                f"{image.capture_date.date().month:02d}"
+            )
 
         return "uncategorized"
 

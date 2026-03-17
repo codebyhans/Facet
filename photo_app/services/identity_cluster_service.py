@@ -572,7 +572,7 @@ class TemporalIdentityClusterService:
     def _capture_date(self, image_id: int, image_by_id: dict[int, Image]) -> date:
         image = image_by_id.get(image_id)
         if image is not None and image.capture_date is not None:
-            return image.capture_date
+            return image.capture_date.date()
         return datetime.now(tz=UTC).date()
 
     def _age_bucket_for_face(

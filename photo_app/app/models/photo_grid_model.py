@@ -15,7 +15,7 @@ from PySide6.QtCore import (
 )
 
 if TYPE_CHECKING:
-    from datetime import date
+    from datetime import datetime
 
     from PySide6.QtGui import QPixmap
 
@@ -27,7 +27,7 @@ class PhotoGridItem:
     image_id: int
     image_hash: str
     file_path: str
-    capture_date: date | None
+    capture_date: datetime | None
     tile_index: int | None
     position_in_tile: int | None
     flag: str | None = None
@@ -184,10 +184,10 @@ class PhotoGridModel(QAbstractListModel):
         y = line * self._thumbnail_size[1]
         return tile.copy(QRect(x, y, self._thumbnail_size[0], self._thumbnail_size[1]))
 
-    def _format_capture_date(self, value: date | None) -> str:
+    def _format_capture_date(self, value: datetime | None) -> str:
         if value is None:
             return "Unknown date"
-        return value.isoformat()
+        return value.strftime("%Y-%m-%d %H:%M")
 
     def update_flag(self, row: int, flag: str | None) -> None:
         """Replace the flag on one item and notify the view."""

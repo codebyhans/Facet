@@ -220,7 +220,7 @@ class MergePersonDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    """Lightroom-style 3-panel layout: Albums (left) | Photos (center) | Metadata (right)."""
+    """3-panel layout: Albums (left) | Photos (center) | Metadata (right)."""
 
     def __init__(  # noqa: PLR0913, PLR0915
         self,
@@ -425,7 +425,7 @@ class MainWindow(QMainWindow):
         self._album_gallery_vm.select_library()
         self._refresh_people_list()
         self._restore_geometry()
-        self.setWindowTitle("Photo Browser - Lightroom Edition")
+        self.setWindowTitle("Facet - Photo browser")
 
     def _set_task_status(self, message: str) -> None:
         """Show a persistent background-task message (left side of status bar)."""

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -104,7 +104,9 @@ class HtmlGalleryExporter:
         grouped: dict[str, list[Image]] = {}
         for image in images:
             date_key = (
-                image.capture_date.isoformat() if image.capture_date else "Unknown"
+                image.capture_date.date().isoformat()
+                if image.capture_date
+                else "Unknown"
             )
 
             if date_key not in grouped:
@@ -145,7 +147,9 @@ class HtmlGalleryExporter:
         for image in all_images:
             capture_date = image.capture_date
             date_value = (
-                capture_date.isoformat() if isinstance(capture_date, date) else ""
+                capture_date.date().isoformat()
+                if isinstance(capture_date, datetime)
+                else ""
             )
             image_data.append(
                 {

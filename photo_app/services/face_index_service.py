@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -158,6 +158,20 @@ class FaceIndexService:
             )
         return staged
 
+    def _collect_capture_dates(
+        self,
+        faces: list[Face],
+        image_map: dict[int, ImageEntity],
+    ) -> list[date | None]:
+        dates: list[date | None] = []
+        for face in faces:
+            image = image_map.get(face.image_id)
+            if image is not None and image.capture_date is not None:
+                dates.append(image.capture_date.date())
+            else:
+                dates.append(None)
+        return dates
+
     def _cluster_all_faces(self) -> None:
         faces = self._face_repository.list_all_active()
         if not faces:
@@ -171,14 +185,7 @@ class FaceIndexService:
             for image in self._image_repository.list_all()
             if image.id is not None
         }
-        dates = [
-            (
-                image_map[face.image_id].capture_date
-                if face.image_id in image_map
-                else None
-            )
-            for face in faces
-        ]
+        dates = self._collect_capture_dates(faces, image_map)
         labels = self._clustering.cluster(embeddings, dates)
 
         clusters: dict[int, list[Face]] = {}

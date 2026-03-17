@@ -118,7 +118,7 @@ def _seed_images_and_faces(
         Image(
             id=None,
             file_path=f"C:/synthetic/{index:06d}.jpg",
-            capture_date=date(2020 + (index % 5), 1, 1),
+            capture_date=datetime(2020 + (index % 5), 1, 1, tzinfo=UTC),
             year=2020 + (index % 5),
             month=1,
             hash=f"hash-{index:06d}",

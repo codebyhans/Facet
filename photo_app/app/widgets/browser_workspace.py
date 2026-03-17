@@ -132,7 +132,7 @@ class FilmstripView(QListView):
 
 
 class BrowserWorkspaceWidget(QWidget):
-    """Large preview above a Lightroom-like horizontal filmstrip."""
+    """Large preview above a filmstrip."""
 
     photoActivated = Signal(int)  # noqa: N815
 

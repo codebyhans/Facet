@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 import numpy as np
 from sqlalchemy import create_engine
@@ -44,7 +44,7 @@ def test_temporal_service_assigns_similar_faces_to_one_cluster() -> None:
             Image(
                 id=None,
                 file_path="C:/child.jpg",
-                capture_date=date(2008, 5, 1),
+                capture_date=datetime(2008, 5, 1, tzinfo=UTC),
                 year=2008,
                 month=5,
                 hash="i1",
@@ -55,7 +55,7 @@ def test_temporal_service_assigns_similar_faces_to_one_cluster() -> None:
             Image(
                 id=None,
                 file_path="C:/adult.jpg",
-                capture_date=date(2025, 5, 1),
+                capture_date=datetime(2025, 5, 1, tzinfo=UTC),
                 year=2025,
                 month=5,
                 hash="i2",
@@ -124,7 +124,7 @@ def test_image_filter_by_cluster_ids() -> None:
             Image(
                 id=None,
                 file_path="C:/a.jpg",
-                capture_date=date(2024, 1, 1),
+                capture_date=datetime(2024, 1, 1, tzinfo=UTC),
                 year=2024,
                 month=1,
                 hash="a1",
@@ -135,7 +135,7 @@ def test_image_filter_by_cluster_ids() -> None:
             Image(
                 id=None,
                 file_path="C:/b.jpg",
-                capture_date=date(2024, 1, 2),
+                capture_date=datetime(2024, 1, 2, tzinfo=UTC),
                 year=2024,
                 month=1,
                 hash="b1",

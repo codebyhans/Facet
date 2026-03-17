@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, exists, func, nulls_last, select
 from sqlalchemy.orm import Session
@@ -78,8 +78,8 @@ def _to_face(entity: FaceModel) -> Face:
 
 
 def _to_album(entity: AlbumModel) -> Album:
-    date_from_raw = cast("str | None", entity.query_definition.get("date_from"))
-    date_to_raw = cast("str | None", entity.query_definition.get("date_to"))
+    date_from_raw = entity.query_definition.get("date_from")
+    date_to_raw = entity.query_definition.get("date_to")
 
     # Parse new fields with defaults
     raw_tag_names = entity.query_definition.get("tag_names", [])
@@ -111,8 +111,8 @@ def _to_album(entity: AlbumModel) -> Album:
         cluster_ids=tuple(
             int(i) for i in entity.query_definition.get("cluster_ids", [])
         ),
-        date_from=date.fromisoformat(date_from_raw) if date_from_raw else None,
-        date_to=date.fromisoformat(date_to_raw) if date_to_raw else None,
+        date_from=_parse_query_date(date_from_raw),
+        date_to=_parse_query_date(date_to_raw),
         tag_names=tag_names,
         rating_min=int(rating_min) if rating_min is not None else None,
         quality_min=float(quality_min) if quality_min is not None else None,
@@ -160,6 +160,19 @@ def _to_cluster_embedding(entity: ClusterEmbeddingModel) -> ClusterEmbedding:
         sample_count=entity.sample_count,
         updated_at=entity.updated_at,
     )
+
+
+def _parse_query_date(raw: object) -> date | None:
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            return None
+    return None
 
 
 class SqlAlchemyImageRepository:
@@ -333,9 +346,9 @@ class SqlAlchemyImageRepository:
             # Filter by date range
             clauses = []
             if date_from is not None:
-                clauses.append(ImageModel.capture_date >= date_from)
+                clauses.append(func.date(ImageModel.capture_date) >= date_from)
             if date_to is not None:
-                clauses.append(ImageModel.capture_date <= date_to)
+                clauses.append(func.date(ImageModel.capture_date) <= date_to)
             if clauses:
                 stmt = stmt.where(and_(*clauses))
 

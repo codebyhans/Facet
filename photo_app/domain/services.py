@@ -6,9 +6,20 @@ from typing import cast
 from photo_app.domain.value_objects import AlbumQuery
 
 
-def parse_iso_date(value: str | None) -> date | None:
+def parse_iso_date(value: object) -> date | None:
     """Convert ISO date string to date if present."""
-    return None if value is None else date.fromisoformat(value)
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
 
 
 def now_utc() -> datetime:
@@ -68,6 +79,8 @@ def _extract_str_tuple(raw: object, *, normalize: bool = False) -> tuple[str, ..
 
 
 def _parse_date_field(raw: object) -> date | None:
+    if isinstance(raw, datetime):
+        return raw.date()
     if isinstance(raw, date):
         return raw
     if isinstance(raw, str):

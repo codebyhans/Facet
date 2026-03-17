@@ -32,7 +32,7 @@ def test_album_service_translates_query_to_repo_filters() -> None:
             Image(
                 id=None,
                 file_path="C:/a.jpg",
-                capture_date=date(2022, 1, 1),
+                capture_date=datetime(2022, 1, 1, tzinfo=UTC),
                 year=2022,
                 month=1,
                 hash="ha",
@@ -43,7 +43,7 @@ def test_album_service_translates_query_to_repo_filters() -> None:
             Image(
                 id=None,
                 file_path="C:/b.jpg",
-                capture_date=date(2024, 1, 1),
+                capture_date=datetime(2024, 1, 1, tzinfo=UTC),
                 year=2024,
                 month=1,
                 hash="hb",

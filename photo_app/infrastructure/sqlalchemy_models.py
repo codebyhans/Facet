@@ -31,7 +31,7 @@ class ImageModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     file_path: Mapped[str] = mapped_column(String(1024), unique=True, index=True)
-    capture_date: Mapped[date | None] = mapped_column(Date, index=True)
+    capture_date: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     year: Mapped[int | None] = mapped_column(Integer, index=True)
     month: Mapped[int | None] = mapped_column(Integer)
     hash: Mapped[str] = mapped_column(String(64), unique=True)

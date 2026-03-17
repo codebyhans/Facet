@@ -49,7 +49,7 @@ def test_thumbnail_tile_generation_and_lookup(tmp_path: Path) -> None:
             Image(
                 id=None,
                 file_path=str(path),
-                capture_date=date(2024, 1, idx + 1),
+                capture_date=datetime(2024, 1, idx + 1, tzinfo=UTC),
                 year=2024,
                 month=1,
                 hash=f"h{idx}",
@@ -101,7 +101,7 @@ def test_album_query_cache_hit_miss_and_invalidation() -> None:
             Image(
                 id=None,
                 file_path="C:/1.jpg",
-                capture_date=date(2022, 1, 1),
+                capture_date=datetime(2022, 1, 1, tzinfo=UTC),
                 year=2022,
                 month=1,
                 hash="h1",
@@ -112,7 +112,7 @@ def test_album_query_cache_hit_miss_and_invalidation() -> None:
             Image(
                 id=None,
                 file_path="C:/2.jpg",
-                capture_date=date(2023, 1, 1),
+                capture_date=datetime(2023, 1, 1, tzinfo=UTC),
                 year=2023,
                 month=1,
                 hash="h2",
@@ -123,7 +123,7 @@ def test_album_query_cache_hit_miss_and_invalidation() -> None:
             Image(
                 id=None,
                 file_path="C:/3.jpg",
-                capture_date=date(2024, 1, 1),
+                capture_date=datetime(2024, 1, 1, tzinfo=UTC),
                 year=2024,
                 month=1,
                 hash="h3",

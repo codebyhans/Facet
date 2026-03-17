@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import UTC, datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
@@ -23,8 +23,8 @@ def test_photo_grid_pagination_signal() -> None:
     model = PhotoGridModel()
     model.append_page(
         [
-            PhotoGridItem(1, "h1", "a.jpg", date(2020, 1, 1), 1, 0),
-            PhotoGridItem(2, "h2", "b.jpg", date(2021, 1, 1), 1, 1),
+            PhotoGridItem(1, "h1", "a.jpg", datetime(2020, 1, 1, tzinfo=UTC), 1, 0),
+            PhotoGridItem(2, "h2", "b.jpg", datetime(2021, 1, 1, tzinfo=UTC), 1, 1),
         ],
         has_more=True,
     )

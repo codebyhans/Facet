@@ -273,7 +273,7 @@ class ImageDetailPanel(QWidget):
             filename = Path(item.file_path).name
             dimensions = f"{pixmap.width()}x{pixmap.height()}"
             date_str = (
-                item.capture_date.strftime("%Y-%m-%d")
+                item.capture_date.strftime("%Y-%m-%d %H:%M")
                 if item.capture_date
                 else "Unknown date"
             )

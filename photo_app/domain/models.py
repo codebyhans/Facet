@@ -15,7 +15,7 @@ class Image:
 
     id: int | None
     file_path: str
-    capture_date: date | None
+    capture_date: datetime | None
     year: int | None
     month: int | None
     hash: str

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from photo_app.domain.models import Album, Face, Image, Person
 from photo_app.domain.value_objects import AlbumQuery, BoundingBox
@@ -14,7 +14,7 @@ def test_entities_store_expected_data() -> None:
     image = Image(
         id=1,
         file_path="C:/x.jpg",
-        capture_date=date(TEST_YEAR, 1, 1),
+        capture_date=datetime(TEST_YEAR, 1, 1, tzinfo=UTC),
         year=TEST_YEAR,
         month=1,
         hash="abc",

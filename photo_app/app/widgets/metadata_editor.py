@@ -141,8 +141,12 @@ class MetadataEditorPanel(QWidget):
         aperture = getattr(image, "aperture", None)
         self._exif_labels["Aperture"].setText(f"Aperture: {aperture or '—'}")
 
-        datetime_str = getattr(image, "datetime_original", None)
-        self._exif_labels["Date"].setText(f"Date: {datetime_str or '—'}")
+        datetime_value = getattr(image, "capture_date", None)
+        if datetime_value is not None:
+            formatted = datetime_value.strftime("%Y-%m-%d %H:%M")
+        else:
+            formatted = getattr(image, "datetime_original", None)
+        self._exif_labels["Date"].setText(f"Date: {formatted or '—'}")
 
         lat = getattr(image, "gps_latitude", None)
         lon = getattr(image, "gps_longitude", None)
