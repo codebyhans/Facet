@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from photo_app.infrastructure.exif_handler import ExifMetadataHandler
+from photo_app.infrastructure.sqlalchemy_models import ImageModel, ImageTagModel
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
+MIN_RATING = 1
+MAX_RATING = 5
 
 
 class MetadataSyncService:
@@ -42,8 +48,6 @@ class MetadataSyncService:
             - Writes rating and notes to EXIF file
             - Writes tags to sidecar/EXIF keywords
         """
-        from photo_app.infrastructure.sqlalchemy_models import ImageModel, ImageTagModel
-
         with Session(self._engine) as session:
             # Fetch image from DB
             image = session.execute(
@@ -51,7 +55,7 @@ class MetadataSyncService:
             ).scalar_one_or_none()
 
             if not image:
-                logger.warning(f"Image {image_id} not found")
+                logger.warning("Image %s not found", image_id)
                 return
 
             # Prepare metadata dict for EXIF write
@@ -59,8 +63,8 @@ class MetadataSyncService:
 
             # Update and sync rating
             if rating is not None:
-                if not (1 <= rating <= 5):
-                    logger.warning(f"Invalid rating {rating}, skipping")
+                if not (MIN_RATING <= rating <= MAX_RATING):
+                    logger.warning("Invalid rating %s, skipping", rating)
                 else:
                     image.rating = rating
                     exif_metadata["rating"] = rating
@@ -80,7 +84,7 @@ class MetadataSyncService:
                     session.delete(tag)
 
                 # Add new tags
-                now = datetime.utcnow()
+                now = datetime.now(tz=datetime.UTC)
                 for tag_name in tags:
                     tag = ImageTagModel(
                         image_id=image_id, tag_name=tag_name, created_at=now
@@ -94,18 +98,21 @@ class MetadataSyncService:
             if exif_metadata:
                 try:
                     ExifMetadataHandler.write_exif(image.file_path, exif_metadata)
-                except Exception as e:
-                    logger.error(f"Failed to write EXIF for {image.file_path}: {e}")
+                except Exception:
+                    logger.exception("Failed to write EXIF for %s", image.file_path)
 
             # Update database
-            image.updated_at = datetime.utcnow()
+            image.updated_at = datetime.now(tz=datetime.UTC)
             session.commit()
             logger.info(
-                f"Synced metadata for image {image_id}: rating={rating}, "
-                f"tags={tags}, notes={user_notes}"
+                "Synced metadata for image %s: rating=%s, tags=%s, notes=%s",
+                image_id,
+                rating,
+                tags,
+                user_notes,
             )
 
-    def batch_sync_metadata(
+    def batch_sync_metadata(  # noqa: C901, PLR0912
         self,
         image_ids: list[int],
         rating: int | None = None,
@@ -121,18 +128,16 @@ class MetadataSyncService:
             add_tags: Tags to add to all images
             remove_tags: Tags to remove from all images
         """
-        from photo_app.infrastructure.sqlalchemy_models import ImageModel, ImageTagModel
-
         with Session(self._engine) as session:
             images = session.execute(
                 select(ImageModel).where(ImageModel.id.in_(image_ids))
             ).scalars()
 
-            now = datetime.utcnow()
+            now = datetime.now(tz=datetime.UTC)
             processed = 0
 
             for image in images:
-                if rating is not None and 1 <= rating <= 5:
+                if rating is not None and MIN_RATING <= rating <= MAX_RATING:
                     image.rating = rating
 
                 # Handle tags
@@ -181,11 +186,11 @@ class MetadataSyncService:
                 for image in images:
                     try:
                         ExifMetadataHandler.write_exif(image.file_path, exif_metadata)
-                    except Exception as e:
-                        logger.error(f"Failed to write EXIF for {image.file_path}: {e}")
+                    except Exception:
+                        logger.exception("Failed to write EXIF for %s", image.file_path)
 
             session.commit()
-            logger.info(f"Batch synced {processed} images")
+            logger.info("Batch synced %s images", processed)
 
     def extract_and_store_metadata(self, image_id: int) -> None:
         """
@@ -197,15 +202,13 @@ class MetadataSyncService:
         Args:
             image_id: Image ID to enrich with EXIF data
         """
-        from photo_app.infrastructure.sqlalchemy_models import ImageModel
-
         with Session(self._engine) as session:
             image = session.execute(
                 select(ImageModel).where(ImageModel.id == image_id)
             ).scalar_one_or_none()
 
             if not image:
-                logger.warning(f"Image {image_id} not found")
+                logger.warning("Image %s not found", image_id)
                 return
 
             try:
@@ -226,6 +229,6 @@ class MetadataSyncService:
                     image.user_notes = exif_data["user_comment"]
 
                 session.commit()
-                logger.info(f"Extracted EXIF metadata for image {image_id}")
-            except Exception as e:
-                logger.error(f"Failed to extract EXIF for {image.file_path}: {e}")
+                logger.info("Extracted EXIF metadata for image %s", image_id)
+            except Exception:
+                logger.exception("Failed to extract EXIF for %s", image.file_path)

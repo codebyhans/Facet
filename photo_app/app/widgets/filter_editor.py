@@ -79,7 +79,7 @@ class FilterEditorWidget(QWidget):
             self._years_layout.addWidget(box)
             self._years.append((year, box))
 
-    def set_query_definition(self, query_definition: dict[str, object]) -> None:
+    def set_query_definition(self, query_definition: dict[str, object]) -> None:  # noqa: C901
         """Set editor state from existing query dictionary."""
         raw_from = query_definition.get("date_from")
         if isinstance(raw_from, str):

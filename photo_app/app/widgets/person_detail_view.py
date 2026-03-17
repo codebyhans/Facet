@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QSpacerItem,
     QVBoxLayout,
     QWidget,
 )
@@ -25,6 +29,7 @@ if TYPE_CHECKING:
         PersonStackSummary,
     )
 
+LOGGER = logging.getLogger(__name__)
 
 class PersonDetailView(QWidget):
     """Main view for reviewing and naming face clusters."""
@@ -35,13 +40,13 @@ class PersonDetailView(QWidget):
         self,
         face_review_service: FaceReviewService | None = None,
         parent: QWidget | None = None,
-    ):
+    ) -> None:
         super().__init__(parent)
         self._face_review_service = face_review_service
         self._current_stack: PersonStackSummary | None = None
         self._setup_ui()
 
-    def _setup_ui(self) -> None:
+    def _setup_ui(self) -> None:  # noqa: PLR0915
         """Setup the user interface."""
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -117,14 +122,14 @@ class PersonDetailView(QWidget):
 
     def load_stacks(self, stacks: list[PersonStackSummary]) -> None:
         """Load and display person stacks.
-        
+
         Args:
             stacks: List of PersonStackSummary objects to display
         """
         self._stacks_widget.show_stacks(stacks)
         self._clear_detail_view()
 
-    def _on_stack_selected(self, person_id: int, stack: PersonStackSummary) -> None:
+    def _on_stack_selected(self, _person_id: int, stack: PersonStackSummary) -> None:
         """Handle stack selection."""
         self._current_stack = stack
         self._update_detail_view(stack)
@@ -143,6 +148,7 @@ class PersonDetailView(QWidget):
                     )
                     self._cover_label.setPixmap(scaled)
             except Exception:
+                LOGGER.exception("Failed to load cover image for %s", stack.person_id)
                 self._cover_label.setText("Could not load image")
 
         # Update name input
@@ -157,8 +163,6 @@ class PersonDetailView(QWidget):
 
     def _update_gallery(self, stack: PersonStackSummary) -> None:
         """Update the gallery of images in the cluster."""
-        from PySide6.QtWidgets import QGridLayout, QSizePolicy, QSpacerItem
-
         # Clear existing
         while self._gallery_layout.count():
             item = self._gallery_layout.takeAt(0)
@@ -188,7 +192,7 @@ class PersonDetailView(QWidget):
                     )
                     thumb_label.setPixmap(scaled)
             except Exception:
-                pass
+                LOGGER.exception("Failed to load thumbnail for %s", image_path)
 
             grid_layout.addWidget(thumb_label, idx // cols, idx % cols)
 
@@ -228,7 +232,7 @@ class PersonDetailView(QWidget):
                 # Refresh the list to show updated name
                 # This would require reloading stacks from service
             except Exception:
-                pass
+                LOGGER.exception("Failed to rename person stack %s", self._current_stack.person_id)
 
     def _clear_detail_view(self) -> None:
         """Clear the detail view."""

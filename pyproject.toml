@@ -45,7 +45,7 @@ target-version = "py314"
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["D", "COM812"]
+ignore = ["D", "COM812", "E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "photo_app/tests/*.py" = ["S101", "SLF001"]

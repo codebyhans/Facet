@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from photo_app.app.models.album_tree_model import AlbumTreeModel, AlbumTreeNode
 
+ROOT_CHILD_COUNT = 1
+FAMILY_CHILD_COUNT = 2
+TOP_LEVEL_AFTER_MOVE = 2
+
 
 def test_album_tree_construction() -> None:
     model = AlbumTreeModel()
@@ -18,10 +22,10 @@ def test_album_tree_construction() -> None:
     ]
     model.set_nodes(nodes)
 
-    assert model.rowCount() == 1
+    assert model.rowCount() == ROOT_CHILD_COUNT
     family = model.index(0, 0)
     assert model.data(family) == "Family"
-    assert model.rowCount(family) == 2
+    assert model.rowCount(family) == FAMILY_CHILD_COUNT
 
 
 def test_album_tree_add_and_move() -> None:
@@ -30,12 +34,12 @@ def test_album_tree_add_and_move() -> None:
     model.add_node(AlbumTreeNode(node_id="v-1", name="Album", kind="virtual", album_id=1), "f-root")
 
     parent_index = model.index_from_node_id("f-root")
-    assert model.rowCount(parent_index) == 1
+    assert model.rowCount(parent_index) == ROOT_CHILD_COUNT
 
     moved = model.move_node("v-1", None)
     assert moved
     assert model.rowCount(parent_index) == 0
-    assert model.rowCount() == 2
+    assert model.rowCount() == TOP_LEVEL_AFTER_MOVE
 
 
 def test_album_tree_prevents_subtree_move() -> None:

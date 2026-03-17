@@ -34,7 +34,7 @@ class QualityScorer:
             # Read image
             img = cv2.imread(image_path)
             if img is None:
-                logger.warning(f"Failed to read image: {image_path}")
+                logger.warning("Failed to read image: %s", image_path)
                 return 0.5
 
             # Convert to grayscale for sharpness
@@ -72,16 +72,17 @@ class QualityScorer:
             )
 
             logger.debug(
-                f"Image {image_path}: "
-                f"sharpness={sharpness_score:.2f}, "
-                f"brightness={brightness_score:.2f}, "
-                f"saturation={saturation_score:.2f}, "
-                f"contrast={contrast_score:.2f}, "
-                f"quality={quality:.2f}"
+                "Image %s: sharpness=%.2f, brightness=%.2f, saturation=%.2f, contrast=%.2f, quality=%.2f",
+                image_path,
+                sharpness_score,
+                brightness_score,
+                saturation_score,
+                contrast_score,
+                quality,
             )
 
             return float(np.clip(quality, 0.0, 1.0))
 
-        except Exception as e:
-            logger.error(f"Error computing quality score for {image_path}: {e}")
+        except Exception:
+            logger.exception("Error computing quality score for %s", image_path)
             return 0.5  # Default to neutral

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -51,7 +52,7 @@ class HtmlGalleryExporter:
         # Get album images
         album_images = self.image_repository.list_album_images(album_id)
         if not album_images:
-            logger.warning(f"Album {album_id} has no images")
+            logger.warning("Album %s has no images", album_id)
             return {
                 "html_file": None,
                 "total_images": 0,
@@ -83,11 +84,9 @@ class HtmlGalleryExporter:
                 src = Path(image.file_path)
                 if src.exists():
                     dest = images_dir / src.name
-                    import shutil
-
                     shutil.copy2(src, dest)
-            except Exception as exc:
-                logger.exception(f"Failed to copy image: {exc}")
+            except Exception:
+                logger.exception("Failed to copy image %s", src)
 
         result = {
             "html_file": str(html_file),
@@ -95,7 +94,7 @@ class HtmlGalleryExporter:
             "gallery_url": html_file.as_uri(),
         }
 
-        logger.info(f"Gallery generated: {html_file}")
+        logger.info("Gallery generated: %s", html_file)
         return result
 
     def _group_by_date(self, images: list) -> dict[str, list]:
@@ -104,11 +103,8 @@ class HtmlGalleryExporter:
         for image in images:
             try:
                 dt = image.datetime_original
-                if isinstance(dt, str):
-                    date_key = dt[:10]  # YYYY-MM-DD
-                else:
-                    date_key = "Unknown"
-            except Exception:
+                date_key = dt[:10] if isinstance(dt, str) else "Unknown"
+            except (AttributeError, TypeError, ValueError):
                 date_key = "Unknown"
 
             if date_key not in grouped:
@@ -145,16 +141,15 @@ class HtmlGalleryExporter:
             HTML content as string
         """
         # Build image data for JavaScript
-        image_data = []
-        for image in all_images:
-            image_data.append(
-                {
-                    "src": f"images/{Path(image.file_path).name}",
-                    "alt": Path(image.file_path).stem,
-                    "rating": getattr(image, "rating", 0),
-                    "date": getattr(image, "datetime_original", ""),
-                }
-            )
+        image_data = [
+            {
+                "src": f"images/{Path(image.file_path).name}",
+                "alt": Path(image.file_path).stem,
+                "rating": getattr(image, "rating", 0),
+                "date": getattr(image, "datetime_original", ""),
+            }
+            for image in all_images
+        ]
 
         image_json = json.dumps(image_data)
 
@@ -170,7 +165,7 @@ class HtmlGalleryExporter:
                 rating_stars = "★" * getattr(image, "rating", 0)
                 groups_html += f"""
                 <div class="gallery-item">
-                    <img src="images/{img_name}" alt="{Path(image.file_path).stem}" 
+                    <img src="images/{img_name}" alt="{Path(image.file_path).stem}"
                          onclick="openLightbox(this.src)">
                     <div class="photo-info">
                         <p class="rating">{rating_stars}</p>
@@ -180,7 +175,7 @@ class HtmlGalleryExporter:
 
             groups_html += "</div>\n</section>\n"
 
-        html = f"""<!DOCTYPE html>
+        return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -352,9 +347,9 @@ class HtmlGalleryExporter:
     <div id="lightbox" class="lightbox">
         <div class="lightbox-content">
             <button class="lightbox-close" onclick="closeLightbox()">&times;</button>
-            <button class="lightbox-nav lightbox-prev" onclick="prevImage()">❮</button>
+            <button class="lightbox-nav lightbox-prev" onclick="prevImage()">&lsaquo;</button>
             <img id="lightbox-img" class="lightbox-img" src="" alt="">
-            <button class="lightbox-nav lightbox-next" onclick="nextImage()">❯</button>
+            <button class="lightbox-nav lightbox-next" onclick="nextImage()">&rsaquo;</button>
         </div>
     </div>
 
@@ -397,4 +392,3 @@ class HtmlGalleryExporter:
 </body>
 </html>
 """
-        return html

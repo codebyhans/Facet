@@ -16,7 +16,7 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:
+def upgrade() -> None:  # noqa: C901
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
@@ -64,7 +64,7 @@ def upgrade() -> None:
         op.create_index("ix_image_tags_tag_name", "image_tags", ["tag_name"])
 
 
-def downgrade() -> None:
+def downgrade() -> None:  # noqa: C901
     # Drop image_tags table
     tables = set(sa.inspect(op.get_bind()).get_table_names())
     if "image_tags" in tables:

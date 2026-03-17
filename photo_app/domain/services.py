@@ -16,7 +16,7 @@ def now_utc() -> datetime:
     return datetime.now(tz=UTC)
 
 
-def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
+def parse_album_query(definition: dict[str, object]) -> AlbumQuery:  # noqa: C901, PLR0912, PLR0915
     """Parse and validate an album query payload."""
     raw_person_ids = definition.get("person_ids", [])
     if isinstance(raw_person_ids, list):

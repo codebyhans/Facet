@@ -1,5 +1,6 @@
 """Image detail viewer panel - integrated into main window."""
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,10 +24,11 @@ if TYPE_CHECKING:
     from photo_app.config.settings import AppSettings
     from photo_app.services.face_review_service import FaceReviewService
 
+LOGGER = logging.getLogger(__name__)
 
 class ImageDetailPanel(QWidget):
     """Integrated image viewer panel for the main window.
-    
+
     Shows:
     - Full image in center with zoom/pan capabilities
     - Image info (filename, dimensions, capture date)
@@ -38,7 +40,7 @@ class ImageDetailPanel(QWidget):
     image_selected = Signal(int)  # Emitted when user navigates to different image
     reindex_requested = Signal(str)  # Emitted when user requests re-indexing (file_path)
 
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self,
         parent: QWidget | None = None,
         settings: AppSettings | None = None,
@@ -130,7 +132,7 @@ class ImageDetailPanel(QWidget):
         selected_index: int
     ) -> None:
         """Load image list and show image at selected_index.
-        
+
         Args:
             items: List of PhotoGridItem objects
             selected_index: Index of image to display
@@ -144,44 +146,46 @@ class ImageDetailPanel(QWidget):
             self._zoom = 1.0
         self._render_current()
 
+    def get_items(self) -> list[PhotoGridItem]:
+        """Get the current items list."""
+        return self._items
+
+    def get_current_index(self) -> int:
+        """Get the current index."""
+        return self._current_index
+
+    def get_reindex_button(self) -> QPushButton:
+        """Get the reindex button for enabling/disabling."""
+        return self._reindex_btn
+
     def _calculate_zoom_for_mode(self) -> float:
         """Calculate zoom level based on current zoom mode.
-        
+
         Returns:
             Zoom factor (1.0 = 100%, 0.5 = 50%, 2.0 = 200%, etc.)
         """
-        if not self._items or self._current_index >= len(self._items):
-            return 1.0
-
-        if self._zoom_mode == "100%":
-            return 1.0
-        if self._zoom_mode == "fit":
+        zoom = 1.0
+        if self._items and self._current_index < len(self._items) and self._zoom_mode == "fit":
             # Calculate zoom to fit image in viewport
             viewport = self._scroll_area.viewport()
             viewport_width = viewport.width()
             viewport_height = viewport.height()
 
-            # If viewport not yet laid out, skip fit calculation
-            if viewport_width <= 0 or viewport_height <= 0:
-                return 1.0
+            if viewport_width > 0 and viewport_height > 0:
+                item = self._items[self._current_index]
+                try:
+                    pixmap = QPixmap(str(Path(item.file_path)))
+                    if not pixmap.isNull():
+                        # Calculate zoom to fit image with aspect ratio preserved
+                        width_ratio = viewport_width / pixmap.width()
+                        height_ratio = viewport_height / pixmap.height()
+                        zoom = min(width_ratio, height_ratio)
 
-            item = self._items[self._current_index]
-            try:
-                pixmap = QPixmap(str(Path(item.file_path)))
-                if pixmap.isNull():
-                    return 1.0
-
-                # Calculate zoom to fit image with aspect ratio preserved
-                width_ratio = viewport_width / pixmap.width()
-                height_ratio = viewport_height / pixmap.height()
-                zoom = min(width_ratio, height_ratio)
-
-                # Constrain between 0.2 and 3.0
-                return max(0.2, min(3.0, zoom))
-            except Exception:
-                return 1.0
-        else:
-            return 1.0
+                        # Constrain between 0.2 and 3.0
+                        zoom = max(0.2, min(3.0, zoom))
+                except Exception:
+                    LOGGER.exception("Failed to calculate zoom for %s", item.file_path)
+        return zoom
 
     def _set_zoom_fit(self) -> None:
         """Set zoom mode to fit entire image in viewport."""
@@ -225,6 +229,7 @@ class ImageDetailPanel(QWidget):
         try:
             pixmap = QPixmap(str(Path(item.file_path)))
         except Exception:
+            LOGGER.exception("Failed to load image %s", item.file_path)
             self._image_label.setText("Error loading image")
             self._info_label.setText(f"Error: Could not load {item.file_path}")
             return
@@ -252,12 +257,11 @@ class ImageDetailPanel(QWidget):
                     faces = self._face_review_service.faces_for_image_path(item.file_path)
                     self._image_label.set_faces(faces)
                 except Exception:
-                    # Silently ignore face loading errors
-                    pass
+                    LOGGER.exception("Failed to load faces for %s", item.file_path)
 
             # Update info
             filename = Path(item.file_path).name
-            dimensions = f"{pixmap.width()}×{pixmap.height()}"
+            dimensions = f"{pixmap.width()}x{pixmap.height()}"
             date_str = item.capture_date.strftime("%Y-%m-%d") if item.capture_date else "Unknown date"
             info = f"{filename} • {dimensions} • {date_str}"
             self._info_label.setText(info)
@@ -288,7 +292,7 @@ class ImageDetailPanel(QWidget):
         """Return to gallery view."""
         self.closed.emit()
 
-    def _on_bbox_toggle(self, state: int) -> None:
+    def _on_bbox_toggle(self, _state: int) -> None:
         """Handle bbox checkbox toggle — load faces on demand if not yet fetched."""
         show = self._bbox_checkbox.isChecked()
         self._image_label.set_show_bboxes(show)
@@ -296,13 +300,14 @@ class ImageDetailPanel(QWidget):
             show
             and self._face_review_service is not None
             and self._current_item is not None
-            and not self._image_label._faces
+            and not self._image_label.get_faces()
         ):
             try:
                 faces = self._face_review_service.faces_for_image_path(
                     self._current_item.file_path
                 )
             except Exception:
+                LOGGER.exception("Failed to load faces for %s", self._current_item.file_path)
                 faces = []
             self._image_label.set_faces(faces)
 

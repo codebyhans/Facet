@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING
 from photo_app.app.widgets import AdvancedFilterEditorDialog
 
 if TYPE_CHECKING:
+    from PySide6.QtWidgets import QWidget
+
+    from photo_app.domain.models import Album
     from photo_app.services.album_service import AlbumService
     from photo_app.services.tags_service import TagsService
 
@@ -29,7 +32,7 @@ class FilterDialogIntegration:
         album_name: str,
     ) -> None:
         """Create an album using the filter dialog results.
-        
+
         Args:
             dialog: The AdvancedFilterEditorDialog with user selections
             album_name: Name for the new album
@@ -46,7 +49,7 @@ class FilterDialogIntegration:
         album_id: int,
     ) -> None:
         """Update an existing album with new filter criteria.
-        
+
         Args:
             dialog: The AdvancedFilterEditorDialog with user selections
             album_id: ID of the album to update
@@ -59,15 +62,15 @@ class FilterDialogIntegration:
 
     def show_filter_dialog(
         self,
-        parent_widget=None,
-        current_album=None,
+        parent_widget: QWidget | None = None,
+        current_album: Album | None = None,
     ) -> AdvancedFilterEditorDialog | None:
         """Show the advanced filter editor dialog.
-        
+
         Args:
             parent_widget: Parent widget for the dialog
             current_album: Optional current AlbumQuery to load for editing
-            
+
         Returns:
             AdvancedFilterEditorDialog if user accepts, None if cancelled
         """
@@ -98,32 +101,9 @@ class FilterDialogIntegration:
         # Implementation depends on adding a method to ImageRepository
         try:
             # Placeholder - implement this in ImageRepository.get_distinct_cameras()
-            return self.album_service._image_repository.get_distinct_cameras()
+            image_repo = getattr(self.album_service, "_image_repository", None)
         except (AttributeError, NotImplementedError):
             return []
-
-
-# Example usage in a main window or album management UI:
-#
-# class AlbumManagementPanel(QWidget):
-#     def __init__(self, album_service, tags_service):
-#         super().__init__()
-#         self.integration = FilterDialogIntegration(album_service, tags_service)
-#
-#     def on_create_album_clicked(self):
-#         dialog = self.integration.show_filter_dialog(parent_widget=self)
-#         if dialog:
-#             album_name, ok = QInputDialog.getText(self, "New Album", "Album name:")
-#             if ok and album_name:
-#                 self.integration.create_album_from_dialog(dialog, album_name)
-#                 self.refresh_albums()
-#
-#     def on_edit_album_clicked(self, album_id):
-#         current_album = self.album_service.get_album(album_id)
-#         dialog = self.integration.show_filter_dialog(
-#             parent_widget=self,
-#             current_album=current_album
-#         )
-#         if dialog:
-#             self.integration.update_album_from_dialog(dialog, album_id)
-#             self.refresh_albums()
+        if image_repo and hasattr(image_repo, "get_distinct_cameras"):
+            return image_repo.get_distinct_cameras()
+        return []

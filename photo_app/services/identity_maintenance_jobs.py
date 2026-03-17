@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from photo_app.services.identity_cluster_service import TemporalIdentityClusterService
+if TYPE_CHECKING:
+    from photo_app.services.identity_cluster_service import (
+        TemporalIdentityClusterService,
+    )
 
 
 @dataclass(frozen=True)

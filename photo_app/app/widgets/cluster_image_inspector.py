@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
+    QInputDialog,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -19,6 +23,7 @@ from photo_app.app.widgets.face_detection_widget import FaceDetectionWidget
 if TYPE_CHECKING:
     from photo_app.services.face_review_service import FaceReviewItem
 
+LOGGER = logging.getLogger(__name__)
 
 class ClusterImageInspectorWidget(QWidget):
     """Right-hand image inspector for the cluster detail view.
@@ -50,8 +55,6 @@ class ClusterImageInspectorWidget(QWidget):
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Faces checkbox
-        from PySide6.QtWidgets import QCheckBox
         self._faces_checkbox = QCheckBox("Faces")
         self._faces_checkbox.setStyleSheet("color: #888888; font-size: 11px;")
         self._faces_checkbox.stateChanged.connect(self._on_faces_toggled)
@@ -111,7 +114,6 @@ class ClusterImageInspectorWidget(QWidget):
 
         # Load image with fit-to-panel zoom
         try:
-            from PySide6.QtGui import QPixmap
             pixmap = QPixmap(file_path)
             if pixmap.isNull():
                 self._face_detection_widget.setText("Could not load image")
@@ -148,6 +150,7 @@ class ClusterImageInspectorWidget(QWidget):
             self._face_detection_widget.set_show_bboxes(self._faces_checkbox.isChecked())
 
         except Exception:
+            LOGGER.exception("Failed to load image %s", file_path)
             self._face_detection_widget.setText("Error loading image")
 
         self._update_face_action_visibility()
@@ -192,8 +195,6 @@ class ClusterImageInspectorWidget(QWidget):
         if current_index >= 0:
             face_id = self._face_dropdown.itemData(current_index)
 
-            # Show input dialog for person name
-            from PySide6.QtWidgets import QInputDialog
             name, ok = QInputDialog.getItem(
                 self,
                 "Reassign Face",
@@ -205,7 +206,7 @@ class ClusterImageInspectorWidget(QWidget):
             if ok and name:
                 self.face_reassign_requested.emit(face_id, name)
 
-    def _on_faces_toggled(self, state: int) -> None:
+    def _on_faces_toggled(self, _state: int) -> None:
         """Toggle bbox visibility immediately on the already-loaded image."""
         show = self._faces_checkbox.isChecked()
         self._face_detection_widget.set_show_bboxes(show)

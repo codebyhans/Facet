@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPen, QPixmap
@@ -17,7 +17,7 @@ class FaceDetectionWidget(QLabel):
 
     face_clicked = Signal(int)  # face_id
 
-    def __init__(self, parent: QLabel | None = None):
+    def __init__(self, parent: QLabel | None = None) -> None:
         super().__init__(parent)
         self._original_pixmap = None  # Unscaled pixmap
         self._display_pixmap = None   # Currently displayed (possibly scaled) pixmap
@@ -37,7 +37,7 @@ class FaceDetectionWidget(QLabel):
 
     def set_image(self, pixmap: QPixmap | None, zoom_factor: float = 1.0) -> None:
         """Set the image pixmap and zoom factor.
-        
+
         Args:
             pixmap: The pixmap to display (may already be scaled)
             zoom_factor: The zoom/scale factor applied to this pixmap (for bbox coordinate scaling)
@@ -51,7 +51,11 @@ class FaceDetectionWidget(QLabel):
         self._faces = faces
         self._update_display()
 
-    def set_show_bboxes(self, show: bool) -> None:
+    def get_faces(self) -> list[FaceReviewItem]:
+        """Get the current faces list."""
+        return self._faces
+
+    def set_show_bboxes(self, show: bool) -> None:  # noqa: FBT001
         """Toggle bounding box visibility."""
         self._show_bboxes = show
         self._update_display()
@@ -87,7 +91,7 @@ class FaceDetectionWidget(QLabel):
 
         self.setPixmap(display_pixmap)
 
-    def _draw_bounding_boxes(self, painter: QPainter, pixmap: QPixmap) -> None:
+    def _draw_bounding_boxes(self, painter: QPainter, _pixmap: QPixmap) -> None:
         """Draw bounding boxes on the pixmap, scaled by zoom_factor."""
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -137,6 +141,7 @@ class FaceDetectionWidget(QLabel):
                 label_text
             )
 
+    @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Handle mouse clicks on faces (can extend later for interactivity)."""
         if not self._show_bboxes or not self._original_pixmap:

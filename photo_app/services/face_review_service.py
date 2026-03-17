@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from photo_app.domain.models import Person
 from photo_app.domain.services import now_utc
 
@@ -211,17 +213,16 @@ class FaceReviewService:
 
     def person_stacks_filtered(self, min_image_count: int = 3, sample_limit: int = 20) -> list[PersonStackSummary]:
         """Return stack summaries filtered by minimum image count per person.
-        
+
         Args:
             min_image_count: Minimum number of images required for a stack to be included
             sample_limit: Maximum number of sample image paths to include per stack
-            
+
         Returns:
             List of PersonStackSummary objects with at least min_image_count images, sorted by count
         """
         all_stacks = self.person_stacks(sample_limit=sample_limit)
-        filtered = [stack for stack in all_stacks if stack.image_count >= min_image_count]
-        return filtered
+        return [stack for stack in all_stacks if stack.image_count >= min_image_count]
 
     def rename_person_stack(self, person_id: int, name: str) -> None:
         """Assign one name to an entire matched person stack."""
@@ -232,7 +233,8 @@ class FaceReviewService:
         # Check for name uniqueness
         existing_person = self._person_repository.get_by_name(cleaned)
         if existing_person is not None and existing_person.id != person_id:
-            raise ValueError(f"Person name '{cleaned}' already exists")
+            msg = f"Person name '{cleaned}' already exists"
+            raise ValueError(msg)
 
         self._person_repository.update_name(person_id, cleaned)
         if self._query_cache_service is not None:
@@ -243,6 +245,14 @@ class FaceReviewService:
         if self._identity_cluster_service is None:
             return []
         return self._identity_cluster_service.list_clusters(flagged_only=flagged_only)
+
+    def get_person_repository(self) -> PersonRepository:
+        """Get the person repository for accessing person data."""
+        return self._person_repository
+
+    def get_available_people(self) -> list[Person]:
+        """Get list of available people for filtering."""
+        return self._person_repository.list_all()
 
     def cluster_faces(self, cluster_id: int) -> list[Face]:
         """Return all faces assigned to one cluster."""
@@ -310,8 +320,6 @@ class FaceReviewService:
         Returns:
             List of similar unassigned faces, sorted by similarity
         """
-        import numpy as np
-
         # Get the reference face and its cluster
         ref_face = self._face_repository.get(face_id)
         if ref_face is None or ref_face.id is None:
@@ -385,9 +393,6 @@ class FaceReviewService:
         Returns:
             List of suggested persons, sorted by confidence
         """
-        import numpy as np
-
-
         suggestions: list[SuggestedPerson] = []
         face = self._face_repository.get(face_id)
 
@@ -437,8 +442,7 @@ class FaceReviewService:
                         )
                     )
 
-        # Priority 2: ANN search for high-similarity named faces
-        # TODO: Implement ANN search for additional suggestions
+        # Priority 2: ANN search for high-similarity named faces (not yet implemented)
 
         # Sort by (in_same_cluster desc, similarity_score desc)
         suggestions.sort(

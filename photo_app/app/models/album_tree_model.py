@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
-from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractItemModel, QModelIndex, QObject, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QStyle
 
@@ -28,18 +27,20 @@ class AlbumTreeModel(QAbstractItemModel):
     KindRole = Qt.ItemDataRole.UserRole + 2
     AlbumIdRole = Qt.ItemDataRole.UserRole + 3
 
-    def __init__(self, parent: Any | None = None) -> None:
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._root = AlbumTreeNode(node_id="root", name="Albums", kind="root")
 
-    def columnCount(self, _parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def columnCount(self, _parent: QModelIndex | None = None) -> int:  # noqa: N802
         return 1
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
+        parent = parent or QModelIndex()
         node = self._node_from_index(parent)
         return len(node.children)
 
-    def index(self, row: int, column: int, parent: QModelIndex = QModelIndex()) -> QModelIndex:  # noqa: E501
+    def index(self, row: int, column: int, parent: QModelIndex | None = None) -> QModelIndex:
+        parent = parent or QModelIndex()
         if row < 0 or column != 0:
             return QModelIndex()
         parent_node = self._node_from_index(parent)
@@ -61,13 +62,19 @@ class AlbumTreeModel(QAbstractItemModel):
         row = grand.children.index(parent)
         return self.createIndex(row, 0, parent)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:  # noqa: ANN401
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object | None:
         if not index.isValid():
             return None
         node = self._node_from_index(index)
 
-        if role == Qt.ItemDataRole.DisplayRole:
-            return node.name
+        role_values: dict[int, object | None] = {
+            Qt.ItemDataRole.DisplayRole: node.name,
+            self.NodeIdRole: node.node_id,
+            self.KindRole: node.kind,
+            self.AlbumIdRole: node.album_id,
+        }
+        if role in role_values:
+            return role_values[role]
 
         if role == Qt.ItemDataRole.DecorationRole:
             style = QApplication.style()
@@ -80,13 +87,6 @@ class AlbumTreeModel(QAbstractItemModel):
                 return QColor("#5B9BD5")   # muted blue for folders
             if node.kind == "virtual":
                 return QColor("#D4D4D4")   # light grey for albums
-
-        if role == self.NodeIdRole:
-            return node.node_id
-        if role == self.KindRole:
-            return node.kind
-        if role == self.AlbumIdRole:
-            return node.album_id
 
         return None
 

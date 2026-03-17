@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QListView
 
 from photo_app.app.models.cluster_image_model import ClusterImageModel
-from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
 if TYPE_CHECKING:
+    from PySide6.QtGui import QResizeEvent
+
     from photo_app.app.widgets.people_browser import PersonStackSummary
+    from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
 
 class ClusterImageGridWidget(QListView):
@@ -34,6 +35,7 @@ class ClusterImageGridWidget(QListView):
         self.setSpacing(8)
         self.setIconSize(QSize(80, 80))
 
+    @override
     def resizeEvent(self, event: QResizeEvent) -> None:
         """Handle resize events to dynamically adjust grid size for even distribution."""
         super().resizeEvent(event)

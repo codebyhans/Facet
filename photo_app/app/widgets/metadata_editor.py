@@ -89,7 +89,7 @@ class MetadataEditorPanel(QWidget):
 
     def set_image(self, image: Image | None) -> None:
         """Update metadata display for a new image.
-        
+
         Args:
             image: Image domain model or None to clear
         """
@@ -101,15 +101,15 @@ class MetadataEditorPanel(QWidget):
 
         # Update rating
         rating = getattr(image, "rating", None) or 0
-        self._rating_widget.blockSignals(True)
+        self._rating_widget.blockSignals(True)  # noqa: FBT003
         self._rating_widget.set_rating(int(rating))
-        self._rating_widget.blockSignals(False)
+        self._rating_widget.blockSignals(False)  # noqa: FBT003
 
         # Update tags
         tags = getattr(image, "tags", []) or []
-        self._tag_editor.blockSignals(True)
+        self._tag_editor.blockSignals(True)  # noqa: FBT003
         self._tag_editor.set_tags(list(tags))
-        self._tag_editor.blockSignals(False)
+        self._tag_editor.blockSignals(False)  # noqa: FBT003
 
         # Update quality score
         quality = getattr(image, "quality_score", None)
@@ -168,3 +168,19 @@ class MetadataEditorPanel(QWidget):
     def get_current_image(self) -> Image | None:
         """Get the currently displayed image."""
         return self._current_image
+
+    def set_rating(self, rating: int) -> None:
+        """Set rating without emitting signal."""
+        self._rating_widget.blockSignals(True)  # noqa: FBT003
+        self._rating_widget.set_rating(rating)
+        self._rating_widget.blockSignals(False)  # noqa: FBT003
+
+    def set_tags(self, tags: list[str]) -> None:
+        """Set tags without emitting signal."""
+        self._tag_editor.blockSignals(True)  # noqa: FBT003
+        self._tag_editor.set_tags(tags)
+        self._tag_editor.blockSignals(False)  # noqa: FBT003
+
+    def get_tags(self) -> list[str]:
+        """Get current tags."""
+        return self._tag_editor.get_tags()

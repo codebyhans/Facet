@@ -31,6 +31,7 @@ class AlbumExportService:
         destination: Path,
         naming_pattern: str = "{date}_{name}",
         copy_mode: Literal["copy", "symlink"] = "copy",
+        *,
         preserve_structure: bool = False,
     ) -> dict[str, object]:
         """Export album images to folder.
@@ -56,12 +57,12 @@ class AlbumExportService:
         destination = Path(destination)
         if not destination.exists():
             destination.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Created export destination: {destination}")
+            logger.info("Created export destination: %s", destination)
 
         # Get album images
         album_images = self.image_repository.list_album_images(album_id)
         if not album_images:
-            logger.warning(f"Album {album_id} has no images")
+            logger.warning("Album %s has no images", album_id)
             return {
                 "total_images": 0,
                 "copied_files": [],
@@ -76,7 +77,7 @@ class AlbumExportService:
             try:
                 src = Path(image.file_path)
                 if not src.exists():
-                    logger.warning(f"Source file not found: {src}")
+                    logger.warning("Source file not found: %s", src)
                     skipped += 1
                     continue
 
@@ -101,15 +102,15 @@ class AlbumExportService:
                     if dest_path.exists() or dest_path.is_symlink():
                         dest_path.unlink()
                     dest_path.symlink_to(src)
-                    logger.debug(f"Symlinked: {src} -> {dest_path}")
+                    logger.debug("Symlinked: %s -> %s", src, dest_path)
                 else:
                     shutil.copy2(src, dest_path)
-                    logger.debug(f"Copied: {src} -> {dest_path}")
+                    logger.debug("Copied: %s -> %s", src, dest_path)
 
                 copied_files.append(str(dest_path))
 
-            except Exception as exc:
-                logger.exception(f"Failed to export {image.file_path}: {exc}")
+            except Exception:
+                logger.exception("Failed to export %s", image.file_path)
                 skipped += 1
 
         result = {
@@ -119,9 +120,7 @@ class AlbumExportService:
             "destination": str(destination),
         }
 
-        logger.info(
-            f"Album export complete: {len(copied_files)} copied, {skipped} skipped"
-        )
+        logger.info("Album export complete: %s copied, %s skipped", len(copied_files), skipped)
         return result
 
     def _generate_filename(self, image: object, pattern: str) -> str:
@@ -152,8 +151,8 @@ class AlbumExportService:
                 if isinstance(dt, str):
                     dt = datetime.fromisoformat(dt)
                 replacements["{date}"] = dt.strftime("%Y-%m-%d")
-            except Exception:
-                pass
+            except (ValueError, TypeError):
+                logger.debug("Failed to parse datetime_original for %s", src_path)
 
         if hasattr(image, "rating") and image.rating:
             replacements["{rating}"] = str(image.rating)
@@ -191,8 +190,8 @@ class AlbumExportService:
                 if isinstance(dt, str):
                     dt = datetime.fromisoformat(dt)
                 return f"{dt.year}/{dt.month:02d}"
-        except Exception:
-            pass
+        except (ValueError, TypeError):
+            logger.debug("Failed to parse datetime_original for subdir")
 
         return "uncategorized"
 

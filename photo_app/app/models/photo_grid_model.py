@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import date
-from typing import Any
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import (
     QAbstractListModel,
     QModelIndex,
+    QObject,
     QPersistentModelIndex,
     QRect,
     QSize,
     Qt,
     Signal,
 )
-from PySide6.QtGui import QPixmap
+
+if TYPE_CHECKING:
+    from datetime import date
+
+    from PySide6.QtGui import QPixmap
 
 
 @dataclass(frozen=True)
@@ -37,15 +41,15 @@ class PhotoGridModel(QAbstractListModel):
     FilePathRole = Qt.ItemDataRole.UserRole + 3
     FlagRole = Qt.ItemDataRole.UserRole + 4
 
-    tileRequested = Signal(int)
-    loadMoreRequested = Signal()
+    tileRequested = Signal(int)  # noqa: N815
+    loadMoreRequested = Signal()  # noqa: N815
 
     def __init__(
         self,
         *,
         thumbnail_size: tuple[int, int] = (128, 128),
         tile_size: tuple[int, int] = (1024, 1024),
-        parent: Any | None = None,
+        parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._items: list[PhotoGridItem] = []
@@ -55,30 +59,36 @@ class PhotoGridModel(QAbstractListModel):
         self._thumbnail_size = thumbnail_size
         self._tile_size = tile_size
 
-    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def rowCount(  # noqa: N802
+        self,
+        parent: QModelIndex | QPersistentModelIndex | None = None,
+    ) -> int:
+        parent = parent or QModelIndex()
         if parent.isValid():
             return 0
         return len(self._items)
 
-    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:  # noqa: ANN401
+    def data(
+        self,
+        index: QModelIndex | QPersistentModelIndex,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ) -> object | None:
         if not index.isValid() or index.row() < 0 or index.row() >= len(self._items):
             return None
         item = self._items[index.row()]
 
-        if role == Qt.ItemDataRole.DisplayRole:
-            return self._format_capture_date(item.capture_date)
+        role_values: dict[int, object | None] = {
+            Qt.ItemDataRole.DisplayRole: self._format_capture_date(item.capture_date),
+            Qt.ItemDataRole.SizeHintRole: QSize(200, 200),
+            self.ImageIdRole: item.image_id,
+            self.CaptureDateRole: self._format_capture_date(item.capture_date),
+            self.FilePathRole: item.file_path,
+            self.FlagRole: item.flag,
+        }
+        if role in role_values:
+            return role_values[role]
         if role == Qt.ItemDataRole.DecorationRole:
             return self._resolve_decoration(item)
-        if role == Qt.ItemDataRole.SizeHintRole:
-            return QSize(200, 200)
-        if role == self.ImageIdRole:
-            return item.image_id
-        if role == self.CaptureDateRole:
-            return self._format_capture_date(item.capture_date)
-        if role == self.FilePathRole:
-            return item.file_path
-        if role == self.FlagRole:
-            return item.flag
         return None
 
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
@@ -129,7 +139,7 @@ class PhotoGridModel(QAbstractListModel):
 
     def notify_visible_rows(self, first_row: int, last_row: int) -> None:
         """Trigger pagination and tile prefetch for visible rows."""
-        if self._has_more and len(self._items) - last_row <= 30:
+        if self._has_more and len(self._items) - last_row <= PREFETCH_THRESHOLD:
             self.loadMoreRequested.emit()
 
         for row in range(max(0, first_row), min(last_row + 1, len(self._items))):
@@ -186,3 +196,4 @@ class PhotoGridModel(QAbstractListModel):
         self._items[row] = replace(old, flag=flag)
         idx = self.index(row, 0)
         self.dataChanged.emit(idx, idx, [self.FlagRole])
+PREFETCH_THRESHOLD = 30

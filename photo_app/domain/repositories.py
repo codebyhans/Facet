@@ -42,7 +42,7 @@ class ImageRepository(Protocol):
     def list_paginated(self, *, offset: int, limit: int) -> list[Image]:
         """Return paginated images to avoid loading all into memory."""
 
-    def list_by_filters(
+    def list_by_filters(  # noqa: PLR0913
         self,
         *,
         person_ids: Sequence[int],
@@ -58,7 +58,7 @@ class ImageRepository(Protocol):
     ) -> list[Image]:
         """Query images by filter criteria."""
 
-    def list_ids_by_filters(
+    def list_ids_by_filters(  # noqa: PLR0913
         self,
         *,
         person_ids: Sequence[int],
@@ -164,7 +164,7 @@ class IdentityClusterRepository(Protocol):
     def get_cluster(self, cluster_id: int) -> IdentityCluster | None:
         """Load one cluster."""
 
-    def update_cluster_state(
+    def update_cluster_state(  # noqa: PLR0913
         self,
         cluster_id: int,
         *,

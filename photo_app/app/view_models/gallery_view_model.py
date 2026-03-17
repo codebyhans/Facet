@@ -10,10 +10,10 @@ from PySide6.QtGui import QPixmap
 from photo_app.app.models.photo_grid_model import PhotoGridItem
 from photo_app.app.workers.album_worker import AlbumQueryWorker
 from photo_app.app.workers.tile_build_worker import TileBuildWorker
-from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
 if TYPE_CHECKING:
     from photo_app.app.view_models.album_view_model import AlbumViewModel
+    from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class GalleryViewModel(QObject):
         self._page_size = page_size
 
         # Store reference to image repository for flag updates
-        self._image_repository = album_view_model._image_repository
+        self._image_repository = getattr(album_view_model, "_image_repository", None)
 
         # Note: Flag change handling will be connected in the main window
         # where we have access to both the PhotoGridWidget and the model
@@ -92,6 +92,10 @@ class GalleryViewModel(QObject):
         self._pending_library_mode = False
         self._current_query_definition = query_definition
         self._debounce_timer.start()
+
+    def get_current_album_id(self) -> int | None:
+        """Get the currently selected album ID."""
+        return self._current_album_id
 
     def select_library(self, query_definition: dict[str, object] | None = None) -> None:
         """Load first page for all-library browsing with debouncing."""
@@ -186,15 +190,13 @@ class GalleryViewModel(QObject):
         self.status.emit(f"Building thumbnails ({current}/{total})…")
 
     def _on_tile_build_finished(self, *, epoch: int) -> None:
-        print(f"[GALLERY] Tile build finished: epoch={epoch}, self._epoch={self._epoch}")
         if epoch != self._epoch:
             # Request changed while tiles were building — tiles are still valid.
             # Load a page for the current state rather than discarding the result.
-            logger.debug(
-                f"Tile build epoch mismatch ({epoch} vs {self._epoch}), "
-                "loading current state"
-            )
-        print(f"DEBUG: tile build finished, epoch={epoch}, self._epoch={self._epoch}")
+              logger.debug(
+                "Tile build epoch mismatch (%s vs %s), loading current state",
+                epoch, self._epoch
+              )
         self._tile_building = False
         self.tile_building_finished.emit()
         self._load_page(append=False)
@@ -237,7 +239,6 @@ class GalleryViewModel(QObject):
         self._thread_pool.start(worker)
 
     def _on_page_result(self, page: object, *, append: bool, epoch: int) -> None:
-        print(f"[GALLERY] Page result arrived: epoch={epoch}, self._epoch={self._epoch}, items={len(getattr(page, 'items', []))}")
         # Check for stale result - if epoch doesn't match current, discard
         if epoch != self._epoch:
             return
@@ -281,7 +282,6 @@ class GalleryViewModel(QObject):
         self.page_ready.emit(items, append)
         # Update status with more specific information
         action = "Appended" if append else "Loaded"
-        print(f"[GALLERY] Page result processed: {len(items)} items, emitting page_ready")
         self.status.emit(f"{action} {len(items)} photos (total: {self._offset})")
 
     def _on_page_finished(self, *, epoch: int) -> None:
@@ -292,7 +292,6 @@ class GalleryViewModel(QObject):
         self.loading_finished.emit()
 
     def _on_error(self, message: str) -> None:
-        print(f"[GALLERY] ERROR: {message}")
         self._loading_page = False
         self._tile_building = False
         self.error.emit(message)
@@ -310,7 +309,6 @@ class GalleryViewModel(QObject):
         # so the new operation always proceeds cleanly.
         self._cancel_current_operation()
 
-        print(f"[GALLERY] Debounce fired: library_mode={self._pending_library_mode}, album_id={self._pending_album_id}")
         # Create new operation
         self._operation_counter += 1
         operation_id = self._operation_counter
@@ -348,7 +346,7 @@ class GalleryViewModel(QObject):
             if (operation_type == "album" and album_id is not None) or operation_type == "library":
                 self._ensure_tiles_then_load()
         except Exception as exc:
-            logger.error(f"Operation {operation_id} failed: {exc}")
+            logger.exception("Operation %s failed", operation_id)
             self._on_error(f"Failed to load {operation_type}: {exc}")
             # Ensure operation is marked as complete on error
             if self._current_operation_id == operation_id:
@@ -358,7 +356,7 @@ class GalleryViewModel(QObject):
     def _cancel_current_operation(self) -> None:
         """Cancel any currently running operation."""
         if self._current_operation_id is not None:
-            logger.info(f"Cancelling operation {self._current_operation_id}")
+            logger.info("Cancelling operation %s", self._current_operation_id)
             # Only reset _tile_building if there is no worker still running.
             # Setting it False while a worker is alive would allow a second
             # concurrent tile build to start, causing UNIQUE constraint errors.
@@ -372,7 +370,7 @@ class GalleryViewModel(QObject):
             self._active_page_worker = None   # release GC reference
             self._current_operation_id = None
 
-    def _on_flag_changed(self, index: object, flag_value: str | None) -> None:
+    def _on_flag_changed(self, _index: object, _flag_value: str | None) -> None:
         """Handle flag change from PhotoGridWidget."""
         try:
             # Update the flag in the database

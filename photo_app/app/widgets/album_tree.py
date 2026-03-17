@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QDropEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -16,6 +15,11 @@ from PySide6.QtWidgets import (
 
 from photo_app.app.models.album_tree_model import AlbumTreeModel, AlbumTreeNode
 from photo_app.app.widgets.album_tree_style import AlbumTreeStyle
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from PySide6.QtGui import QDropEvent
 
 
 class MoveAlbumDialog(QDialog):
@@ -56,14 +60,14 @@ class MoveAlbumDialog(QDialog):
 class AlbumTreeWidget(QTreeView):
     """Album tree view with context actions and drag/drop move requests."""
 
-    albumSelected = Signal(int, object)
-    albumMoved = Signal(int, object)
-    createFolderRequested = Signal(object)
-    createVirtualAlbumRequested = Signal(object)
-    renameRequested = Signal(str, str)
-    deleteRequested = Signal(str)
-    editFiltersRequested = Signal(str)
-    moveRequested = Signal(str, object)
+    albumSelected = Signal(int, object)  # noqa: N815
+    albumMoved = Signal(int, object)  # noqa: N815
+    createFolderRequested = Signal(object)  # noqa: N815
+    createVirtualAlbumRequested = Signal(object)  # noqa: N815
+    renameRequested = Signal(str, str)  # noqa: N815
+    deleteRequested = Signal(str)  # noqa: N815
+    editFiltersRequested = Signal(str)  # noqa: N815
+    moveRequested = Signal(str, object)  # noqa: N815
 
     def __init__(self, model: AlbumTreeModel, parent: QTreeView | None = None) -> None:
         super().__init__(parent)

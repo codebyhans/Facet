@@ -4,7 +4,6 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import and_, exists, func, nulls_last, select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from photo_app.domain.models import (
@@ -32,7 +31,8 @@ from photo_app.infrastructure.sqlalchemy_models import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sqlalchemy.orm import Session
+    from sqlalchemy.engine import Engine
+
 
 
 def _to_image(entity: ImageModel) -> Image:
@@ -169,10 +169,10 @@ class SqlAlchemyImageRepository:
 
     def add_many(self, images: Sequence[Image]) -> None:
         """Insert images in chunks to stay within SQLite variable limits."""
-        _CHUNK = 500  # 500 rows × 9 columns = 4500 variables, well under SQLite's 999-per-stmt limit
+        chunk_size = 500  # 500 rows x 9 columns = 4500 variables, well under SQLite's 999-per-stmt limit
         with Session(self._engine) as session:
-            for i in range(0, len(images), _CHUNK):
-                chunk = images[i : i + _CHUNK]
+            for i in range(0, len(images), chunk_size):
+                chunk = images[i : i + chunk_size]
                 rows = [
                     ImageModel(
                         file_path=image.file_path,
@@ -236,7 +236,7 @@ class SqlAlchemyImageRepository:
             )
             return [_to_image(row) for row in session.scalars(stmt)]
 
-    def list_by_filters(
+    def list_by_filters(  # noqa: PLR0913
         self,
         *,
         person_ids: Sequence[int],
@@ -265,7 +265,7 @@ class SqlAlchemyImageRepository:
         page_ids = ordered_ids[offset : offset + limit]
         return self.list_by_ids(page_ids)
 
-    def list_ids_by_filters(
+    def list_ids_by_filters(  # noqa: C901, PLR0913
         self,
         *,
         person_ids: Sequence[int],
@@ -768,7 +768,7 @@ class SqlAlchemyIdentityClusterRepository:
             row = session.scalar(stmt)
             return None if row is None else _to_identity_cluster(row)
 
-    def update_cluster_state(
+    def update_cluster_state(  # noqa: PLR0913
         self,
         cluster_id: int,
         *,

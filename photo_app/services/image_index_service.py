@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
 from dataclasses import dataclass
 from datetime import date
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from blake3 import blake3
@@ -12,13 +13,15 @@ from photo_app.domain.models import Image as ImageEntity
 from photo_app.domain.services import now_utc
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from photo_app.domain.repositories import ImageRepository
-    from photo_app.infrastructure.file_scanner import FileScanner
+    from photo_app.infrastructure.file_scanner import FileScanner, ScannedFile
     from photo_app.infrastructure.thumbnail_store import ThumbnailStore
     from photo_app.services.album_query_cache_service import AlbumQueryCacheService
 
+LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ImageIndexResult:
@@ -44,24 +47,21 @@ class ImageIndexService:
         self._thumbnail_store = thumbnail_store
         self._query_cache_service = query_cache_service
 
-    def index_folder(
+    def index_folder(  # noqa: C901
         self, root: Path, on_progress: Callable[[int, int], None] | None = None
     ) -> ImageIndexResult:
         """Scan and index newly discovered files only.
-        
+
         Args:
             root: Root directory to scan
             on_progress: Optional callback(current, total) for progress updates
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         scanned_files: list[ScannedFile] = []
         try:
             scanned_files = self._file_scanner.scan(root)
-            logger.info(f"Scanned {len(scanned_files)} image files from {root}")
-        except Exception as exc:
-            logger.exception(f"Scan error: {exc}")
+            LOGGER.info("Scanned %s image files from %s", len(scanned_files), root)
+        except Exception:
+            LOGGER.exception("Scan error while scanning %s", root)
             return ImageIndexResult(scanned=0, inserted=0, skipped=0)
 
         # Single DB query to fetch all already-indexed paths — avoids N+1 sessions
@@ -75,9 +75,8 @@ class ImageIndexService:
             file_path = str(scanned.file_path)
 
             # Report progress every 10 files
-            if idx % 10 == 0 or idx == len(scanned_files) - 1:
-                if on_progress:
-                    on_progress(idx + 1, len(scanned_files))
+            if on_progress and (idx % 10 == 0 or idx == len(scanned_files) - 1):
+                on_progress(idx + 1, len(scanned_files))
 
             try:
                 if file_path in existing_paths:
@@ -89,8 +88,7 @@ class ImageIndexService:
                 width, height = 0, 0
 
                 # Use path-based hash instead of reading file to avoid crashes
-                from hashlib import md5
-                image_hash = md5(file_path.encode()).hexdigest()
+                image_hash = sha256(file_path.encode()).hexdigest()
                 entity = ImageEntity(
                     id=None,
                     file_path=file_path,
@@ -110,19 +108,19 @@ class ImageIndexService:
             except (OSError, UnidentifiedImageError, PermissionError, IsADirectoryError):
                 skipped += 1
                 continue
-            except Exception as exc:
-                logger.exception(f"Unexpected error processing {file_path}: {exc}")
+            except Exception:
+                LOGGER.exception("Unexpected error processing %s", file_path)
                 skipped += 1
                 continue
 
         if staged:
             try:
                 self._image_repository.add_many(staged)
-                logger.info(f"Inserted {len(staged)} images into database")
+                LOGGER.info("Inserted %s images into database", len(staged))
                 if self._query_cache_service is not None:
                     self._query_cache_service.invalidate_all()
-            except Exception as db_exc:
-                logger.exception(f"Database error during bulk insert: {db_exc}")
+            except Exception:
+                LOGGER.exception("Database error during bulk insert")
                 return ImageIndexResult(
                     scanned=len(scanned_files),
                     inserted=0,
@@ -130,9 +128,17 @@ class ImageIndexService:
                 )
 
         if thumbnail_failures > 0:
-            logger.info(f"Skipped {thumbnail_failures} thumbnails during indexing (can be regenerated)")
+            LOGGER.info(
+                "Skipped %s thumbnails during indexing (can be regenerated)",
+                thumbnail_failures,
+            )
 
-        logger.info(f"Index complete: scanned={len(scanned_files)}, inserted={len(staged)}, skipped={skipped}")
+        LOGGER.info(
+            "Index complete: scanned=%s, inserted=%s, skipped=%s",
+            len(scanned_files),
+            len(staged),
+            skipped,
+        )
         return ImageIndexResult(
             scanned=len(scanned_files),
             inserted=len(staged),
@@ -154,8 +160,7 @@ class ImageIndexService:
                         break
                     h.update(block)
         except OSError as exc:
-            import logging
-            logging.warning(f"Hash computation failed for {file_path}: {exc}")
+            LOGGER.warning("Hash computation failed for %s: %s", file_path, exc)
             # Fallback: use file size and name
             h.update(str(file_path.stat().st_size).encode())
             h.update(file_path.name.encode())

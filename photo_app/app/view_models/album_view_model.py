@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
 
 from photo_app.app.models.album_tree_model import AlbumTreeNode
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -38,13 +41,13 @@ class AlbumViewModel(QObject):
 
         # Store reference to image repository for flag updates
         if hasattr(album_service, "_image_repository"):
-            self._image_repository = album_service._image_repository
+            self._image_repository = getattr(album_service, "_image_repository", None)
         else:
             self._image_repository = None
 
     def load_album_tree(self) -> list[AlbumTreeNode]:
         """Load tree from local UI state and merge persisted virtual albums."""
-        albums = self._safe_call(lambda: self._album_service.list_albums(), default=[])
+        albums = self._safe_call(self._album_service.list_albums, default=[])
         known_by_id = {album.id: album for album in albums if album.id is not None}
         nodes = self._deserialize_nodes(self._state.get("album_tree", []), known_by_id)
 
@@ -68,14 +71,13 @@ class AlbumViewModel(QObject):
 
     def create_folder(self, name: str, parent_id: str | None) -> AlbumTreeNode:
         """Create folder node in UI state."""
-        node = AlbumTreeNode(
+        return AlbumTreeNode(
             node_id=f"f-{uuid4().hex}",
             name=name.strip(),
             kind="folder",
             parent_id=parent_id,
             query_definition=None,
         )
-        return node
 
     def create_virtual_album(
         self,
@@ -87,7 +89,8 @@ class AlbumViewModel(QObject):
         album = self._album_service.create_album(name.strip(), query_definition)
         album_id = album.id
         if album_id is None:
-            raise RuntimeError("Album creation returned no id")
+            msg = "Album creation returned no id"
+            raise RuntimeError(msg)
         return AlbumTreeNode(
             node_id=f"v-{album_id}",
             name=album.name,
@@ -103,7 +106,8 @@ class AlbumViewModel(QObject):
         if node.kind == "virtual" and node.album_id is not None:
             updated = self._album_service.rename_album(node.album_id, cleaned)
             if updated is None:
-                raise RuntimeError("Could not rename album")
+                msg = "Could not rename album"
+                raise RuntimeError(msg)
             return updated.name
         return cleaned
 
@@ -117,7 +121,8 @@ class AlbumViewModel(QObject):
             return query_definition
         updated = self._album_service.update_album_query(node.album_id, query_definition)
         if updated is None:
-            raise RuntimeError("Could not update album query")
+            msg = "Could not update album query"
+            raise RuntimeError(msg)
         return self._album_query_to_dict(updated.query_definition)
 
     def delete_node(self, node: AlbumTreeNode) -> None:
@@ -125,7 +130,8 @@ class AlbumViewModel(QObject):
         if node.kind == "virtual" and node.album_id is not None:
             deleted = self._album_service.delete_album(node.album_id)
             if not deleted:
-                raise RuntimeError("Could not delete album")
+                msg = "Could not delete album"
+                raise RuntimeError(msg)
 
     def resolve_album_images(self, album_id: int, *, offset: int, limit: int, query_definition: dict[str, object] | None = None) -> object:
         """Fetch one page of images through AlbumService."""
@@ -137,7 +143,7 @@ class AlbumViewModel(QObject):
 
     def list_filter_people(self) -> list[FilterPerson]:
         """Return named person options for the filter editor."""
-        stacks = self._safe_call(lambda: self._face_review_service.person_stacks(), default=[])
+        stacks = self._safe_call(self._face_review_service.person_stacks, default=[])
         people: list[FilterPerson] = []
         for stack in stacks:
             # Only include clusters that have been given a name
@@ -151,15 +157,24 @@ class AlbumViewModel(QObject):
             )
         return people
 
+    def list_albums(self) -> list[object]:
+        """Return all albums for UI operations."""
+        return self._safe_call(self._album_service.list_albums, default=[])
+
+    @property
+    def image_repository(self) -> object | None:
+        """Return the image repository for flag operations."""
+        return self._image_repository
+
     def list_filter_years(self) -> list[int]:
         """Return available indexed years from AlbumService."""
-        years = self._safe_call(lambda: self._album_service.list_years(), default=[])
+        years = self._safe_call(self._album_service.list_years, default=[])
         return [int(value) for value in years]
 
     def list_person_stacks(self) -> list[object]:
         """Return person stack summaries for naming workflows."""
         return self._safe_call(
-            lambda: self._face_review_service.person_stacks(),
+            self._face_review_service.person_stacks,
             default=[],
         )
 
@@ -185,6 +200,10 @@ class AlbumViewModel(QObject):
     def get_serialized_tree(self) -> list[dict[str, object]] | None:
         """Return the currently serialized album_tree from in-memory state."""
         return self._state.get("album_tree")
+
+    def get_image_repository(self) -> object:
+        """Get the image repository for external access."""
+        return self._image_repository
 
     def move_album(self, _node_id: str, _new_parent_id: str | None) -> bool:
         """Hook for tree move operation kept in UI state layer."""
@@ -214,19 +233,17 @@ class AlbumViewModel(QObject):
         )
 
     def _serialize_nodes(self, nodes: list[AlbumTreeNode]) -> list[dict[str, object]]:
-        serialized: list[dict[str, object]] = []
-        for node in nodes:
-            serialized.append(
-                {
-                    "node_id": node.node_id,
-                    "name": node.name,
-                    "kind": node.kind,
-                    "album_id": node.album_id,
-                    "query_definition": node.query_definition,
-                    "children": self._serialize_nodes(node.children),
-                }
-            )
-        return serialized
+        return [
+            {
+                "node_id": node.node_id,
+                "name": node.name,
+                "kind": node.kind,
+                "album_id": node.album_id,
+                "query_definition": node.query_definition,
+                "children": self._serialize_nodes(node.children),
+            }
+            for node in nodes
+        ]
 
     def _deserialize_nodes(
         self,

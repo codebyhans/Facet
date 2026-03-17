@@ -178,7 +178,7 @@ class BatchFaceTaggerDialog(QDialog):
         if face_id in self._assignments:
             self._assignments[face_id].person_id = person_id
 
-    def _on_exclude_toggled(self, face_id: int, checked: bool) -> None:
+    def _on_exclude_toggled(self, face_id: int, checked: bool) -> None:  # noqa: FBT001
         """Handle face exclusion toggle."""
         if face_id in self._assignments:
             self._assignments[face_id].exclude = checked

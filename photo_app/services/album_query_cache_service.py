@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
-from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from photo_app.domain.models import Album, Image
-from photo_app.domain.repositories import AlbumRepository, ImageRepository
 from photo_app.infrastructure.sqlalchemy_models import AlbumQueryCacheModel
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+
+    from photo_app.domain.models import Album, Image
+    from photo_app.domain.repositories import AlbumRepository, ImageRepository
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +36,7 @@ class AlbumQueryCacheService:
         try:
             album = self._album_repository.get(album_id)
             if album is None:
-                logger.warning(f"Album {album_id} not found in resolve_album")
+                logger.warning("Album %s not found in resolve_album", album_id)
                 return []
 
             if self._cache_is_valid(album):
@@ -49,22 +53,21 @@ class AlbumQueryCacheService:
                 camera_models=album.query_definition.camera_models,
             )
             self._store_results(album, image_ids)
-            return image_ids
-        except Exception as exc:
-            logger.error(f"Failed to resolve album {album_id}: {exc}")
+        except Exception:
+            logger.exception("Failed to resolve album %s", album_id)
             return []
+        else:
+            return image_ids
 
     def get_album_images(self, album_id: int, offset: int, limit: int) -> list[Image]:
         """Return paginated album images in stable cached order."""
-        print(f"[CACHE] get_album_images called: album_id={album_id}, offset={offset}, limit={limit}")
         try:
             album = self._album_repository.get(album_id)
             if album is None:
-                logger.warning(f"Album {album_id} not found in get_album_images")
+                logger.warning("Album %s not found in get_album_images", album_id)
                 return []
 
             cache_valid = self._cache_is_valid(album)
-            print(f"[CACHE] cache_valid={cache_valid}, album_id={album_id}")
             if not cache_valid:
                 image_ids = self._image_repository.list_ids_by_filters(
                     person_ids=album.query_definition.person_ids,
@@ -77,16 +80,11 @@ class AlbumQueryCacheService:
                     camera_models=album.query_definition.camera_models,
                 )
                 self._store_results(album, image_ids)
-                print(f"[CACHE] stored {len(image_ids)} image ids for album {album_id}")
 
             page_ids = self._cached_image_ids_page(album_id, offset=offset, limit=limit)
-            print(f"[CACHE] page_ids={page_ids}")
-            images = self._image_repository.list_by_ids(page_ids)
-            print(f"[CACHE] returning {len(images)} images")
-            return images
-        except Exception as exc:
-            print(f"[CACHE] EXCEPTION in get_album_images: {exc}")
-            logger.error(f"Failed to get album images for album {album_id}: {exc}")
+            return self._image_repository.list_by_ids(page_ids)
+        except Exception:
+            logger.exception("Failed to get album images for album %s", album_id)
             return []
 
     def invalidate_cache(self, album_id: int) -> None:
@@ -97,8 +95,8 @@ class AlbumQueryCacheService:
                     delete(AlbumQueryCacheModel).where(AlbumQueryCacheModel.album_id == album_id)
                 )
                 session.commit()
-            except Exception as exc:
-                logger.error(f"Failed to invalidate cache for album {album_id}: {exc}")
+            except Exception:
+                logger.exception("Failed to invalidate cache for album %s", album_id)
                 session.rollback()
 
     def invalidate_all(self) -> None:
@@ -107,8 +105,8 @@ class AlbumQueryCacheService:
             try:
                 session.execute(delete(AlbumQueryCacheModel))
                 session.commit()
-            except Exception as exc:
-                logger.error(f"Failed to invalidate all caches: {exc}")
+            except Exception:
+                logger.exception("Failed to invalidate all caches")
                 session.rollback()
 
     def _cache_is_valid(self, album: Album) -> bool:
@@ -121,8 +119,8 @@ class AlbumQueryCacheService:
                 )
                 versions = {int(value) for value in session.scalars(stmt)}
                 return len(versions) == 1 and album.query_version in versions
-            except Exception as exc:
-                logger.error(f"Failed to check cache validity for album {album.id}: {exc}")
+            except Exception:
+                logger.exception("Failed to check cache validity for album %s", album.id)
                 return False
 
     def _cached_image_ids(self, album_id: int) -> list[int]:
@@ -134,8 +132,8 @@ class AlbumQueryCacheService:
                     .order_by(AlbumQueryCacheModel.position.asc())
                 )
                 return [int(image_id) for image_id in session.scalars(stmt)]
-            except Exception as exc:
-                logger.error(f"Failed to get cached image IDs for album {album_id}: {exc}")
+            except Exception:
+                logger.exception("Failed to get cached image IDs for album %s", album_id)
                 return []
 
     def _cached_image_ids_page(self, album_id: int, *, offset: int, limit: int) -> list[int]:
@@ -149,8 +147,8 @@ class AlbumQueryCacheService:
                     .limit(limit)
                 )
                 return [int(image_id) for image_id in session.scalars(stmt)]
-            except Exception as exc:
-                logger.error(f"Failed to get cached image IDs page for album {album_id}: {exc}")
+            except Exception:
+                logger.exception("Failed to get cached image IDs page for album %s", album_id)
                 return []
 
     def _invalidate_cache_in_session(self, session: Session, album_id: int) -> None:
@@ -159,8 +157,8 @@ class AlbumQueryCacheService:
             session.execute(
                 delete(AlbumQueryCacheModel).where(AlbumQueryCacheModel.album_id == album_id)
             )
-        except Exception as exc:
-            logger.error(f"Failed to invalidate cache for album {album_id}: {exc}")
+        except Exception:
+            logger.exception("Failed to invalidate cache for album %s", album_id)
             raise
 
     def _store_results(self, album: Album, image_ids: list[int]) -> None:
@@ -185,6 +183,6 @@ class AlbumQueryCacheService:
                 if rows:
                     session.bulk_save_objects(rows)
                 session.commit()
-            except Exception as exc:
-                logger.error(f"Failed to store cache results for album {album.id}: {exc}")
+            except Exception:
+                logger.exception("Failed to store cache results for album %s", album.id)
                 session.rollback()

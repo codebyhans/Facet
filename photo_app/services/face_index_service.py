@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -16,6 +15,8 @@ from photo_app.domain.models import Image as ImageEntity
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from photo_app.domain.repositories import (
         FaceRepository,
         ImageRepository,
@@ -71,6 +72,7 @@ class FaceIndexService:
         self,
         limit: int = 128,
         on_progress: Callable[[int, int], None] | None = None,
+        *,
         skip_clustering: bool = False,
     ) -> FaceIndexResult:
         """Detect faces, persist embeddings, and optionally assign cluster person IDs."""
@@ -133,8 +135,8 @@ class FaceIndexService:
         except (UnidentifiedImageError, OSError, PermissionError) as exc:
             logger.warning("Skipping %s: %s", image.file_path, exc)
             return []
-        except Exception as exc:
-            logger.exception("Unexpected error opening %s: %s", image.file_path, exc)
+        except Exception:
+            logger.exception("Unexpected error opening %s", image.file_path)
             return []
 
         boxes = self._detector.detect(np_image)
@@ -212,3 +214,11 @@ class FaceIndexService:
                     [face.id for face in cluster_faces if face.id is not None],
                     person_id,
                 )
+
+    def get_identity_cluster_service(self) -> TemporalIdentityClusterService | None:
+        """Get the identity cluster service."""
+        return self._identity_cluster_service
+
+    def get_query_cache_service(self) -> AlbumQueryCacheService | None:
+        """Get the query cache service."""
+        return self._query_cache_service

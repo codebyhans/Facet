@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import contextlib
+from typing import TYPE_CHECKING, override
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QModelIndex, Qt, Signal
+from PySide6.QtGui import QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QGridLayout,
@@ -23,9 +24,9 @@ from PySide6.QtWidgets import (
 from photo_app.app.widgets.cluster_image_grid import ClusterImageGridWidget
 from photo_app.app.widgets.cluster_image_inspector import ClusterImageInspectorWidget
 from photo_app.app.widgets.person_card_widget import PersonCardWidget
-from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
 if TYPE_CHECKING:
+    from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
     from photo_app.services.face_review_service import (
         FaceReviewService,
         PersonStackSummary,
@@ -52,7 +53,7 @@ class PeopleBrowser(QWidget):
         face_review_service: FaceReviewService | None = None,
         tile_store: ThumbnailTileStore | None = None,
         parent: QWidget | None = None,
-    ):
+    ) -> None:
         super().__init__(parent)
         self._face_review_service = face_review_service
         self._tile_store = tile_store
@@ -128,7 +129,7 @@ class PeopleBrowser(QWidget):
 
         return widget
 
-    def _create_person_detail_view(self) -> QWidget:
+    def _create_person_detail_view(self) -> QWidget:  # noqa: PLR0915
         """Create the person detail view widget with two-column layout."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -272,6 +273,10 @@ class PeopleBrowser(QWidget):
         # Trailing stretch column absorbs remaining space
         self._grid_layout.setColumnStretch(grid_cols, 1)
 
+    def get_current_stacks(self) -> list[PersonStackSummary]:
+        """Get the current person stacks."""
+        return self._current_stacks
+
     def _clear_stacks_view(self) -> None:
         """Clear all person cards from the stacks grid."""
         while self._grid_layout.count():
@@ -355,24 +360,24 @@ class PeopleBrowser(QWidget):
             # Emit a signal to merge the person
             self.person_merge_requested.emit(person_id)
 
-    def _on_cluster_image_activated(self, index) -> None:
+    def _on_cluster_image_activated(self, index: QModelIndex) -> None:
         """Handle image selection in the cluster grid."""
         model = self._cluster_image_grid.model()
         if not hasattr(model, "_image_paths"):
             return
         row = index.row()
-        file_path = model._image_paths[row] if row < len(model._image_paths) else None
+        file_path: str | None = getattr(model, "_image_paths", [])[row] if row < len(getattr(model, "_image_paths", [])) else None
         if file_path is None:
             return
 
         self._current_inspector_path = file_path
 
         # Load faces via service
-        faces = []
+        faces: list[object] = []
         if self._face_review_service is not None:
             try:
                 faces = self._face_review_service.faces_for_image_path(file_path)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 faces = []
 
         # Populate person names for reassign dropdown
@@ -386,10 +391,10 @@ class PeopleBrowser(QWidget):
                     for s in all_stacks
                     if s.person_name is not None
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Fall back to names visible in this image
                 person_names = sorted({
-                    f.person_name for f in faces if f.person_name is not None
+                    name for name in (getattr(f, "person_name", None) for f in faces) if name is not None
                 })
         self._inspector.set_available_persons(person_names)
         self._inspector.load_image(file_path, faces)
@@ -398,14 +403,12 @@ class PeopleBrowser(QWidget):
         """Reload face data for the currently inspected image."""
         if self._current_inspector_path is None:
             return
-        faces = []
+        faces: list[object] = []
         if self._face_review_service is not None:
-            try:
+            with contextlib.suppress(Exception):
                 faces = self._face_review_service.faces_for_image_path(
                     self._current_inspector_path
                 )
-            except Exception:
-                pass
 
         # Populate reassign dropdown with ALL named persons in the library
         person_names: list[str] = []
@@ -417,10 +420,10 @@ class PeopleBrowser(QWidget):
                     for s in all_stacks
                     if s.person_name is not None
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Fall back to names visible in this image
                 person_names = sorted({
-                    f.person_name for f in faces if f.person_name is not None
+                    name for name in (getattr(f, "person_name", None) for f in faces) if name is not None
                 })
 
         self._inspector.set_available_persons(person_names)
@@ -428,17 +431,17 @@ class PeopleBrowser(QWidget):
 
     def _on_show_unnamed_toggled(self, state: int) -> None:
         """Handle show unnamed clusters toggle."""
-        self.show_unnamed_changed.emit(state == 2)  # Qt.Checked == 2
+        self.show_unnamed_changed.emit(state == Qt.CheckState.Checked)
 
     def _calc_grid_cols(self) -> int:
         """Calculate how many cards fit in the current viewport width."""
         if not hasattr(self, "_stacks_scroll_area"):
             return 4
         viewport_w = self._stacks_scroll_area.viewport().width()
-        cols = max(1, (viewport_w + self._CARD_SPACING) // (self._CARD_WIDTH + self._CARD_SPACING))
-        return cols
+        return max(1, (viewport_w + self._CARD_SPACING) // (self._CARD_WIDTH + self._CARD_SPACING))
 
-    def resizeEvent(self, event) -> None:
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         """Handle resize events to reflow the grid."""
         super().resizeEvent(event)
         # Only reflow when showing the stacks view and stacks are loaded

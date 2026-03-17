@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
+
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QApplication
 
 
 class ThemeColors(NamedTuple):
@@ -453,7 +456,7 @@ QMessageBox QPushButton {{
 """
 
 
-def apply_theme(app, colors: ThemeColors | None = None) -> None:
+def apply_theme(app: QApplication, colors: ThemeColors | None = None) -> None:
     """Apply dark theme to application.
 
     Args:

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
+import traceback
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from alembic import command
 from alembic.config import Config
 from PySide6.QtWidgets import QApplication
-from sqlalchemy import Engine
+
+if TYPE_CHECKING:
+    from sqlalchemy import Engine
 
 from photo_app.app.main_window import MainWindow
 from photo_app.config.settings import AppSettings, load_settings
@@ -160,7 +164,7 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
 
     face_index_service: FaceIndexService | None = None
     try:
-        import insightface  # type: ignore[import-untyped]
+        insightface = importlib.import_module("insightface")
 
         LOGGER.info("Initializing InsightFace detector (default pipeline)...")
         face_app = insightface.app.FaceAnalysis(providers=["CPUExecutionProvider"])
@@ -168,11 +172,8 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
             ctx_id=0,
             det_thresh=runtime_settings.detector_confidence_threshold,
         )
-        print("DEBUG: prepare() completed")        # ← add this
         detector = InsightFaceDetector(face_app)
-        print("DEBUG: detector created")           # ← add this
         embedding_model: EmbeddingModel = InsightFaceDetectorEmbeddingModel(detector)
-        print("DEBUG: embedding model created")    # ← add this
         if (
             runtime_settings.onnx_model_path is not None
             and runtime_settings.onnx_model_path.exists()
@@ -217,7 +218,6 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
     # Create metadata and tags services
     metadata_sync_service = MetadataSyncService(engine)
     tag_service = TagService(engine)
-    print("DEBUG: services built, returning container")  # ← add
     LOGGER.info("Service graph ready.")
     return ServiceContainer(
         image_index_service=image_index_service,
@@ -239,7 +239,6 @@ def build_main_window(settings: AppSettings, engine: Engine) -> MainWindow:
     """Create application object graph and return main window."""
     LOGGER.info("Creating main window...")
     services = build_services(settings, engine)
-    print("DEBUG: build_services done")  # ← add
     _ = services.person_service
     try:
         window = MainWindow(
@@ -254,11 +253,8 @@ def build_main_window(settings: AppSettings, engine: Engine) -> MainWindow:
             services.thumbnail_tile_store,
         )
     except Exception:
-            import traceback
-            print("DEBUG: MainWindow.__init__ CRASHED:")
-            traceback.print_exc()
-            raise
-    print("DEBUG: MainWindow constructed")  # ← add
+        traceback.print_exc()
+        raise
     LOGGER.info("Main window created.")
     return window
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import override
 
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QImageReader, QKeyEvent, QPixmap
+from PySide6.QtGui import QImageReader, QKeyEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QLabel, QListView, QVBoxLayout, QWidget
 
 from photo_app.app.models.photo_grid_model import PhotoGridModel
@@ -12,8 +13,8 @@ from photo_app.app.models.photo_grid_model import PhotoGridModel
 class FilmstripView(QListView):
     """Single-row horizontal thumbnail strip with lazy loading hooks."""
 
-    photoActivated = Signal(int)
-    currentImageChanged = Signal(QModelIndex)
+    photoActivated = Signal(int)  # noqa: N815
+    currentImageChanged = Signal(QModelIndex)  # noqa: N815
 
     def __init__(self, model: PhotoGridModel, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -60,6 +61,7 @@ class FilmstripView(QListView):
         self.scrollTo(index)
         self.currentImageChanged.emit(index)
 
+    @override
     def eventFilter(self, watched: object, event: QEvent) -> bool:
         if watched is self and event.type() == QEvent.Type.Resize:
             self._request_visible_rows()
@@ -126,12 +128,13 @@ class FilmstripView(QListView):
             self.currentImageChanged.emit(new_index)
             return None
         super().keyPressEvent(event)
+        return None
 
 
 class BrowserWorkspaceWidget(QWidget):
     """Large preview above a Lightroom-like horizontal filmstrip."""
 
-    photoActivated = Signal(int)
+    photoActivated = Signal(int)  # noqa: N815
 
     def __init__(self, model: PhotoGridModel, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -165,7 +168,8 @@ class BrowserWorkspaceWidget(QWidget):
     def currentIndex(self) -> QModelIndex:  # noqa: N802
         return self._filmstrip.currentIndex()
 
-    def resizeEvent(self, event: QEvent) -> None:  # type: ignore[override]
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._render_preview()
 

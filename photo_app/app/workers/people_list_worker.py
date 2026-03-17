@@ -6,18 +6,14 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
-from photo_app.services.face_review_service import FaceReviewService
-
 if TYPE_CHECKING:
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
+    from photo_app.services.face_review_service import FaceReviewService
 
 
 class PeopleListWorkerSignals(QObject):
     """Signals for the PeopleListWorker."""
 
-    # (stacks, cover_lookups, epoch)
-    # cover_lookups: dict[int, tuple[str, int, int, int, int]]
-    #   image_id -> (tile_path_str, x, y, width, height)
     result_ready = Signal(object, object, int)
     error = Signal(str)
     finished = Signal()
@@ -26,7 +22,7 @@ class PeopleListWorkerSignals(QObject):
 class PeopleListWorker(QRunnable):
     """Background worker for loading people lists."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         face_review_service: FaceReviewService,
         *,
@@ -35,7 +31,7 @@ class PeopleListWorker(QRunnable):
         sample_limit: int = 20,
         show_unnamed: bool = False,
         epoch: int = 0,
-    ):
+    ) -> None:
         super().__init__()
         self._face_review_service = face_review_service
         self._tile_store = tile_store
@@ -79,7 +75,7 @@ class PeopleListWorker(QRunnable):
                     )
 
             self.signals.result_ready.emit(stacks, cover_lookups, self._epoch)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             self.signals.error.emit(str(e))
         finally:
             self.signals.finished.emit()

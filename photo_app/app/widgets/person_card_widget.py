@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QContextMenuEvent, QEnterEvent, QMouseEvent, QPixmap
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
     from photo_app.services.face_review_service import PersonStackSummary
 
+LOGGER = logging.getLogger(__name__)
 
 class PersonCardWidget(QWidget):
     """Card widget for displaying a person cluster in the stacks view."""
@@ -31,7 +33,7 @@ class PersonCardWidget(QWidget):
         stack: PersonStackSummary,
         tile_store: ThumbnailTileStore | None = None,
         parent: QWidget | None = None
-    ):
+    ) -> None:
         super().__init__(parent)
         self.stack = stack
         self._tile_store = tile_store
@@ -128,7 +130,7 @@ class PersonCardWidget(QWidget):
                         self._cover_label.setPixmap(scaled)
                         return
             except Exception:
-                pass
+                LOGGER.exception("Failed to load cover tile for %s", self.stack.person_id)
 
         # Fallback to loading full image if tile system fails
         if self.stack.cover_image_path:
@@ -142,8 +144,9 @@ class PersonCardWidget(QWidget):
                     )
                     self._cover_label.setPixmap(scaled)
             except Exception:
-                pass
+                LOGGER.exception("Failed to load cover image for %s", self.stack.person_id)
 
+    @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Handle mouse press to emit click signal."""
         if event.button() == Qt.MouseButton.LeftButton:
@@ -154,6 +157,7 @@ class PersonCardWidget(QWidget):
             )
         super().mousePressEvent(event)
 
+    @override
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """Reset visual style on mouse release."""
         self.setStyleSheet(
@@ -161,6 +165,7 @@ class PersonCardWidget(QWidget):
         )
         super().mouseReleaseEvent(event)
 
+    @override
     def enterEvent(self, event: QEnterEvent) -> None:
         """Handle mouse enter for hover effect."""
         self.setStyleSheet(
@@ -168,6 +173,7 @@ class PersonCardWidget(QWidget):
         )
         super().enterEvent(event)
 
+    @override
     def leaveEvent(self, event: QEvent) -> None:
         """Reset style on mouse leave."""
         self.setStyleSheet(
@@ -175,6 +181,7 @@ class PersonCardWidget(QWidget):
         )
         super().leaveEvent(event)
 
+    @override
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         """Handle right-click context menu."""
 

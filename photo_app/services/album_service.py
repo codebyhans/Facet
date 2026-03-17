@@ -81,10 +81,12 @@ class AlbumService:
         if deleted and self._query_cache_service is not None:
             try:
                 self._query_cache_service.invalidate_cache(album_id)
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 # Log the error but don't fail album deletion due to cache issues
-                import logging
-                logging.warning(f"Failed to invalidate cache for album {album_id}: {exc}")
+                logger.warning(
+                    "Failed to invalidate cache for album %s",
+                    album_id,
+                )
         return bool(deleted)
 
     def list_album_images(
@@ -99,7 +101,7 @@ class AlbumService:
         try:
             album = self._album_repository.get(album_id)
             if album is None:
-                logger.warning(f"Album {album_id} not found")
+                logger.warning("Album %s not found", album_id)
                 return AlbumPage(items=[], offset=offset, limit=limit)
 
             # Combine album query with filter query if provided
@@ -116,7 +118,6 @@ class AlbumService:
                 combined_rating_min = filter_query.rating_min if filter_query.rating_min is not None else album.query_definition.rating_min
                 combined_quality_min = filter_query.quality_min if filter_query.quality_min is not None else album.query_definition.quality_min
                 combined_camera_models = filter_query.camera_models or album.query_definition.camera_models
-                combined_flags = filter_query.flags or getattr(album.query_definition, "flags", ())
             else:
                 # Use album query only
                 combined_person_ids = album.query_definition.person_ids
@@ -127,7 +128,6 @@ class AlbumService:
                 combined_rating_min = album.query_definition.rating_min
                 combined_quality_min = album.query_definition.quality_min
                 combined_camera_models = album.query_definition.camera_models
-                combined_flags = getattr(album.query_definition, "flags", ())
 
             if self._query_cache_service is None:
                 images = self._image_repository.list_by_filters(
@@ -139,7 +139,6 @@ class AlbumService:
                     rating_min=combined_rating_min,
                     quality_min=combined_quality_min,
                     camera_models=combined_camera_models,
-                    flags=combined_flags,
                     offset=offset,
                     limit=limit,
                 )
@@ -157,7 +156,6 @@ class AlbumService:
                     rating_min=combined_rating_min,
                     quality_min=combined_quality_min,
                     camera_models=combined_camera_models,
-                    flags=combined_flags,
                     offset=offset,
                     limit=limit,
                 )
@@ -169,8 +167,8 @@ class AlbumService:
                 limit=limit,
             )
             return AlbumPage(items=images, offset=offset, limit=limit)
-        except Exception as exc:
-            logger.error(f"Failed to list album images for album {album_id}: {exc}")
+        except Exception:
+            logger.exception("Failed to list album images for album %s", album_id)
             return AlbumPage(items=[], offset=offset, limit=limit)
 
     def list_years(self) -> list[int]:
@@ -202,7 +200,6 @@ class AlbumService:
                 rating_min=filter_query.rating_min,
                 quality_min=filter_query.quality_min,
                 camera_models=filter_query.camera_models,
-                flags=filter_query.flags,
                 offset=offset,
                 limit=limit,
             )
@@ -211,3 +208,7 @@ class AlbumService:
         # Use paginated query to avoid loading all images into memory
         items = self._image_repository.list_paginated(offset=offset, limit=limit)
         return AlbumPage(items=items, offset=offset, limit=limit)
+
+    def get_image_repository(self) -> ImageRepository:
+        """Get the image repository for accessing image data."""
+        return self._image_repository

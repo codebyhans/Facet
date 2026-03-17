@@ -1,18 +1,22 @@
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import (
     QAbstractListModel,
     QModelIndex,
+    QObject,
     QPersistentModelIndex,
     QSize,
     Qt,
 )
 from PySide6.QtGui import QPixmap
 
-from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
+if TYPE_CHECKING:
+    from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 
+LOGGER = logging.getLogger(__name__)
 
 class ClusterImageModel(QAbstractListModel):
     """Model for cluster image gallery in person detail view."""
@@ -22,7 +26,7 @@ class ClusterImageModel(QAbstractListModel):
         image_paths: list[str],
         image_ids: list[int] | None = None,
         tile_store: ThumbnailTileStore | None = None,
-        parent: Any | None = None
+        parent: QObject | None = None
     ) -> None:
         super().__init__(parent)
         self._image_paths = image_paths
@@ -31,12 +35,20 @@ class ClusterImageModel(QAbstractListModel):
         self._pixmap_cache: dict[int, QPixmap | None] = {}  # Cache for loaded pixmaps
         self._max_cache_size = 50  # Maximum number of pixmaps to cache
 
-    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def rowCount(  # noqa: N802
+        self,
+        parent: QModelIndex | QPersistentModelIndex | None = None,
+    ) -> int:
+        parent = parent or QModelIndex()
         if parent.isValid():
             return 0
         return len(self._image_paths)
 
-    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:  # noqa: ANN401
+    def data(
+        self,
+        index: QModelIndex | QPersistentModelIndex,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ) -> object | None:
         if not index.isValid() or index.row() < 0 or index.row() >= len(self._image_paths):
             return None
 
@@ -130,7 +142,7 @@ class ClusterImageModel(QAbstractListModel):
                         self._ensure_cache_size()
                         return cropped
             except Exception:
-                pass
+                LOGGER.exception("Failed to load cached tile for image %s", image_id)
 
         # Fallback to loading full image if tile system fails
         image_path = self._image_paths[row]
@@ -147,5 +159,5 @@ class ClusterImageModel(QAbstractListModel):
                 self._ensure_cache_size()
                 return scaled
         except Exception:
-            pass
+            LOGGER.exception("Failed to load thumbnail for %s", image_path)
         return None

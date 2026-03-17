@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import Engine, delete, func, select
@@ -11,6 +11,9 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from photo_app.infrastructure.sqlalchemy_models import ImageModel, ThumbnailTileModel
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +155,10 @@ class ThumbnailTileBuilder:
             # Since we can't reliably get rowcount from SQLite INSERT OR IGNORE,
             # we log a warning-level message when concurrent tile building might be happening
             if total_attempts > 0:
-                logger.debug(f"Attempted to insert {total_attempts} tile mappings (duplicates silently ignored)")
+                logger.debug(
+                    "Attempted to insert %s tile mappings (duplicates silently ignored)",
+                    total_attempts,
+                )
 
     def rebuild_all_tiles(self) -> TileBuildResult:
         """Drop tile files and tile mapping table, then rebuild from all images."""

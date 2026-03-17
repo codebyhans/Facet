@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PIL import Image as PilImage
 from sqlalchemy import create_engine, select
@@ -18,8 +18,15 @@ from photo_app.infrastructure.sqlalchemy_models import AlbumQueryCacheModel, Bas
 from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
 from photo_app.services.album_query_cache_service import AlbumQueryCacheService
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 INDEXED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 CREATED_AT = datetime(2026, 1, 2, tzinfo=UTC)
+EXPECTED_IMAGES_BUILT = 3
+EXPECTED_CACHED_ROWS = 2
+QUERY_VERSION_1 = 1
+QUERY_VERSION_2 = 2
 
 
 def _make_image(path: Path, color: tuple[int, int, int]) -> None:
@@ -66,7 +73,7 @@ def test_thumbnail_tile_generation_and_lookup(tmp_path: Path) -> None:
         result = store.build_missing_tiles()
         session.commit()
 
-        assert result.images_built == 3
+        assert result.images_built == EXPECTED_IMAGES_BUILT
         assert result.tiles_built == 1
 
         images = image_repo.list_all()
@@ -161,7 +168,7 @@ def test_album_query_cache_hit_miss_and_invalidation() -> None:
                 id=None,
                 name="People",
                 query_definition=AlbumQuery(person_ids=(7,), date_from=None, date_to=None),
-                query_version=1,
+                query_version=QUERY_VERSION_1,
                 created_at=CREATED_AT,
             )
         )
@@ -175,8 +182,8 @@ def test_album_query_cache_hit_miss_and_invalidation() -> None:
         cached_rows = session.scalars(
             select(AlbumQueryCacheModel).where(AlbumQueryCacheModel.album_id == album.id)
         ).all()
-        assert len(cached_rows) == 2
-        assert {row.query_version for row in cached_rows} == {1}
+        assert len(cached_rows) == EXPECTED_CACHED_ROWS
+        assert {row.query_version for row in cached_rows} == {QUERY_VERSION_1}
 
         # Cache hit.
         second_ids = cache_service.resolve_album(album.id)
@@ -188,7 +195,7 @@ def test_album_query_cache_hit_miss_and_invalidation() -> None:
             AlbumQuery(person_ids=(7,), date_from=date(2023, 1, 1), date_to=None),
         )
         assert updated is not None
-        assert updated.query_version == 2
+        assert updated.query_version == QUERY_VERSION_2
         session.flush()
 
         page = cache_service.get_album_images(album.id, offset=0, limit=10)
@@ -198,4 +205,4 @@ def test_album_query_cache_hit_miss_and_invalidation() -> None:
             select(AlbumQueryCacheModel).where(AlbumQueryCacheModel.album_id == album.id)
         ).all()
         assert len(refreshed_rows) == 1
-        assert {row.query_version for row in refreshed_rows} == {2}
+        assert {row.query_version for row in refreshed_rows} == {QUERY_VERSION_2}

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import contextlib
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
@@ -45,7 +46,7 @@ class AdvancedFilterEditorDialog(QDialog):
         self._init_ui()
         self._load_query()
 
-    def _init_ui(self) -> None:
+    def _init_ui(self) -> None:  # noqa: PLR0915
         """Initialize the UI layout."""
         layout = QVBoxLayout(self)
 
@@ -72,21 +73,22 @@ class AdvancedFilterEditorDialog(QDialog):
         date_layout = QFormLayout()
 
         self._date_from = QDateEdit()
-        self._date_from.setDate(date.today() - timedelta(days=365))
+        today = datetime.now(tz=datetime.UTC).date()
+        self._date_from.setDate(today - timedelta(days=365))
         self._date_from.setCalendarPopup(True)
         self._date_from_check = QCheckBox("From:")
         self._date_from_check.toggled.connect(
-            lambda checked: self._date_from.setEnabled(checked)
+            self._date_from.setEnabled
         )
         self._date_from.setEnabled(False)
         date_layout.addRow(self._date_from_check, self._date_from)
 
         self._date_to = QDateEdit()
-        self._date_to.setDate(date.today())
+        self._date_to.setDate(today)
         self._date_to.setCalendarPopup(True)
         self._date_to_check = QCheckBox("To:")
         self._date_to_check.toggled.connect(
-            lambda checked: self._date_to.setEnabled(checked)
+            self._date_to.setEnabled
         )
         self._date_to.setEnabled(False)
         date_layout.addRow(self._date_to_check, self._date_to)
@@ -128,7 +130,7 @@ class AdvancedFilterEditorDialog(QDialog):
 
         layout.addLayout(button_layout)
 
-    def _load_query(self) -> None:
+    def _load_query(self) -> None:  # noqa: C901, PLR0912
         """Load current query into UI if provided."""
         if self._current_query is None:
             return
@@ -153,7 +155,6 @@ class AdvancedFilterEditorDialog(QDialog):
         if date_from is not None:
             self._date_from_check.setChecked(True)
             if isinstance(date_from, str):
-                from datetime import datetime
                 try:
                     dt = datetime.fromisoformat(date_from)
                     self._date_from.setDate(dt.date())
@@ -162,16 +163,13 @@ class AdvancedFilterEditorDialog(QDialog):
             elif hasattr(date_from, "date"):  # QDate object
                 self._date_from.setDate(date_from)
             else:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     self._date_from.setDate(date_from)
-                except (ValueError, TypeError):
-                    pass
 
         date_to = get_value("date_to")
         if date_to is not None:
             self._date_to_check.setChecked(True)
             if isinstance(date_to, str):
-                from datetime import datetime
                 try:
                     dt = datetime.fromisoformat(date_to)
                     self._date_to.setDate(dt.date())
@@ -180,10 +178,8 @@ class AdvancedFilterEditorDialog(QDialog):
             elif hasattr(date_to, "date"):  # QDate object
                 self._date_to.setDate(date_to)
             else:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     self._date_to.setDate(date_to)
-                except (ValueError, TypeError):
-                    pass
 
         # Load flags
         flags = get_value("flags", [])
@@ -195,11 +191,11 @@ class AdvancedFilterEditorDialog(QDialog):
             is_not_discarded = (
                 "keep" in flags and "undecided" in flags and "discard" not in flags
             )
-            self._not_discarded_check.blockSignals(True)
+            self._not_discarded_check.blockSignals(True)  # noqa: FBT003
             self._not_discarded_check.setChecked(is_not_discarded)
-            self._not_discarded_check.blockSignals(False)
+            self._not_discarded_check.blockSignals(False)  # noqa: FBT003
 
-    def _on_not_discarded_toggled(self, checked: bool) -> None:
+    def _on_not_discarded_toggled(self, checked: bool) -> None:  # noqa: FBT001
         """Handle Not Discarded shortcut toggle."""
         if checked:
             self._flag_keep_check.setChecked(True)
@@ -209,9 +205,10 @@ class AdvancedFilterEditorDialog(QDialog):
     def get_query_definition(self) -> dict[str, object]:
         """Get the filter query definition as a dict."""
         # Get selected people
-        person_ids = []
-        for item in self._person_list.selectedItems():
-            person_ids.append(item.data(Qt.ItemDataRole.UserRole))
+        person_ids = [
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in self._person_list.selectedItems()
+        ]
 
         # Get selected flags
         selected_flags = []

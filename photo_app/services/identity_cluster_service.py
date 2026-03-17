@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
@@ -12,6 +11,8 @@ from photo_app.domain.services import now_utc
 from photo_app.services.ann_index import RandomProjectionAnnIndex
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from photo_app.domain.models import Face, IdentityCluster, Image
     from photo_app.domain.repositories import (
         FaceRepository,
@@ -24,6 +25,14 @@ if TYPE_CHECKING:
 _CENTROID_WEIGHT = 0.7
 _TEMPORAL_WEIGHT = 0.3
 _TIME_PERIODS = ("child", "teen", "young_adult", "adult", "senior")
+_MIN_CLUSTER_VECTORS = 2
+_TEMPORAL_SIMILARITY_FALLBACK = -0.5
+_MIN_VECTOR_NORM = 1e-12
+_MIN_SPAN = 1e-6
+_AGE_CHILD_MAX = 13
+_AGE_TEEN_MAX = 18
+_AGE_YOUNG_ADULT_MAX = 30
+_AGE_ADULT_MAX = 60
 
 
 @dataclass(frozen=True)
@@ -64,7 +73,7 @@ class TemporalIdentityClusterService:
         self._ann = RandomProjectionAnnIndex()
         self._index_dirty = True
 
-    def index_new_faces(
+    def index_new_faces(  # noqa: C901, PLR0912
         self,
         limit: int | None = None,
         on_progress: Callable[[int, int], None] | None = None,
@@ -263,11 +272,11 @@ class TemporalIdentityClusterService:
         self._index_dirty = True
         return len(clusters)
 
-    def detect_and_merge_duplicate_clusters(self) -> int:
+    def detect_and_merge_duplicate_clusters(self) -> int:  # noqa: C901, PLR0912
         """Merge clusters whose centroids exceed merge threshold.
 
         Uses the ANN index to find candidates rather than checking all pairs,
-        reducing complexity from O(N²) to O(N × ann_candidate_limit).
+        reducing complexity from O(N²) to O(N x ann_candidate_limit).
         """
         clusters = [
             c for c in self._cluster_repository.list_clusters()
@@ -284,7 +293,7 @@ class TemporalIdentityClusterService:
                     np.frombuffer(cluster.canonical_embedding, dtype=np.float32)
                 )
 
-        if len(vectors) < 2:
+        if len(vectors) < _MIN_CLUSTER_VECTORS:
             return 0
 
         self._ann.build(vectors)
@@ -331,7 +340,7 @@ class TemporalIdentityClusterService:
         self._index_dirty = True  # mark dirty so next use rebuilds with merged state
         return merged
 
-    def _match_cluster(self, vector: np.ndarray, *, age_bucket: str | None) -> ClusterMatch | None:
+    def _match_cluster(self, vector: np.ndarray, *, age_bucket: str | None) -> ClusterMatch | None:  # noqa: C901
         self._ensure_ann_index()
         candidates = self._ann.query(vector, limit=self._config.ann_candidate_limit)
         if not candidates:
@@ -359,14 +368,14 @@ class TemporalIdentityClusterService:
                     temporal_similarity,
                     float(np.dot(vector, temporal_vector)),
                 )
-            if temporal_similarity < -0.5:
+            if temporal_similarity < _TEMPORAL_SIMILARITY_FALLBACK:
                 for row in temporal_rows:
                     temporal_vector = _normalize(np.frombuffer(row.embedding, dtype=np.float32))
                     temporal_similarity = max(
                         temporal_similarity,
                         float(np.dot(vector, temporal_vector)),
                     )
-            if temporal_similarity < -0.5:
+            if temporal_similarity < _TEMPORAL_SIMILARITY_FALLBACK:
                 temporal_similarity = centroid_similarity
 
             weighted_score = (
@@ -509,20 +518,20 @@ class TemporalIdentityClusterService:
         if birth_year is None:
             return None
         age = capture.year - birth_year
-        if age < 13:
+        if age < _AGE_CHILD_MAX:
             return "child"
-        if age < 18:
+        if age < _AGE_TEEN_MAX:
             return "teen"
-        if age < 30:
+        if age < _AGE_YOUNG_ADULT_MAX:
             return "young_adult"
-        if age < 60:
+        if age < _AGE_ADULT_MAX:
             return "adult"
         return "senior"
 
 
 def _normalize(vector: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vector))
-    if norm <= 1e-12:
+    if norm <= _MIN_VECTOR_NORM:
         return vector.astype(np.float32)
     return (vector / norm).astype(np.float32)
 
@@ -532,7 +541,7 @@ def _recency_weights(dates: list[date], *, recency_weight: float) -> np.ndarray:
         return np.array([1.0], dtype=np.float32)
     ordinals = np.array([item.toordinal() for item in dates], dtype=np.float32)
     span = float(np.max(ordinals) - np.min(ordinals))
-    if span <= 1e-6:
+    if span <= _MIN_SPAN:
         return np.ones((len(dates),), dtype=np.float32)
     scaled = (ordinals - np.min(ordinals)) / span
     return (1.0 + recency_weight * scaled).astype(np.float32)

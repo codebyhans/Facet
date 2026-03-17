@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import piexif
 from PIL import Image as PILImage
@@ -17,7 +18,7 @@ class ExifMetadataHandler:
     """Read and write EXIF/XMP metadata in image files."""
 
     # EXIF IFD tags
-    EXIF_TAGS = {
+    EXIF_TAGS: ClassVar[dict[str, int]] = {
         "UserComment": 0x010E,  # ImageDescription in IFD0, but UserComment is 37510
         "Model": 271,  # Camera model in IFD0
         "LensMake": 42304,  # Lens make in Exif IFD (0xA586)
@@ -28,7 +29,7 @@ class ExifMetadataHandler:
     }
 
     # GPS IFD tags
-    GPS_TAGS = {
+    GPS_TAGS: ClassVar[dict[str, int]] = {
         "GPSLatitude": 2,
         "GPSLatitudeRef": 1,
         "GPSLongitude": 4,
@@ -36,9 +37,19 @@ class ExifMetadataHandler:
         "GPSAltitude": 6,
         "GPSAltitudeRef": 5,
     }
+    _DATETIME_ORIGINAL_TAG = 36867
+    _USER_COMMENT_TAG = 37510
+    _MODEL_TAG = 271
+    _GPS_LAT_TAG = 2
+    _GPS_LAT_REF_TAG = 1
+    _GPS_LON_TAG = 4
+    _GPS_LON_REF_TAG = 3
+    _RATING_TAG = 18246
+    _MIN_RATING = 0
+    _MAX_RATING = 5
 
     @staticmethod
-    def read_exif(filepath: str) -> dict[str, Any]:
+    def read_exif(filepath: str) -> dict[str, Any]:  # noqa: C901, PLR0912
         """
         Read EXIF data from an image file.
 
@@ -74,43 +85,43 @@ class ExifMetadataHandler:
             # Read DateTimeOriginal from Exif IFD
             if "Exif" in exif_dict:
                 exif_ifd = exif_dict["Exif"]
-                if 36867 in exif_ifd:  # DateTimeOriginal
+                if ExifMetadataHandler._DATETIME_ORIGINAL_TAG in exif_ifd:
                     try:
-                        dt_str = exif_ifd[36867].decode("utf-8")
+                        dt_str = exif_ifd[ExifMetadataHandler._DATETIME_ORIGINAL_TAG].decode("utf-8")
                         result["datetime_original"] = datetime.strptime(
-                            dt_str, "%Y:%m:%d %H:%M:%S"
-                        )
+                            dt_str,
+                            "%Y:%m:%d %H:%M:%S",
+                        ).replace(tzinfo=datetime.UTC)
                     except (ValueError, AttributeError) as e:
-                        logger.debug(f"Failed to parse DateTimeOriginal: {e}")
+                        logger.debug("Failed to parse DateTimeOriginal: %s", e)
 
-                # UserComment (37510 in Exif)
-                if 37510 in exif_ifd:
-                    try:
-                        result["user_comment"] = exif_ifd[37510].decode("utf-8")
-                    except (UnicodeDecodeError, AttributeError):
-                        pass
+                if ExifMetadataHandler._USER_COMMENT_TAG in exif_ifd:
+                    with contextlib.suppress(UnicodeDecodeError, AttributeError):
+                        result["user_comment"] = exif_ifd[
+                            ExifMetadataHandler._USER_COMMENT_TAG
+                        ].decode("utf-8")
 
             # Read camera model from IFD0
             if "0th" in exif_dict:
                 ifd0 = exif_dict["0th"]
-                if 271 in ifd0:  # Model
-                    try:
-                        result["camera_model"] = ifd0[271].decode("utf-8")
-                    except (UnicodeDecodeError, AttributeError):
-                        pass
+                if ExifMetadataHandler._MODEL_TAG in ifd0:
+                    with contextlib.suppress(UnicodeDecodeError, AttributeError):
+                        result["camera_model"] = ifd0[
+                            ExifMetadataHandler._MODEL_TAG
+                        ].decode("utf-8")
 
             # Read GPS info
             if "GPS" in exif_dict:
                 gps_ifd = exif_dict["GPS"]
                 try:
                     # GPS Latitude
-                    if 2 in gps_ifd:
+                    if ExifMetadataHandler._GPS_LAT_TAG in gps_ifd:
                         lat_ref = (
-                            gps_ifd.get(1, b"N").decode("utf-8")
-                            if 1 in gps_ifd
+                            gps_ifd.get(ExifMetadataHandler._GPS_LAT_REF_TAG, b"N").decode("utf-8")
+                            if ExifMetadataHandler._GPS_LAT_REF_TAG in gps_ifd
                             else "N"
                         )
-                        lat_tuple = gps_ifd[2]
+                        lat_tuple = gps_ifd[ExifMetadataHandler._GPS_LAT_TAG]
                         lat = (
                             lat_tuple[0][0] / lat_tuple[0][1]
                             + lat_tuple[1][0] / lat_tuple[1][1] / 60
@@ -119,13 +130,13 @@ class ExifMetadataHandler:
                         result["gps_latitude"] = lat if lat_ref == "N" else -lat
 
                     # GPS Longitude
-                    if 4 in gps_ifd:
+                    if ExifMetadataHandler._GPS_LON_TAG in gps_ifd:
                         lon_ref = (
-                            gps_ifd.get(3, b"E").decode("utf-8")
-                            if 3 in gps_ifd
+                            gps_ifd.get(ExifMetadataHandler._GPS_LON_REF_TAG, b"E").decode("utf-8")
+                            if ExifMetadataHandler._GPS_LON_REF_TAG in gps_ifd
                             else "E"
                         )
-                        lon_tuple = gps_ifd[4]
+                        lon_tuple = gps_ifd[ExifMetadataHandler._GPS_LON_TAG]
                         lon = (
                             lon_tuple[0][0] / lon_tuple[0][1]
                             + lon_tuple[1][0] / lon_tuple[1][1] / 60
@@ -133,10 +144,10 @@ class ExifMetadataHandler:
                         )
                         result["gps_longitude"] = lon if lon_ref == "E" else -lon
                 except (KeyError, IndexError, ZeroDivisionError, TypeError) as e:
-                    logger.debug(f"Failed to parse GPS data: {e}")
+                    logger.debug("Failed to parse GPS data: %s", e)
 
-        except Exception as e:
-            logger.warning(f"Failed to read EXIF from {filepath}: {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to read EXIF from %s: %s", filepath, e)
 
         # Also try PIL for XMP-embedded keywords (future enhancement)
         try:
@@ -144,8 +155,8 @@ class ExifMetadataHandler:
             # Keywords might be in info dict
             if "exif" in pil_img.info or "xmp" in pil_img.info:
                 pass  # Would parse XMP here
-        except Exception as e:
-            logger.debug(f"Failed to read PIL metadata: {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Failed to read PIL metadata: %s", e)
 
         return result
 
@@ -180,37 +191,37 @@ class ExifMetadataHandler:
             ExifMetadataHandler._write_exif_direct(filepath, metadata)
             return
 
-        logger.warning(f"Unsupported format for EXIF write: {path.suffix}")
+        logger.warning("Unsupported format for EXIF write: %s", path.suffix)
 
     @staticmethod
     def _write_exif_direct(filepath: str, metadata: dict[str, Any]) -> None:
         """Write EXIF directly to JPEG/TIFF file."""
         try:
             exif_dict = piexif.load(filepath)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Create new EXIF structure if none exists
             exif_dict = {"0th": {}, "Exif": {}, "GPS": {}}
 
         # Rating (Windows XMP standard: 18246 or custom)
         if "rating" in metadata and metadata["rating"] is not None:
             rating = metadata["rating"]
-            if 0 <= rating <= 5:
-                exif_dict["0th"][18246] = str(rating).encode("utf-8")
+            if ExifMetadataHandler._MIN_RATING <= rating <= ExifMetadataHandler._MAX_RATING:
+                exif_dict["0th"][ExifMetadataHandler._RATING_TAG] = str(rating).encode("utf-8")
 
         # User comment (37510 in Exif)
         if "user_comment" in metadata and metadata["user_comment"] is not None:
             comment = metadata["user_comment"]
-            exif_dict["Exif"][37510] = comment.encode("utf-8")
+            exif_dict["Exif"][ExifMetadataHandler._USER_COMMENT_TAG] = comment.encode("utf-8")
 
         # Keywords: store in UserComment for now (XMP would be better)
-        # TODO: Add proper XMP support for Keywords
+        # XMP keyword support not implemented yet.
 
         try:
             exif_bytes = piexif.dump(exif_dict)
             piexif.insert(exif_bytes, filepath)
-            logger.info(f"Wrote EXIF metadata to {filepath}")
-        except Exception as e:
-            logger.error(f"Failed to write EXIF to {filepath}: {e}")
+            logger.info("Wrote EXIF metadata to %s", filepath)
+        except Exception:
+            logger.exception("Failed to write EXIF to %s", filepath)
 
     @staticmethod
     def _write_xmp_sidecar(filepath: str, metadata: dict[str, Any]) -> None:
@@ -246,6 +257,6 @@ class ExifMetadataHandler:
 
         try:
             sidecar_path.write_text(xmp_content, encoding="utf-8")
-            logger.info(f"Wrote XMP sidecar to {sidecar_path}")
-        except Exception as e:
-            logger.error(f"Failed to write XMP sidecar {sidecar_path}: {e}")
+            logger.info("Wrote XMP sidecar to %s", sidecar_path)
+        except Exception:
+            logger.exception("Failed to write XMP sidecar %s", sidecar_path)

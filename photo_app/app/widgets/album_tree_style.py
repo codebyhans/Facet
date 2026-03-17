@@ -1,14 +1,23 @@
 """Custom QProxyStyle for album tree expand/collapse arrows."""
 
+from typing import override
+
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleOptionViewItem
+from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleOptionViewItem, QWidget
 
 
 class AlbumTreeStyle(QProxyStyle):
     """Custom style for album tree with dark theme expand/collapse arrows."""
 
-    def drawPrimitive(self, element: QStyle.PrimitiveElement, option: QStyleOptionViewItem, painter: QPainter, widget=None) -> None:
+    @override
+    def drawPrimitive(
+        self,
+        element: QStyle.PrimitiveElement,
+        option: QStyleOptionViewItem,
+        painter: QPainter,
+        widget: QWidget | None = None,
+    ) -> None:
         """Draw custom expand/collapse arrows for album tree."""
         if element == QStyle.PrimitiveElement.PE_IndicatorBranch:
             has_children = bool(option.state & QStyle.StateFlag.State_Children)
@@ -22,7 +31,7 @@ class AlbumTreeStyle(QProxyStyle):
     def _draw_custom_arrow(self, option: QStyleOptionViewItem, painter: QPainter) -> None:
         """Draw custom dark theme arrow for expand/collapse."""
         painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)  # noqa: FBT003
 
         # Calculate arrow position and size
         rect = option.rect

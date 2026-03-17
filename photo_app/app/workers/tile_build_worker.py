@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
@@ -31,10 +32,8 @@ class TileBuildWorker(QRunnable):
             self.signals.progress.emit(5)
 
             def on_progress(current: int, total: int) -> None:
-                try:
+                with contextlib.suppress(RuntimeError):
                     self.signals.progress_detailed.emit(current, total)
-                except RuntimeError:
-                    pass
 
             result = self._fn(*self._args, on_progress=on_progress, **self._kwargs)
             self.signals.progress.emit(100)

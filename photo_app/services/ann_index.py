@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+MIN_NORM = 1e-12
 
 @dataclass(frozen=True)
 class AnnNeighbor:
@@ -88,6 +89,6 @@ class RandomProjectionAnnIndex:
 
 def _normalize(vector: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vector))
-    if norm <= 1e-12:
+    if norm <= MIN_NORM:
         return vector.astype(np.float32)
     return (vector / norm).astype(np.float32)

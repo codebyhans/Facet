@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -9,27 +10,29 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHBoxLayout,
+    QLabel,
     QListWidget,
     QListWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
 if TYPE_CHECKING:
     from photo_app.services.face_review_service import PersonStackSummary
 
+LOGGER = logging.getLogger(__name__)
 
 class PersonStackListItemWidget(QWidget):
     """Custom widget for a person stack list item."""
 
-    def __init__(self, stack: PersonStackSummary, parent: QWidget | None = None):
+    def __init__(self, stack: PersonStackSummary, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.stack = stack
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         """Setup UI for the list item."""
-        from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
-
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(12)
@@ -48,10 +51,9 @@ class PersonStackListItemWidget(QWidget):
                     )
                     thumb_label.setPixmap(scaled)
             except Exception:
-                pass
+                LOGGER.exception("Failed to load cover image for %s", self.stack.person_id)
         layout.addWidget(thumb_label)
 
-        # Info (name and count)
         info_layout = QVBoxLayout()
 
         name_label = QLabel()
@@ -76,7 +78,7 @@ class PersonStackWidget(QListWidget):
     stack_selected = Signal(int, object)  # person_id, PersonStackSummary
     stack_double_clicked = Signal(int, object)  # person_id, PersonStackSummary
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._stacks: dict[int, PersonStackSummary] = {}
         self.itemSelectionChanged.connect(self._on_selection_changed)
@@ -90,7 +92,7 @@ class PersonStackWidget(QListWidget):
 
     def show_stacks(self, stacks: list[PersonStackSummary]) -> None:
         """Load and display person stacks.
-        
+
         Args:
             stacks: List of PersonStackSummary objects to display
         """

@@ -21,6 +21,10 @@ from photo_app.services.identity_cluster_service import (
 )
 
 INDEXED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+EXPECTED_ASSIGNED = 2
+EXPECTED_CLUSTER_FACE_COUNT = 2
+EXPECTED_MEMBER_COUNT = 2
+EXPECTED_CLUSTER_COUNT = 2
 
 
 def _embedding(values: list[float]) -> bytes:
@@ -97,16 +101,16 @@ def test_temporal_service_assigns_similar_faces_to_one_cluster() -> None:
             config=TemporalIdentityConfig(match_threshold=0.3),
         )
         assigned = service.index_new_faces()
-        assert assigned == 2
+        assert assigned == EXPECTED_ASSIGNED
 
         clusters = service.list_clusters()
         assert len(clusters) == 1
         cluster = clusters[0]
         assert cluster.id is not None
-        assert cluster.face_count == 2
+        assert cluster.face_count == EXPECTED_CLUSTER_FACE_COUNT
 
         members = cluster_repo.list_memberships(cluster.id)
-        assert len(members) == 2
+        assert len(members) == EXPECTED_MEMBER_COUNT
 
 
 def test_image_filter_by_cluster_ids() -> None:
@@ -179,7 +183,7 @@ def test_image_filter_by_cluster_ids() -> None:
         )
         _ = service.index_new_faces()
         clusters = service.list_clusters()
-        assert len(clusters) == 2
+        assert len(clusters) == EXPECTED_CLUSTER_COUNT
         target_cluster_id = clusters[0].id
         assert target_cluster_id is not None
 

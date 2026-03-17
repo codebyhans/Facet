@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QEvent, QModelIndex, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QShowEvent
 from PySide6.QtWidgets import QListView
 
 from photo_app.app.models.photo_grid_model import PhotoGridModel
@@ -11,13 +10,14 @@ from photo_app.app.widgets.photo_grid_delegate import PhotoGridDelegate
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QResizeEvent
+    from PySide6.QtGui import QKeyEvent, QMouseEvent, QShowEvent
 
 
 class PhotoGridWidget(QListView):
     """Icon-mode photo list optimized for lazy loading + pagination."""
 
-    photoActivated = Signal(int)
-    flagChanged = Signal(object, object)  # index, flag_value
+    photoActivated = Signal(int)  # noqa: N815
+    flagChanged = Signal(object, object)  # noqa: N815  # index, flag_value
 
     def __init__(self, model: PhotoGridModel, parent: QListView | None = None) -> None:
         super().__init__(parent)
@@ -49,7 +49,9 @@ class PhotoGridWidget(QListView):
         model.rowsInserted.connect(self._on_model_structure_changed)
 
         # Connect flag change signal from delegate
-        self.itemDelegate().flagChanged.connect(self._on_flag_changed)
+        delegate = self.itemDelegate()
+        if hasattr(delegate, "flagChanged"):
+            delegate.flagChanged.connect(self._on_flag_changed)
 
         # Enable keyboard events
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -58,6 +60,7 @@ class PhotoGridWidget(QListView):
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
 
+    @override
     def resizeEvent(self, event: QResizeEvent) -> None:
         """Handle resize events to dynamically adjust grid size for even distribution."""
         super().resizeEvent(event)
@@ -89,7 +92,8 @@ class PhotoGridWidget(QListView):
         label_padding = 20  # Space for labels if any
         self.setGridSize(QSize(cell_w, thumb_h + label_padding))
 
-    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
         """Handle widget becoming visible - request tiles if this is first show."""
         super().showEvent(event)
         # On first show, request tiles for any existing items
@@ -143,6 +147,7 @@ class PhotoGridWidget(QListView):
         if hasattr(self, "flagChanged"):
             self.flagChanged.emit(index, flag_value)
 
+    @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
         """Handle keyboard shortcuts for flagging images."""
         if not self.currentIndex().isValid():
@@ -161,42 +166,42 @@ class PhotoGridWidget(QListView):
         key = event.key()
         modifiers = event.modifiers()
 
-        if key == Qt.Key.Key_P and modifiers == Qt.KeyboardModifier.NoModifier:
-            # P = keep
-            self._on_flag_changed(current_index, "keep")
-        elif key == Qt.Key.Key_X and modifiers == Qt.KeyboardModifier.NoModifier:
-            # X = discard
-            self._on_flag_changed(current_index, "discard")
-        elif key == Qt.Key.Key_U and modifiers == Qt.KeyboardModifier.NoModifier:
-            # U = undecided
-            self._on_flag_changed(current_index, "undecided")
-        elif key == Qt.Key.Key_Backspace and modifiers == Qt.KeyboardModifier.NoModifier:
-            # Backspace = clear flag
-            self._on_flag_changed(current_index, None)
-        else:
-            super().keyPressEvent(event)
+        if modifiers == Qt.KeyboardModifier.NoModifier:
+            flag_by_key: dict[Qt.Key, str | None] = {
+                Qt.Key.Key_P: "keep",
+                Qt.Key.Key_X: "discard",
+                Qt.Key.Key_U: "undecided",
+                Qt.Key.Key_Backspace: None,
+            }
+            if key in flag_by_key:
+                self._on_flag_changed(current_index, flag_by_key[key])
+                return
 
+        super().keyPressEvent(event)
+
+    @override
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Handle mouse move events to track hovered index."""
         index = self.indexAt(event.pos())
         delegate = self.itemDelegate()
         if isinstance(delegate, PhotoGridDelegate):
-            old = delegate._hovered_index
-            delegate._hovered_index = index if index.isValid() else None
-            if old != delegate._hovered_index:
+            old = getattr(delegate, "_hovered_index", None)
+            delegate.set_hovered_index(index if index.isValid() else None)
+            if old != getattr(delegate, "_hovered_index", None):
                 if old and old.isValid():
                     self.viewport().update(self.visualRect(old))
                 if index.isValid():
                     self.viewport().update(self.visualRect(index))
         super().mouseMoveEvent(event)
 
+    @override
     def leaveEvent(self, event: QEvent) -> None:
         """Handle mouse leave events to clear hovered index."""
         delegate = self.itemDelegate()
         if isinstance(delegate, PhotoGridDelegate):
-            old = delegate._hovered_index
-            delegate._hovered_index = None
-            delegate._hover_buttons_visible = False
+            old = getattr(delegate, "_hovered_index", None)
+            delegate.set_hovered_index(None)
+            delegate.set_hover_buttons_visible(visible=False)
             if old and old.isValid():
                 self.viewport().update(self.visualRect(old))
         super().leaveEvent(event)

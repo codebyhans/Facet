@@ -23,7 +23,7 @@ def create_sqlite_engine(db_path: str) -> Engine:
     )
 
     @event.listens_for(engine, "connect")
-    def set_wal_mode(dbapi_connection: object, connection_record: object) -> None:
+    def set_wal_mode(dbapi_connection: object, _connection_record: object) -> None:
         # Type ignore is needed because the exact type of dbapi_connection is database-specific
         # and not exposed in SQLAlchemy's public API
         cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]

@@ -75,7 +75,7 @@ class TagEditorWidget(QWidget):
     def set_available_tags(self, tags: list[str]) -> None:
         """Set available tags for autocomplete."""
         self._all_tags = [t.lower().strip() for t in tags if t.strip()]
-        self._all_tags = sorted(list(set(self._all_tags)))
+        self._all_tags = sorted(set(self._all_tags))
         self._completer.setModel(
             __import__("PySide6.QtCore").QStringListModel(self._all_tags)
         )

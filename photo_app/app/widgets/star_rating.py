@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import math
+from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
 if TYPE_CHECKING:
@@ -19,6 +20,7 @@ class StarRatingWidget(QWidget):
 
     STAR_SIZE = 24
     STAR_SPACING = 4
+    STAR_PADDING = 2
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize star rating widget."""
@@ -42,6 +44,7 @@ class StarRatingWidget(QWidget):
         """Get current rating (0-5)."""
         return self._rating
 
+    @override
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Update hover effect on mouse movement."""
         star = self._get_star_at_position(event.position().x())
@@ -49,6 +52,7 @@ class StarRatingWidget(QWidget):
             self._hover_rating = star
             self.update()
 
+    @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Handle star rating on click."""
         rating = self._get_star_at_position(event.position().x())
@@ -58,12 +62,14 @@ class StarRatingWidget(QWidget):
             self.update()
             self.rating_changed.emit(rating)
 
-    def leaveEvent(self, event: object) -> None:
+    @override
+    def leaveEvent(self, _event: object) -> None:
         """Clear hover effect when leaving widget."""
         self._hover_rating = 0
         self.update()
 
-    def paintEvent(self, event: object) -> None:
+    @override
+    def paintEvent(self, _event: object) -> None:
         """Paint the star rating."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -71,7 +77,7 @@ class StarRatingWidget(QWidget):
         # Determine which stars to highlight
         display_rating = self._hover_rating if self._hover_rating > 0 else self._rating
 
-        x = 2
+        x = self.STAR_PADDING
         for star_num in range(1, 6):
             is_filled = star_num <= display_rating
             self._draw_star(
@@ -86,9 +92,9 @@ class StarRatingWidget(QWidget):
 
     def _get_star_at_position(self, x: float) -> int:
         """Calculate which star is at the given x position (1-5, or 0 for none)."""
-        if x < 2:
+        if x < self.STAR_PADDING:
             return 0
-        x -= 2
+        x -= self.STAR_PADDING
         for star_num in range(1, 6):
             star_x = (star_num - 1) * (self.STAR_SIZE + self.STAR_SPACING)
             star_right = star_x + self.STAR_SIZE
@@ -96,7 +102,7 @@ class StarRatingWidget(QWidget):
                 return star_num
         return 0
 
-    def _draw_star(self, painter: QPainter, x: int, y: int, filled: bool) -> None:
+    def _draw_star(self, painter: QPainter, x: int, y: int, filled: bool) -> None:  # noqa: FBT001
         """Draw a single star."""
         size = self.STAR_SIZE
         center_x = x + size / 2
@@ -107,15 +113,10 @@ class StarRatingWidget(QWidget):
         points = []
         for i in range(10):
             angle = (i * 36 - 90) * 3.14159 / 180  # Convert to radians
-            if i % 2 == 0:
-                # Outer points
-                r = radius
-            else:
-                # Inner points
-                r = radius * 0.4
+            r = radius if i % 2 == 0 else radius * 0.4
 
-            px = center_x + r * __import__("math").cos(angle)
-            py = center_y + r * __import__("math").sin(angle)
+            px = center_x + r * math.cos(angle)
+            py = center_y + r * math.sin(angle)
             points.append((px, py))
 
         # Draw star
@@ -134,10 +135,8 @@ class StarRatingWidget(QWidget):
         painter.setPen(QPen(QColor(100, 100, 100), 1))
         painter.drawPath(self._create_polygon_path(points))
 
-    def _create_polygon_path(self, points: list[tuple[float, float]]) -> object:
+    def _create_polygon_path(self, points: list[tuple[float, float]]) -> QPainterPath:
         """Create a QPainterPath from points."""
-        from PySide6.QtGui import QPainterPath
-
         path = QPainterPath()
         if points:
             path.moveTo(points[0][0], points[0][1])
