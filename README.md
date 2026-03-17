@@ -173,9 +173,6 @@ pdm run pytest
 
 # Lint
 pdm run lint
-
-# Run pre-commit hooks
-pdm run pre-commit run --all-files
 ```
 
 ---
