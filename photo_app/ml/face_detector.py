@@ -34,7 +34,7 @@ class InsightFaceDetector(FaceDetector):
         img_h, img_w = image.shape[:2]
         faces = self._app.get(image)
         self._last_embeddings = [face.embedding.astype(np.float32) for face in faces]
-        boxes = []
+        boxes: list[BoundingBox] = []
         for face in faces:
             x1 = max(0, int(face.bbox[0]))
             y1 = max(0, int(face.bbox[1]))

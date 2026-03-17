@@ -31,7 +31,9 @@ def test_album_tree_construction() -> None:
 def test_album_tree_add_and_move() -> None:
     model = AlbumTreeModel()
     model.set_nodes([AlbumTreeNode(node_id="f-root", name="Root", kind="folder")])
-    model.add_node(AlbumTreeNode(node_id="v-1", name="Album", kind="virtual", album_id=1), "f-root")
+    model.add_node(
+        AlbumTreeNode(node_id="v-1", name="Album", kind="virtual", album_id=1), "f-root"
+    )
 
     parent_index = model.index_from_node_id("f-root")
     assert model.rowCount(parent_index) == ROOT_CHILD_COUNT
@@ -45,7 +47,9 @@ def test_album_tree_add_and_move() -> None:
 def test_album_tree_prevents_subtree_move() -> None:
     model = AlbumTreeModel()
     child = AlbumTreeNode(node_id="f-child", name="Child", kind="folder")
-    parent = AlbumTreeNode(node_id="f-parent", name="Parent", kind="folder", children=[child])
+    parent = AlbumTreeNode(
+        node_id="f-parent", name="Parent", kind="folder", children=[child]
+    )
     model.set_nodes([parent])
 
     assert not model.can_move("f-parent", "f-child")

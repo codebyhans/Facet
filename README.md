@@ -172,10 +172,7 @@ photo_app_data/
 pdm run pytest
 
 # Lint
-pdm run ruff check .
-
-# Type check
-pdm run mypy photo_app/
+pdm run lint
 
 # Run pre-commit hooks
 pdm run pre-commit run --all-files

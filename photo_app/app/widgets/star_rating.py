@@ -28,7 +28,7 @@ class StarRatingWidget(QWidget):
         self._rating = 0
         self._hover_rating = 0
         self.setMouseTracking(True)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         # Set minimum size
         self.setMinimumHeight(self.STAR_SIZE + 4)
@@ -84,7 +84,7 @@ class StarRatingWidget(QWidget):
                 painter,
                 x,
                 2,
-                is_filled,
+                filled=is_filled,
             )
             x += self.STAR_SIZE + self.STAR_SPACING
 
@@ -102,7 +102,7 @@ class StarRatingWidget(QWidget):
                 return star_num
         return 0
 
-    def _draw_star(self, painter: QPainter, x: int, y: int, filled: bool) -> None:  # noqa: FBT001
+    def _draw_star(self, painter: QPainter, x: int, y: int, *, filled: bool) -> None:
         """Draw a single star."""
         size = self.STAR_SIZE
         center_x = x + size / 2

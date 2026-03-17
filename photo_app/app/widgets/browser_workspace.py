@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import override
 
-from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QImageReader, QKeyEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QLabel, QListView, QVBoxLayout, QWidget
 
@@ -62,7 +62,7 @@ class FilmstripView(QListView):
         self.currentImageChanged.emit(index)
 
     @override
-    def eventFilter(self, watched: object, event: QEvent) -> bool:
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self and event.type() == QEvent.Type.Resize:
             self._request_visible_rows()
         return super().eventFilter(watched, event)

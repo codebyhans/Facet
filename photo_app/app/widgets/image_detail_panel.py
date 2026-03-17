@@ -23,8 +23,10 @@ if TYPE_CHECKING:
     from photo_app.app.models.photo_grid_model import PhotoGridItem
     from photo_app.config.settings import AppSettings
     from photo_app.services.face_review_service import FaceReviewService
+    from photo_app.services.settings_service import RuntimeSettings
 
 LOGGER = logging.getLogger(__name__)
+
 
 class ImageDetailPanel(QWidget):
     """Integrated image viewer panel for the main window.
@@ -38,12 +40,14 @@ class ImageDetailPanel(QWidget):
 
     closed = Signal()  # Emitted when user clicks "Back to Gallery"
     image_selected = Signal(int)  # Emitted when user navigates to different image
-    reindex_requested = Signal(str)  # Emitted when user requests re-indexing (file_path)
+    reindex_requested = Signal(
+        str
+    )  # Emitted when user requests re-indexing (file_path)
 
     def __init__(  # noqa: PLR0915
         self,
         parent: QWidget | None = None,
-        settings: AppSettings | None = None,
+        settings: AppSettings | RuntimeSettings | None = None,
         face_review_service: FaceReviewService | None = None,
     ) -> None:
         super().__init__(parent)
@@ -62,11 +66,15 @@ class ImageDetailPanel(QWidget):
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidget(self._image_label)
         self._scroll_area.setWidgetResizable(True)
-        self._scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
+        self._scroll_area.setStyleSheet(
+            "QScrollArea { border: none; background-color: #1e1e1e; }"
+        )
 
         # Info label
         self._info_label = QLabel("No image selected")
-        self._info_label.setStyleSheet("color: #ccc; padding: 8px; background-color: #2e2e2e;")
+        self._info_label.setStyleSheet(
+            "color: #ccc; padding: 8px; background-color: #2e2e2e;"
+        )
         self._info_label.setWordWrap(True)
 
         # Navigation and zoom buttons
@@ -126,11 +134,7 @@ class ImageDetailPanel(QWidget):
 
         self.setStyleSheet("background-color: #1e1e1e;")
 
-    def load_image(
-        self,
-        items: list[PhotoGridItem],
-        selected_index: int
-    ) -> None:
+    def load_image(self, items: list[PhotoGridItem], selected_index: int) -> None:
         """Load image list and show image at selected_index.
 
         Args:
@@ -165,7 +169,11 @@ class ImageDetailPanel(QWidget):
             Zoom factor (1.0 = 100%, 0.5 = 50%, 2.0 = 200%, etc.)
         """
         zoom = 1.0
-        if self._items and self._current_index < len(self._items) and self._zoom_mode == "fit":
+        if (
+            self._items
+            and self._current_index < len(self._items)
+            and self._zoom_mode == "fit"
+        ):
             # Calculate zoom to fit image in viewport
             viewport = self._scroll_area.viewport()
             viewport_width = viewport.width()
@@ -254,7 +262,9 @@ class ImageDetailPanel(QWidget):
             # Load and set faces if service available
             if self._face_review_service is not None:
                 try:
-                    faces = self._face_review_service.faces_for_image_path(item.file_path)
+                    faces = self._face_review_service.faces_for_image_path(
+                        item.file_path
+                    )
                     self._image_label.set_faces(faces)
                 except Exception:
                     LOGGER.exception("Failed to load faces for %s", item.file_path)
@@ -262,7 +272,11 @@ class ImageDetailPanel(QWidget):
             # Update info
             filename = Path(item.file_path).name
             dimensions = f"{pixmap.width()}x{pixmap.height()}"
-            date_str = item.capture_date.strftime("%Y-%m-%d") if item.capture_date else "Unknown date"
+            date_str = (
+                item.capture_date.strftime("%Y-%m-%d")
+                if item.capture_date
+                else "Unknown date"
+            )
             info = f"{filename} • {dimensions} • {date_str}"
             self._info_label.setText(info)
 
@@ -307,7 +321,9 @@ class ImageDetailPanel(QWidget):
                     self._current_item.file_path
                 )
             except Exception:
-                LOGGER.exception("Failed to load faces for %s", self._current_item.file_path)
+                LOGGER.exception(
+                    "Failed to load faces for %s", self._current_item.file_path
+                )
                 faces = []
             self._image_label.set_faces(faces)
 

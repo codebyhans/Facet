@@ -92,7 +92,9 @@ class AlbumQueryCacheService:
         with Session(self._engine) as session:
             try:
                 session.execute(
-                    delete(AlbumQueryCacheModel).where(AlbumQueryCacheModel.album_id == album_id)
+                    delete(AlbumQueryCacheModel).where(
+                        AlbumQueryCacheModel.album_id == album_id
+                    )
                 )
                 session.commit()
             except Exception:
@@ -120,7 +122,9 @@ class AlbumQueryCacheService:
                 versions = {int(value) for value in session.scalars(stmt)}
                 return len(versions) == 1 and album.query_version in versions
             except Exception:
-                logger.exception("Failed to check cache validity for album %s", album.id)
+                logger.exception(
+                    "Failed to check cache validity for album %s", album.id
+                )
                 return False
 
     def _cached_image_ids(self, album_id: int) -> list[int]:
@@ -133,10 +137,14 @@ class AlbumQueryCacheService:
                 )
                 return [int(image_id) for image_id in session.scalars(stmt)]
             except Exception:
-                logger.exception("Failed to get cached image IDs for album %s", album_id)
+                logger.exception(
+                    "Failed to get cached image IDs for album %s", album_id
+                )
                 return []
 
-    def _cached_image_ids_page(self, album_id: int, *, offset: int, limit: int) -> list[int]:
+    def _cached_image_ids_page(
+        self, album_id: int, *, offset: int, limit: int
+    ) -> list[int]:
         with Session(self._engine) as session:
             try:
                 stmt = (
@@ -148,14 +156,18 @@ class AlbumQueryCacheService:
                 )
                 return [int(image_id) for image_id in session.scalars(stmt)]
             except Exception:
-                logger.exception("Failed to get cached image IDs page for album %s", album_id)
+                logger.exception(
+                    "Failed to get cached image IDs page for album %s", album_id
+                )
                 return []
 
     def _invalidate_cache_in_session(self, session: Session, album_id: int) -> None:
         """Delete cache rows for one album using an already-open session."""
         try:
             session.execute(
-                delete(AlbumQueryCacheModel).where(AlbumQueryCacheModel.album_id == album_id)
+                delete(AlbumQueryCacheModel).where(
+                    AlbumQueryCacheModel.album_id == album_id
+                )
             )
         except Exception:
             logger.exception("Failed to invalidate cache for album %s", album_id)

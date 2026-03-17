@@ -71,7 +71,11 @@ class AlbumService:
         """Update one virtual album query definition."""
         query = parse_album_query(raw_query)
         updated = self._album_repository.update_query(album_id, query)
-        if updated is not None and updated.id is not None and self._query_cache_service is not None:
+        if (
+            updated is not None
+            and updated.id is not None
+            and self._query_cache_service is not None
+        ):
             self._query_cache_service.invalidate_cache(updated.id)
         return updated
 
@@ -110,14 +114,34 @@ class AlbumService:
                 filter_query = parse_album_query(query_definition)
 
                 # Combine with album query - filter takes precedence
-                combined_person_ids = filter_query.person_ids or album.query_definition.person_ids
-                combined_cluster_ids = filter_query.cluster_ids or album.query_definition.cluster_ids
-                combined_date_from = filter_query.date_from or album.query_definition.date_from
-                combined_date_to = filter_query.date_to or album.query_definition.date_to
-                combined_tag_names = filter_query.tag_names or album.query_definition.tag_names
-                combined_rating_min = filter_query.rating_min if filter_query.rating_min is not None else album.query_definition.rating_min
-                combined_quality_min = filter_query.quality_min if filter_query.quality_min is not None else album.query_definition.quality_min
-                combined_camera_models = filter_query.camera_models or album.query_definition.camera_models
+                combined_person_ids = (
+                    filter_query.person_ids or album.query_definition.person_ids
+                )
+                combined_cluster_ids = (
+                    filter_query.cluster_ids or album.query_definition.cluster_ids
+                )
+                combined_date_from = (
+                    filter_query.date_from or album.query_definition.date_from
+                )
+                combined_date_to = (
+                    filter_query.date_to or album.query_definition.date_to
+                )
+                combined_tag_names = (
+                    filter_query.tag_names or album.query_definition.tag_names
+                )
+                combined_rating_min = (
+                    filter_query.rating_min
+                    if filter_query.rating_min is not None
+                    else album.query_definition.rating_min
+                )
+                combined_quality_min = (
+                    filter_query.quality_min
+                    if filter_query.quality_min is not None
+                    else album.query_definition.quality_min
+                )
+                combined_camera_models = (
+                    filter_query.camera_models or album.query_definition.camera_models
+                )
             else:
                 # Use album query only
                 combined_person_ids = album.query_definition.person_ids

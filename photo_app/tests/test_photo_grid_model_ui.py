@@ -13,9 +13,9 @@ from photo_app.app.models.photo_grid_model import PhotoGridItem, PhotoGridModel
 def _app() -> QApplication:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
+    if isinstance(app, QApplication):
+        return app
+    return QApplication([])
 
 
 def test_photo_grid_pagination_signal() -> None:

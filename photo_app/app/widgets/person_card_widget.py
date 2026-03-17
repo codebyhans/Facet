@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
+
 class PersonCardWidget(QWidget):
     """Card widget for displaying a person cluster in the stacks view."""
 
@@ -32,7 +33,7 @@ class PersonCardWidget(QWidget):
         self,
         stack: PersonStackSummary,
         tile_store: ThumbnailTileStore | None = None,
-        parent: QWidget | None = None
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.stack = stack
@@ -53,8 +54,12 @@ class PersonCardWidget(QWidget):
 
         self._cover_label = QLabel()
         self._cover_label.setFixedSize(120, 120)
-        self._cover_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self._cover_label.setStyleSheet("border: 1px solid #444; background-color: #2a2a2a;")
+        self._cover_label.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
+        self._cover_label.setStyleSheet(
+            "border: 1px solid #444; background-color: #2a2a2a;"
+        )
         self._cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cover_layout.addWidget(self._cover_label, 0, Qt.AlignmentFlag.AlignHCenter)
         main_layout.addLayout(cover_layout)
@@ -67,7 +72,9 @@ class PersonCardWidget(QWidget):
         # Person name
         self._name_label = QLabel()
         self._name_label.setWordWrap(False)  # single line, elide if too long
-        self._name_label.setStyleSheet("font-size: 10px; font-weight: 600; color: #cccccc;")
+        self._name_label.setStyleSheet(
+            "font-size: 10px; font-weight: 600; color: #cccccc;"
+        )
         self._name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._update_name_label()
         info_layout.addWidget(self._name_label)
@@ -120,17 +127,20 @@ class PersonCardWidget(QWidget):
                             tile_lookup.x,
                             tile_lookup.y,
                             tile_lookup.width,
-                            tile_lookup.height
+                            tile_lookup.height,
                         )
                         scaled = cropped.scaled(
-                            120, 120,
+                            120,
+                            120,
                             Qt.AspectRatioMode.KeepAspectRatio,
                             Qt.TransformationMode.SmoothTransformation,
                         )
                         self._cover_label.setPixmap(scaled)
                         return
             except Exception:
-                LOGGER.exception("Failed to load cover tile for %s", self.stack.person_id)
+                LOGGER.exception(
+                    "Failed to load cover tile for %s", self.stack.person_id
+                )
 
         # Fallback to loading full image if tile system fails
         if self.stack.cover_image_path:
@@ -138,13 +148,16 @@ class PersonCardWidget(QWidget):
                 pixmap = QPixmap(str(Path(self.stack.cover_image_path)))
                 if not pixmap.isNull():
                     scaled = pixmap.scaled(
-                        120, 120,
+                        120,
+                        120,
                         Qt.AspectRatioMode.KeepAspectRatio,
                         Qt.TransformationMode.SmoothTransformation,
                     )
                     self._cover_label.setPixmap(scaled)
             except Exception:
-                LOGGER.exception("Failed to load cover image for %s", self.stack.person_id)
+                LOGGER.exception(
+                    "Failed to load cover image for %s", self.stack.person_id
+                )
 
     @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -213,13 +226,12 @@ class PersonCardWidget(QWidget):
         """Handle delete action."""
         # Emit signal to parent for delete
 
-
-
     def set_cover_pixmap(self, pixmap: QPixmap) -> None:
         """Set the cover image from an already-loaded and cropped QPixmap."""
         if not pixmap.isNull():
             scaled = pixmap.scaled(
-                120, 120,
+                120,
+                120,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )

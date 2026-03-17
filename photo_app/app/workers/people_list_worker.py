@@ -60,9 +60,7 @@ class PeopleListWorker(QRunnable):
             cover_lookups: dict[int, tuple[str, int, int, int, int]] = {}
             if self._tile_store is not None:
                 cover_ids = [
-                    s.cover_image_id
-                    for s in stacks
-                    if s.cover_image_id is not None
+                    s.cover_image_id for s in stacks if s.cover_image_id is not None
                 ]
                 batch = self._tile_store.get_image_tiles_batch(cover_ids)
                 for image_id, lookup in batch.items():

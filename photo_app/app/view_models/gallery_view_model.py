@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QObject, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QPixmap
@@ -14,6 +14,7 @@ from photo_app.app.workers.tile_build_worker import TileBuildWorker
 if TYPE_CHECKING:
     from photo_app.app.view_models.album_view_model import AlbumViewModel
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
+    from photo_app.services.album_service import AlbumPage
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AlbumPageResult:
     """Result from album query worker."""
+
     items: list[object]
 
 
@@ -66,8 +68,10 @@ class GalleryViewModel(QObject):
         self._active_page_worker: AlbumQueryWorker | None = None
 
         # Operation queue management
-        self._operation_queue = []  # Queue of pending operations
-        self._current_operation_id = None  # ID of currently executing operation
+        self._operation_queue: list[int] = []  # Queue of pending operations
+        self._current_operation_id: int | None = (
+            None  # ID of currently executing operation
+        )
         self._operation_counter = 0  # Simple counter for operation IDs
 
         # Debouncing with operation management
@@ -84,7 +88,9 @@ class GalleryViewModel(QObject):
         # Filter state management
         self._filter_query_definition: dict[str, object] | None = None
 
-    def select_album(self, album_id: int, query_definition: dict[str, object] | None = None) -> None:
+    def select_album(
+        self, album_id: int, query_definition: dict[str, object] | None = None
+    ) -> None:
         """Load first page for selected album with debouncing."""
         self._cancel_current_operation()
         self._debounce_timer.stop()
@@ -110,13 +116,19 @@ class GalleryViewModel(QObject):
         """Update the current filter query and reload the current view."""
         self._filter_query_definition = query_definition
         # Combine filter with current album query if we're in album mode
-        combined_query = self._combine_queries(self._current_query_definition, query_definition)
+        combined_query = self._combine_queries(
+            self._current_query_definition, query_definition
+        )
         if self._library_mode:
             self.select_library(query_definition=query_definition)
         elif self._current_album_id is not None:
             self.select_album(self._current_album_id, combined_query)
 
-    def _combine_queries(self, album_query: dict[str, object] | None, filter_query: dict[str, object] | None) -> dict[str, object] | None:
+    def _combine_queries(
+        self,
+        album_query: dict[str, object] | None,
+        filter_query: dict[str, object] | None,
+    ) -> dict[str, object] | None:
         """Combine album query with filter query, with filter taking precedence."""
         if not album_query and not filter_query:
             return None
@@ -183,7 +195,9 @@ class GalleryViewModel(QObject):
     def _on_tile_build_result(self, result: object) -> None:
         built_images = int(getattr(result, "images_built", 0))
         built_tiles = int(getattr(result, "tiles_built", 0))
-        self.status.emit(f"Tile cache updated: {built_images} images, {built_tiles} tiles")
+        self.status.emit(
+            f"Tile cache updated: {built_images} images, {built_tiles} tiles"
+        )
 
     def _on_tile_build_progress(self, current: int, total: int) -> None:
         """Update status bar with tile build progress."""
@@ -193,10 +207,11 @@ class GalleryViewModel(QObject):
         if epoch != self._epoch:
             # Request changed while tiles were building — tiles are still valid.
             # Load a page for the current state rather than discarding the result.
-              logger.debug(
+            logger.debug(
                 "Tile build epoch mismatch (%s vs %s), loading current state",
-                epoch, self._epoch
-              )
+                epoch,
+                self._epoch,
+            )
         self._tile_building = False
         self.tile_building_finished.emit()
         self._load_page(append=False)
@@ -225,26 +240,33 @@ class GalleryViewModel(QObject):
 
         # Create a closure that captures the append parameter and current epoch
         current_epoch = self._epoch
-        def on_page_result(page: object) -> None:
-            self._on_page_result(page, append=append, epoch=current_epoch)
 
-        def on_page_finished() -> None:                       # ADD THIS
-            self._active_page_worker = None                   # release reference when done
+        def on_page_result(page: object) -> None:
+            self._on_page_result(
+                cast("AlbumPage", page),
+                append=append,
+                epoch=current_epoch,
+            )
+
+        def on_page_finished() -> None:  # ADD THIS
+            self._active_page_worker = None  # release reference when done
             self._on_page_finished(epoch=current_epoch)
 
         worker.signals.result_ready.connect(on_page_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(on_page_finished)    # CHANGE THIS (was self._on_page_finished)
-        self._active_page_worker = worker                     # keep alive until finished
+        worker.signals.finished.connect(
+            on_page_finished
+        )  # CHANGE THIS (was self._on_page_finished)
+        self._active_page_worker = worker  # keep alive until finished
         self._thread_pool.start(worker)
 
-    def _on_page_result(self, page: object, *, append: bool, epoch: int) -> None:
+    def _on_page_result(self, page: AlbumPage, *, append: bool, epoch: int) -> None:
         # Check for stale result - if epoch doesn't match current, discard
         if epoch != self._epoch:
             return
 
         items: list[PhotoGridItem] = []
-        page_items = getattr(page, "items", [])
+        page_items = page.items
 
         # Batch lookup: one DB query for all image IDs in this page
         image_ids = [
@@ -252,7 +274,9 @@ class GalleryViewModel(QObject):
             for image in page_items
             if isinstance(getattr(image, "id", None), int)
         ]
-        tile_map = self._tile_store.get_image_tiles_batch(image_ids) if image_ids else {}
+        tile_map = (
+            self._tile_store.get_image_tiles_batch(image_ids) if image_ids else {}
+        )
 
         for image in page_items:
             image_id = getattr(image, "id", None)
@@ -270,7 +294,8 @@ class GalleryViewModel(QObject):
                         None if tile_lookup is None else int(tile_lookup.tile_index)
                     ),
                     position_in_tile=(
-                        None if tile_lookup is None
+                        None
+                        if tile_lookup is None
                         else int(tile_lookup.position_in_tile)
                     ),
                     flag=getattr(image, "flag", None),
@@ -332,7 +357,9 @@ class GalleryViewModel(QObject):
             self._execute_operation(operation_id, "library", None)
             self._pending_library_mode = False
 
-    def _execute_operation(self, operation_id: int, operation_type: str, album_id: int | None) -> None:
+    def _execute_operation(
+        self, operation_id: int, operation_type: str, album_id: int | None
+    ) -> None:
         """Execute an album loading operation with proper error handling."""
         self._current_operation_id = operation_id
         # Increment epoch to mark this as the current operation
@@ -343,7 +370,9 @@ class GalleryViewModel(QObject):
         self._has_more = True
 
         try:
-            if (operation_type == "album" and album_id is not None) or operation_type == "library":
+            if (
+                operation_type == "album" and album_id is not None
+            ) or operation_type == "library":
                 self._ensure_tiles_then_load()
         except Exception as exc:
             logger.exception("Operation %s failed", operation_id)
@@ -367,14 +396,16 @@ class GalleryViewModel(QObject):
                 self._loading_page = False
             # Do NOT null _active_tile_worker here — let the worker's finished
             # handler release it so the guard above stays effective.
-            self._active_page_worker = None   # release GC reference
+            self._active_page_worker = None  # release GC reference
             self._current_operation_id = None
 
     def _on_flag_changed(self, _index: object, _flag_value: str | None) -> None:
         """Handle flag change from PhotoGridWidget."""
         try:
             # Update the flag in the database
-            if self._image_repository and hasattr(self._image_repository, "update_flag"):
+            if self._image_repository and hasattr(
+                self._image_repository, "update_flag"
+            ):
                 # Get the image ID from the model - we need to get this from the PhotoGridModel
                 # For now, we'll need to handle this differently since we don't have direct access
                 # This will be handled in the main window where we have access to the model

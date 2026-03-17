@@ -13,7 +13,7 @@ from photo_app.services.ann_index import RandomProjectionAnnIndex
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from photo_app.domain.models import Face, IdentityCluster, Image
+    from photo_app.domain.models import ClusterEmbedding, Face, IdentityCluster, Image
     from photo_app.domain.repositories import (
         FaceRepository,
         IdentityClusterRepository,
@@ -98,7 +98,9 @@ class TemporalIdentityClusterService:
         affected_cluster_ids: set[int] = set()
 
         # Cache person lookups per cluster to avoid N repeated find_by_cluster_id calls
-        cluster_person_cache: dict[int, Person | None] = {}  # cluster_id → Person | None
+        cluster_person_cache: dict[int, Person | None] = (
+            {}
+        )  # cluster_id → Person | None
 
         total = len(staged)
         for idx, face in enumerate(staged, start=1):
@@ -232,15 +234,20 @@ class TemporalIdentityClusterService:
                 # to target person, then delete the now-orphaned source person.
                 all_faces = self._face_repository.list_all_active()
                 source_face_ids = [
-                    f.id for f in all_faces
+                    f.id
+                    for f in all_faces
                     if f.person_id == source_person.id and f.id is not None
                 ]
                 if source_face_ids:
-                    self._face_repository.assign_person_auto(source_face_ids, target_person.id)
+                    self._face_repository.assign_person_auto(
+                        source_face_ids, target_person.id
+                    )
                 self._person_repository.delete(source_person.id)
             else:
                 # Only source cluster had a person — point them at the target cluster
-                self._person_repository.bind_cluster(source_person.id, target_cluster_id)
+                self._person_repository.bind_cluster(
+                    source_person.id, target_cluster_id
+                )
         # ── END NEW ──────────────────────────────────────────────────────────────
 
         self._cluster_repository.delete_cluster(source_cluster_id)
@@ -268,7 +275,9 @@ class TemporalIdentityClusterService:
         for cluster in clusters:
             if cluster.id is None:
                 continue
-            self._refresh_cluster_state(cluster.id, faces_by_id=faces_by_id, image_by_id=image_by_id)
+            self._refresh_cluster_state(
+                cluster.id, faces_by_id=faces_by_id, image_by_id=image_by_id
+            )
         self._index_dirty = True
         return len(clusters)
 
@@ -279,8 +288,7 @@ class TemporalIdentityClusterService:
         reducing complexity from O(N²) to O(N x ann_candidate_limit).
         """
         clusters = [
-            c for c in self._cluster_repository.list_clusters()
-            if c.id is not None
+            c for c in self._cluster_repository.list_clusters() if c.id is not None
         ]
         if not clusters:
             return 0
@@ -307,7 +315,9 @@ class TemporalIdentityClusterService:
                 continue
 
             # Query ANN for nearest neighbours (excludes self if not in results)
-            candidates = self._ann.query(vector, limit=self._config.ann_candidate_limit + 1)
+            candidates = self._ann.query(
+                vector, limit=self._config.ann_candidate_limit + 1
+            )
 
             for candidate in candidates:
                 other_id = candidate.item_id
@@ -325,7 +335,9 @@ class TemporalIdentityClusterService:
                 if similarity < self._config.merge_threshold:
                     continue
 
-                if self.merge_clusters(source_cluster_id=other_id, target_cluster_id=cluster_id):
+                if self.merge_clusters(
+                    source_cluster_id=other_id, target_cluster_id=cluster_id
+                ):
                     merged += 1
                     already_merged.add(other_id)
                     vectors.pop(other_id, None)
@@ -340,7 +352,9 @@ class TemporalIdentityClusterService:
         self._index_dirty = True  # mark dirty so next use rebuilds with merged state
         return merged
 
-    def _match_cluster(self, vector: np.ndarray, *, age_bucket: str | None) -> ClusterMatch | None:  # noqa: C901
+    def _match_cluster(
+        self, vector: np.ndarray, *, age_bucket: str | None
+    ) -> ClusterMatch | None:
         self._ensure_ann_index()
         candidates = self._ann.query(vector, limit=self._config.ann_candidate_limit)
         if not candidates:
@@ -351,39 +365,17 @@ class TemporalIdentityClusterService:
             cluster = self._cluster_repository.get_cluster(candidate.item_id)
             if cluster is None:
                 continue
-            centroid = _normalize(
-                np.frombuffer(cluster.canonical_embedding, dtype=np.float32)
+            centroid_similarity = self._centroid_similarity(vector, cluster)
+            temporal_similarity = self._temporal_similarity(
+                vector,
+                candidate.item_id,
+                age_bucket=age_bucket,
+                fallback=centroid_similarity,
             )
-            centroid_similarity = float(np.dot(vector, centroid))
-
-            temporal_rows = self._cluster_repository.list_temporal_embeddings(
-                candidate.item_id
+            final_score = self._combine_similarity_scores(
+                centroid_similarity,
+                temporal_similarity,
             )
-            temporal_similarity = -1.0
-            for row in temporal_rows:
-                if age_bucket is not None and row.time_period != age_bucket:
-                    continue
-                temporal_vector = _normalize(np.frombuffer(row.embedding, dtype=np.float32))
-                temporal_similarity = max(
-                    temporal_similarity,
-                    float(np.dot(vector, temporal_vector)),
-                )
-            if temporal_similarity < _TEMPORAL_SIMILARITY_FALLBACK:
-                for row in temporal_rows:
-                    temporal_vector = _normalize(np.frombuffer(row.embedding, dtype=np.float32))
-                    temporal_similarity = max(
-                        temporal_similarity,
-                        float(np.dot(vector, temporal_vector)),
-                    )
-            if temporal_similarity < _TEMPORAL_SIMILARITY_FALLBACK:
-                temporal_similarity = centroid_similarity
-
-            weighted_score = (
-                _CENTROID_WEIGHT * centroid_similarity
-                + _TEMPORAL_WEIGHT * temporal_similarity
-            )
-            smoothed = max(centroid_similarity, temporal_similarity)
-            final_score = max(weighted_score, smoothed)
             if best is None or final_score > best.confidence:
                 best = ClusterMatch(
                     cluster_id=candidate.item_id,
@@ -393,6 +385,65 @@ class TemporalIdentityClusterService:
         if best is None or best.confidence < self._config.match_threshold:
             return None
         return best
+
+    def _centroid_similarity(
+        self, vector: np.ndarray, cluster: IdentityCluster
+    ) -> float:
+        centroid = _normalize(
+            np.frombuffer(cluster.canonical_embedding, dtype=np.float32)
+        )
+        return float(np.dot(vector, centroid))
+
+    def _temporal_similarity(
+        self,
+        vector: np.ndarray,
+        cluster_id: int,
+        *,
+        age_bucket: str | None,
+        fallback: float,
+    ) -> float:
+        temporal_rows = self._cluster_repository.list_temporal_embeddings(cluster_id)
+        temporal_similarity = self._best_temporal_similarity(
+            vector,
+            temporal_rows,
+            age_bucket=age_bucket,
+        )
+        if temporal_similarity < _TEMPORAL_SIMILARITY_FALLBACK:
+            temporal_similarity = self._best_temporal_similarity(
+                vector,
+                temporal_rows,
+                age_bucket=None,
+            )
+        if temporal_similarity < _TEMPORAL_SIMILARITY_FALLBACK:
+            temporal_similarity = fallback
+        return temporal_similarity
+
+    def _best_temporal_similarity(
+        self,
+        vector: np.ndarray,
+        temporal_rows: list[ClusterEmbedding],
+        *,
+        age_bucket: str | None,
+    ) -> float:
+        similarity = -1.0
+        for row in temporal_rows:
+            if age_bucket is not None and row.time_period != age_bucket:
+                continue
+            temporal_vector = _normalize(np.frombuffer(row.embedding, dtype=np.float32))
+            similarity = max(similarity, float(np.dot(vector, temporal_vector)))
+        return similarity
+
+    def _combine_similarity_scores(
+        self,
+        centroid_similarity: float,
+        temporal_similarity: float,
+    ) -> float:
+        weighted_score = (
+            _CENTROID_WEIGHT * centroid_similarity
+            + _TEMPORAL_WEIGHT * temporal_similarity
+        )
+        smoothed = max(centroid_similarity, temporal_similarity)
+        return max(weighted_score, smoothed)
 
     def _refresh_cluster_state(
         self,
@@ -411,11 +462,18 @@ class TemporalIdentityClusterService:
             return
 
         vectors = np.vstack(
-            [_normalize(np.frombuffer(face.embedding, dtype=np.float32)) for face in member_faces]
+            [
+                _normalize(np.frombuffer(face.embedding, dtype=np.float32))
+                for face in member_faces
+            ]
         )
-        dates = [self._capture_date(face.image_id, image_by_id) for face in member_faces]
+        dates = [
+            self._capture_date(face.image_id, image_by_id) for face in member_faces
+        ]
         weights = _recency_weights(dates, recency_weight=self._config.recency_weight)
-        centroid = _normalize(np.average(vectors, axis=0, weights=weights).astype(np.float32))
+        centroid = _normalize(
+            np.average(vectors, axis=0, weights=weights).astype(np.float32)
+        )
 
         similarities = vectors @ centroid
         variance = float(np.mean(1.0 - similarities))
@@ -431,7 +489,11 @@ class TemporalIdentityClusterService:
         )
 
         cluster_person = self._person_repository.find_by_cluster_id(cluster_id)
-        birth_year = None if cluster_person is None or cluster_person.birth_date is None else cluster_person.birth_date.year
+        birth_year = (
+            None
+            if cluster_person is None or cluster_person.birth_date is None
+            else cluster_person.birth_date.year
+        )
         grouped: dict[str, list[np.ndarray]] = {period: [] for period in _TIME_PERIODS}
         for face in member_faces:
             period = self._age_bucket_for_face(
@@ -441,12 +503,16 @@ class TemporalIdentityClusterService:
             )
             if period is None:
                 continue
-            grouped[period].append(_normalize(np.frombuffer(face.embedding, dtype=np.float32)))
+            grouped[period].append(
+                _normalize(np.frombuffer(face.embedding, dtype=np.float32))
+            )
 
         for period, embeddings in grouped.items():
             if not embeddings:
                 continue
-            profile = _normalize(np.mean(np.vstack(embeddings), axis=0).astype(np.float32))
+            profile = _normalize(
+                np.mean(np.vstack(embeddings), axis=0).astype(np.float32)
+            )
             self._cluster_repository.upsert_temporal_embedding(
                 cluster_id=cluster_id,
                 time_period=period,
@@ -481,9 +547,15 @@ class TemporalIdentityClusterService:
     def _ensure_ann_index(self) -> None:
         if not self._index_dirty:
             return
-        clusters = [cluster for cluster in self._cluster_repository.list_clusters() if cluster.id is not None]
+        clusters = [
+            cluster
+            for cluster in self._cluster_repository.list_clusters()
+            if cluster.id is not None
+        ]
         vectors = {
-            cluster.id: _normalize(np.frombuffer(cluster.canonical_embedding, dtype=np.float32))
+            cluster.id: _normalize(
+                np.frombuffer(cluster.canonical_embedding, dtype=np.float32)
+            )
             for cluster in clusters
             if cluster.id is not None
         }

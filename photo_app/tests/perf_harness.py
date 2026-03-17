@@ -70,16 +70,16 @@ def run_harness(args: PerfArgs) -> HarnessResult:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
 
+    image_repo = SqlAlchemyImageRepository(engine)
+    album_repo = SqlAlchemyAlbumRepository(engine)
+    album_service = AlbumService(album_repo, image_repo)
+    timings: list[TimingResult] = []
+
     with Session(engine) as session:
-        image_repo = SqlAlchemyImageRepository(session)
-        album_repo = SqlAlchemyAlbumRepository(session)
-        album_service = AlbumService(album_repo, image_repo)
-
-        timings: list[TimingResult] = []
-
         start = perf_counter()
         _seed_images_and_faces(
             session=session,
+            image_repo=image_repo,
             image_count=args.image_count,
             person_count=args.person_count,
         )
@@ -108,6 +108,7 @@ def run_harness(args: PerfArgs) -> HarnessResult:
 def _seed_images_and_faces(
     *,
     session: Session,
+    image_repo: SqlAlchemyImageRepository,
     image_count: int,
     person_count: int,
 ) -> None:
@@ -128,7 +129,6 @@ def _seed_images_and_faces(
         for index in range(image_count)
     ]
 
-    image_repo = SqlAlchemyImageRepository(session)
     image_repo.add_many(images)
     session.flush()
 
@@ -169,10 +169,7 @@ def _create_album(session: Session, person_count: int) -> int:
 def _run_clustering(embedding_count: int, embedding_dim: int) -> None:
     rng = np.random.default_rng(42)
     embeddings = rng.standard_normal((embedding_count, embedding_dim), dtype=np.float32)
-    dates = [
-        date(2015 + ((index * 17) % 10), 1, 1)
-        for index in range(embedding_count)
-    ]
+    dates = [date(2015 + ((index * 17) % 10), 1, 1) for index in range(embedding_count)]
     clustering = AgeAwareClustering(
         ClusteringConfig(
             age_penalty_weight=0.15,

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import contextlib
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDateEdit,
@@ -34,7 +33,7 @@ class AdvancedFilterEditorDialog(QDialog):
         self,
         parent: QWidget | None = None,
         available_persons: list[Person] | None = None,
-        current_query: AlbumQuery | None = None,
+        current_query: AlbumQuery | dict[str, object] | None = None,
     ) -> None:
         """Initialize advanced filter editor."""
         super().__init__(parent)
@@ -56,40 +55,37 @@ class AdvancedFilterEditorDialog(QDialog):
 
         people_layout.addWidget(QLabel("Select people to include:"))
         self._person_list = QListWidget()
-        self._person_list.setSelectionMode(
-            QListWidget.SelectionMode.MultiSelection
-        )
+        self._person_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         for person in sorted(self._available_persons, key=lambda p: p.name or ""):
-            item = QListWidgetItem(person.name or f"Person #{person.person_id}")
-            item.setData(Qt.ItemDataRole.UserRole, person.person_id)
+            display_id = person.id if person.id is not None else 0
+            item = QListWidgetItem(person.name or f"Person #{display_id}")
+            item.setData(Qt.ItemDataRole.UserRole, display_id)
             self._person_list.addItem(item)
         people_layout.addWidget(self._person_list)
         people_group.setLayout(people_layout)
         layout.addWidget(people_group)
-
 
         # Date range
         date_group = QGroupBox("Date Range")
         date_layout = QFormLayout()
 
         self._date_from = QDateEdit()
-        today = datetime.now(tz=datetime.UTC).date()
-        self._date_from.setDate(today - timedelta(days=365))
+        today = datetime.now(tz=UTC).date()
+        start_date = today - timedelta(days=365)
+        self._date_from.setDate(
+            QDate(start_date.year, start_date.month, start_date.day)
+        )
         self._date_from.setCalendarPopup(True)
         self._date_from_check = QCheckBox("From:")
-        self._date_from_check.toggled.connect(
-            self._date_from.setEnabled
-        )
+        self._date_from_check.toggled.connect(self._date_from.setEnabled)
         self._date_from.setEnabled(False)
         date_layout.addRow(self._date_from_check, self._date_from)
 
         self._date_to = QDateEdit()
-        self._date_to.setDate(today)
+        self._date_to.setDate(QDate(today.year, today.month, today.day))
         self._date_to.setCalendarPopup(True)
         self._date_to_check = QCheckBox("To:")
-        self._date_to_check.toggled.connect(
-            self._date_to.setEnabled
-        )
+        self._date_to_check.toggled.connect(self._date_to.setEnabled)
         self._date_to.setEnabled(False)
         date_layout.addRow(self._date_to_check, self._date_to)
 
@@ -100,7 +96,9 @@ class AdvancedFilterEditorDialog(QDialog):
         flag_group = QGroupBox("Image Flags")
         flag_layout = QVBoxLayout()
 
-        flag_layout.addWidget(QLabel("Show only images with these flags (leave all unchecked for any):"))
+        flag_layout.addWidget(
+            QLabel("Show only images with these flags (leave all unchecked for any):")
+        )
 
         self._flag_keep_check = QCheckBox("Keep")
         self._flag_undecided_check = QCheckBox("Undecided")
@@ -115,7 +113,6 @@ class AdvancedFilterEditorDialog(QDialog):
 
         flag_group.setLayout(flag_layout)
         layout.addWidget(flag_group)
-
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -143,11 +140,12 @@ class AdvancedFilterEditorDialog(QDialog):
 
         # Load people
         person_ids = get_value("person_ids", [])
-        if person_ids:
+        if isinstance(person_ids, (list, tuple)) and person_ids:
+            person_id_set = {int(v) for v in person_ids if isinstance(v, int)}
             for i in range(self._person_list.count()):
                 item = self._person_list.item(i)
                 item_id = item.data(Qt.ItemDataRole.UserRole)
-                if item_id in person_ids:
+                if isinstance(item_id, int) and item_id in person_id_set:
                     self._person_list.setCurrentItem(item)
 
         # Load date range
@@ -157,14 +155,13 @@ class AdvancedFilterEditorDialog(QDialog):
             if isinstance(date_from, str):
                 try:
                     dt = datetime.fromisoformat(date_from)
-                    self._date_from.setDate(dt.date())
+                    self._date_from.setDate(QDate(dt.year, dt.month, dt.day))
                 except ValueError:
                     pass
-            elif hasattr(date_from, "date"):  # QDate object
-                self._date_from.setDate(date_from)
-            else:
-                with contextlib.suppress(ValueError, TypeError):
-                    self._date_from.setDate(date_from)
+            elif isinstance(date_from, date):
+                self._date_from.setDate(
+                    QDate(date_from.year, date_from.month, date_from.day)
+                )
 
         date_to = get_value("date_to")
         if date_to is not None:
@@ -172,14 +169,11 @@ class AdvancedFilterEditorDialog(QDialog):
             if isinstance(date_to, str):
                 try:
                     dt = datetime.fromisoformat(date_to)
-                    self._date_to.setDate(dt.date())
+                    self._date_to.setDate(QDate(dt.year, dt.month, dt.day))
                 except ValueError:
                     pass
-            elif hasattr(date_to, "date"):  # QDate object
-                self._date_to.setDate(date_to)
-            else:
-                with contextlib.suppress(ValueError, TypeError):
-                    self._date_to.setDate(date_to)
+            elif isinstance(date_to, date):
+                self._date_to.setDate(QDate(date_to.year, date_to.month, date_to.day))
 
         # Load flags
         flags = get_value("flags", [])
@@ -208,6 +202,7 @@ class AdvancedFilterEditorDialog(QDialog):
         person_ids = [
             item.data(Qt.ItemDataRole.UserRole)
             for item in self._person_list.selectedItems()
+            if isinstance(item.data(Qt.ItemDataRole.UserRole), int)
         ]
 
         # Get selected flags
@@ -226,8 +221,16 @@ class AdvancedFilterEditorDialog(QDialog):
             "rating_min": None,
             "quality_min": None,
             "camera_models": [],
-            "date_from": self._date_from.date().toString("yyyy-MM-dd") if self._date_from_check.isChecked() else None,
-            "date_to": self._date_to.date().toString("yyyy-MM-dd") if self._date_to_check.isChecked() else None,
+            "date_from": (
+                self._date_from.date().toString("yyyy-MM-dd")
+                if self._date_from_check.isChecked()
+                else None
+            ),
+            "date_to": (
+                self._date_to.date().toString("yyyy-MM-dd")
+                if self._date_to_check.isChecked()
+                else None
+            ),
             "location_name": None,
             "gps_radius_km": None,
             "flags": selected_flags,

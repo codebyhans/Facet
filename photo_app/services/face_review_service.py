@@ -191,14 +191,16 @@ class FaceReviewService:
             )
 
             # Use batch-loaded person data instead of individual DB queries
-            person = persons_by_id.get(person_id)
+            person_record = persons_by_id.get(person_id)
             stacks.append(
                 PersonStackSummary(
                     person_id=person_id,
                     cluster_id=(
-                        None if person is None else person.identity_cluster_id
+                        None
+                        if person_record is None
+                        else person_record.identity_cluster_id
                     ),
-                    person_name=None if person is None else person.name,
+                    person_name=None if person_record is None else person_record.name,
                     face_count=len(image_ids),
                     image_count=len(unique_paths),
                     cover_image_path=cover_image_path,
@@ -211,7 +213,9 @@ class FaceReviewService:
         stacks.sort(key=lambda item: item.face_count, reverse=True)
         return stacks
 
-    def person_stacks_filtered(self, min_image_count: int = 3, sample_limit: int = 20) -> list[PersonStackSummary]:
+    def person_stacks_filtered(
+        self, min_image_count: int = 3, sample_limit: int = 20
+    ) -> list[PersonStackSummary]:
         """Return stack summaries filtered by minimum image count per person.
 
         Args:
@@ -240,7 +244,9 @@ class FaceReviewService:
         if self._query_cache_service is not None:
             self._query_cache_service.invalidate_all()
 
-    def list_identity_clusters(self, *, flagged_only: bool = False) -> list[IdentityCluster]:
+    def list_identity_clusters(
+        self, *, flagged_only: bool = False
+    ) -> list[IdentityCluster]:
         """Return temporal identity clusters for inspection APIs."""
         if self._identity_cluster_service is None:
             return []
@@ -260,7 +266,9 @@ class FaceReviewService:
             return []
         return self._identity_cluster_service.get_cluster_faces(cluster_id)
 
-    def merge_identity_clusters(self, source_cluster_id: int, target_cluster_id: int) -> bool:
+    def merge_identity_clusters(
+        self, source_cluster_id: int, target_cluster_id: int
+    ) -> bool:
         """Apply manual feedback by merging two identity clusters."""
         if self._identity_cluster_service is None:
             return False
@@ -329,9 +337,7 @@ class FaceReviewService:
         if self._identity_cluster_service is None:
             return []
 
-        cluster_faces = self._identity_cluster_service.get_cluster_faces(
-            ref_face.id
-        )
+        cluster_faces = self._identity_cluster_service.get_cluster_faces(ref_face.id)
         if not cluster_faces:
             return []
 
@@ -351,7 +357,10 @@ class FaceReviewService:
             face_embedding = np.frombuffer(face.embedding, dtype=np.float32)
             similarity = float(
                 np.dot(ref_embedding, face_embedding)
-                / (np.linalg.norm(ref_embedding) * np.linalg.norm(face_embedding) + 1e-8)
+                / (
+                    np.linalg.norm(ref_embedding) * np.linalg.norm(face_embedding)
+                    + 1e-8
+                )
             )
 
             if similarity >= similarity_threshold:
@@ -367,9 +376,7 @@ class FaceReviewService:
                     )
 
         # Sort by similarity, descending
-        similar_faces.sort(
-            key=lambda x: (-x.similarity_score, -x.confidence_score)
-        )
+        similar_faces.sort(key=lambda x: (-x.similarity_score, -x.confidence_score))
         return similar_faces
 
     def get_suggested_names_for_face(
@@ -403,9 +410,7 @@ class FaceReviewService:
 
         # Priority 1: Check same identity cluster
         if self._identity_cluster_service is not None:
-            cluster_faces = self._identity_cluster_service.get_cluster_faces(
-                face.id
-            )
+            cluster_faces = self._identity_cluster_service.get_cluster_faces(face.id)
             seen_person_ids: set[int] = set()
 
             for cluster_face in cluster_faces:
@@ -419,14 +424,11 @@ class FaceReviewService:
                     continue
 
                 # Compute similarity to this cluster face
-                cluster_emb = np.frombuffer(
-                    cluster_face.embedding, dtype=np.float32
-                )
+                cluster_emb = np.frombuffer(cluster_face.embedding, dtype=np.float32)
                 similarity = float(
                     np.dot(face_embedding, cluster_emb)
                     / (
-                        np.linalg.norm(face_embedding)
-                        * np.linalg.norm(cluster_emb)
+                        np.linalg.norm(face_embedding) * np.linalg.norm(cluster_emb)
                         + 1e-8
                     )
                 )
@@ -445,15 +447,11 @@ class FaceReviewService:
         # Priority 2: ANN search for high-similarity named faces (not yet implemented)
 
         # Sort by (in_same_cluster desc, similarity_score desc)
-        suggestions.sort(
-            key=lambda x: (-int(x.in_same_cluster), -x.similarity_score)
-        )
+        suggestions.sort(key=lambda x: (-int(x.in_same_cluster), -x.similarity_score))
 
         return suggestions[:top_k]
 
-    def batch_assign_faces_to_person(
-        self, face_ids: list[int], person_id: int
-    ) -> None:
+    def batch_assign_faces_to_person(self, face_ids: list[int], person_id: int) -> None:
         """
         Assign multiple faces to the same person.
 

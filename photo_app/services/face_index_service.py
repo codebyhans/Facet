@@ -172,9 +172,11 @@ class FaceIndexService:
             if image.id is not None
         }
         dates = [
-            image_map[face.image_id].capture_date
-            if face.image_id in image_map
-            else None
+            (
+                image_map[face.image_id].capture_date
+                if face.image_id in image_map
+                else None
+            )
             for face in faces
         ]
         labels = self._clustering.cluster(embeddings, dates)

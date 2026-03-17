@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True)
 class ImageIndexResult:
     """Result summary for image indexing."""
@@ -105,7 +106,7 @@ class ImageIndexService:
                 # Skip thumbnail generation during indexing - generate on-demand while browsing
                 # This prevents crashes from problematic image files
 
-            except (OSError, UnidentifiedImageError, PermissionError, IsADirectoryError):
+            except OSError, UnidentifiedImageError, PermissionError, IsADirectoryError:
                 skipped += 1
                 continue
             except Exception:

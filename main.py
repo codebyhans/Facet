@@ -211,9 +211,7 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
         )
         LOGGER.info("Face ML stack initialized.")
     except Exception:
-        LOGGER.exception(
-            "Face ML initialization failed; disabling face indexing."
-        )
+        LOGGER.exception("Face ML initialization failed; disabling face indexing.")
 
     # Create metadata and tags services
     metadata_sync_service = MetadataSyncService(engine)

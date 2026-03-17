@@ -10,7 +10,12 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 class PhotoViewerWidget(QWidget):
     """Simple full image viewer with keyboard navigation and zoom."""
 
-    def __init__(self, items: list[tuple[int, str]], start_row: int, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        items: list[tuple[int, str]],
+        start_row: int,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._items = items
         self._row = start_row

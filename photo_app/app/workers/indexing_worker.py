@@ -40,9 +40,7 @@ class IndexWorker(QRunnable):
 
         # Connect detailed progress signal to the callback if provided
         if progress_callback:
-            self.signals.progress_detailed.connect(
-                progress_callback
-            )
+            self.signals.progress_detailed.connect(progress_callback)
 
     @Slot()
     def run(self) -> None:
@@ -72,7 +70,12 @@ class IndexWorker(QRunnable):
                 logger.debug("Function accepts on_progress, adding callback")
                 self._kwargs["on_progress"] = safe_progress_callback
 
-            logger.debug("Calling %s with args=%s, kwargs=%s", self._fn.__name__, self._args, self._kwargs)
+            logger.debug(
+                "Calling %s with args=%s, kwargs=%s",
+                self._fn.__name__,
+                self._args,
+                self._kwargs,
+            )
             result = self._fn(*self._args, **self._kwargs)
             logger.debug("Function completed successfully, result=%s", result)
 

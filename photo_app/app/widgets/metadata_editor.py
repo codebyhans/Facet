@@ -73,7 +73,16 @@ class MetadataEditorPanel(QWidget):
         exif_container_layout = QVBoxLayout(exif_container)
 
         self._exif_labels: dict[str, QLabel] = {}
-        for field in ["File", "Camera", "Lens", "Date", "GPS", "ISO", "Shutter", "Aperture"]:
+        for field in [
+            "File",
+            "Camera",
+            "Lens",
+            "Date",
+            "GPS",
+            "ISO",
+            "Shutter",
+            "Aperture",
+        ]:
             label = QLabel(f"{field}: —")
             label.setWordWrap(True)
             exif_container_layout.addWidget(label)

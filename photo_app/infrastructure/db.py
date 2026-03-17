@@ -29,7 +29,7 @@ def create_sqlite_engine(db_path: str) -> Engine:
         cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, faster than FULL
-        cursor.close()  # type: ignore[attr-defined]
+        cursor.close()
 
     return engine
 

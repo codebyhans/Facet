@@ -21,7 +21,9 @@ def upgrade() -> None:
     inspector = sa.inspect(bind)
 
     # Check if face_count column exists and its current definition
-    image_columns = {column["name"]: column for column in inspector.get_columns("images")}
+    image_columns = {
+        column["name"]: column for column in inspector.get_columns("images")
+    }
     face_count_col = image_columns.get("face_count")
 
     if face_count_col is None:
@@ -31,7 +33,9 @@ def upgrade() -> None:
     else:
         # If face_count column exists, make it nullable
         with op.batch_alter_table("images") as batch_op:
-            batch_op.alter_column("face_count", existing_type=sa.Integer(), nullable=True)
+            batch_op.alter_column(
+                "face_count", existing_type=sa.Integer(), nullable=True
+            )
 
     # Set existing rows to NULL so they get re-processed
     op.execute("UPDATE images SET face_count = NULL")

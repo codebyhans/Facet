@@ -53,7 +53,16 @@ from photo_app.services.face_index_service import FaceIndexResult
 from photo_app.services.face_review_service import PersonStackSummary
 
 if TYPE_CHECKING:
+    from photo_app.app.models.photo_grid_model import PhotoGridItem
+    from photo_app.domain.models import Image
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
+    from photo_app.services.album_service import AlbumService
+    from photo_app.services.face_index_service import FaceIndexService
+    from photo_app.services.face_review_service import FaceReviewItem, FaceReviewService
+    from photo_app.services.image_index_service import ImageIndexService
+    from photo_app.services.metadata_sync_service import MetadataSyncService
+    from photo_app.services.settings_service import RuntimeSettings, SettingsService
+    from photo_app.services.tags_service import TagService
 
 LOGGER = logging.getLogger(__name__)
 WINDOW_SIZE_VALUES = 2
@@ -94,7 +103,9 @@ class CreateFolderDialog(QDialog):
 class FaceAssignDialog(QDialog):
     """Assign one person name to one or many faces in a selected image."""
 
-    def __init__(self, faces: list[object], parent: QWidget | None = None) -> None:
+    def __init__(
+        self, faces: list[FaceReviewItem], parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Name Faces")
         self._faces = faces
@@ -110,8 +121,12 @@ class FaceAssignDialog(QDialog):
         self._name.setPlaceholderText("Enter person name")
 
         buttons = QDialogButtonBox(self)
-        apply_one = buttons.addButton("Apply to Selected", QDialogButtonBox.ButtonRole.AcceptRole)
-        apply_all = buttons.addButton("Apply to All", QDialogButtonBox.ButtonRole.ActionRole)
+        apply_one = buttons.addButton(
+            "Apply to Selected", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        apply_all = buttons.addButton(
+            "Apply to All", QDialogButtonBox.ButtonRole.ActionRole
+        )
         cancel = buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
 
         layout = QVBoxLayout(self)
@@ -142,9 +157,9 @@ class MergePersonDialog(QDialog):
 
     def __init__(
         self,
-        source_stack: object,
-        target_stacks: list[object],
-        parent: QWidget | None = None
+        source_stack: PersonStackSummary,
+        target_stacks: list[PersonStackSummary],
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Merge Person")
@@ -154,21 +169,27 @@ class MergePersonDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # Source person info
-        source_label = QLabel(f"Merge '{source_stack.person_name or f'Cluster #{source_stack.person_id}'}' into:")
+        source_label = QLabel(
+            f"Merge '{source_stack.person_name or f'Cluster #{source_stack.person_id}'}' into:"
+        )
         source_label.setStyleSheet("font-weight: bold; color: #cccccc;")
         layout.addWidget(source_label)
 
         # Target person selection
         self._target_combo = QListWidget(self)
         for stack in target_stacks:
-            self._target_combo.addItem(f"{stack.person_name} ({stack.image_count} images)")
+            self._target_combo.addItem(
+                f"{stack.person_name} ({stack.image_count} images)"
+            )
         if self._target_combo.count() > 0:
             self._target_combo.setCurrentRow(0)
 
         layout.addWidget(self._target_combo)
 
         # Warning message
-        warning_label = QLabel("This will merge all faces from the source person into the target person.")
+        warning_label = QLabel(
+            "This will merge all faces from the source person into the target person."
+        )
         warning_label.setStyleSheet("color: #ffcc00; font-size: 11px;")
         layout.addWidget(warning_label)
 
@@ -203,20 +224,21 @@ class MainWindow(QMainWindow):
 
     def __init__(  # noqa: PLR0913, PLR0915
         self,
-        image_index_service: object,
-        album_service: object,
-        face_index_service: object,
-        face_review_service: object,
-        metadata_sync_service: object,
-        tag_service: object,
-        _settings_service: object,
-        runtime_settings: object,
+        image_index_service: ImageIndexService,
+        album_service: AlbumService,
+        face_index_service: FaceIndexService,
+        face_review_service: FaceReviewService,
+        metadata_sync_service: MetadataSyncService,
+        tag_service: TagService,
+        _settings_service: SettingsService,
+        runtime_settings: RuntimeSettings,
         thumbnail_tile_store: ThumbnailTileStore,
     ) -> None:
         super().__init__()
         self._settings_path = Path("config/settings.json")
         self._ui_state = self._load_ui_state()
         self._image_index_service = image_index_service
+        self._album_service = album_service
         self._face_index_service = face_index_service
         self._face_review_service = face_review_service
         self._settings_service = _settings_service
@@ -226,9 +248,9 @@ class MainWindow(QMainWindow):
         self._thread_pool = QThreadPool.globalInstance()
 
         # Worker references to prevent GC
-        self._active_face_index_worker = None
-        self._active_image_index_worker = None
-        self._active_people_worker = None
+        self._active_face_index_worker: IndexWorker | None = None
+        self._active_image_index_worker: IndexWorker | None = None
+        self._active_people_worker: PeopleListWorker | None = None
         self._people_epoch: int = 0
         self._thumbnail_tile_store = thumbnail_tile_store
 
@@ -243,7 +265,9 @@ class MainWindow(QMainWindow):
             page_size=DEFAULT_PAGE_SIZE,
         )
 
-        thumb_size = tuple(getattr(self._runtime_settings, "thumbnail_size", (128, 128)))
+        thumb_size = tuple(
+            getattr(self._runtime_settings, "thumbnail_size", (128, 128))
+        )
         tile_size = tuple(getattr(self._runtime_settings, "tile_size", (1024, 1024)))
         photo_model_kwargs = {
             "thumbnail_size": (int(thumb_size[0]), int(thumb_size[1])),
@@ -252,24 +276,24 @@ class MainWindow(QMainWindow):
 
         # Build album tree
         self._album_tree_model = AlbumTreeModel(self)
-        self._album_tree = AlbumTreeWidget(self._album_tree_model, self)
+        self._album_tree = AlbumTreeWidget(self._album_tree_model)
 
         # Build photo grid
         self._album_photo_model = PhotoGridModel(parent=self, **photo_model_kwargs)
-        self._album_photo_grid = PhotoGridWidget(self._album_photo_model, self)
+        self._album_photo_grid = PhotoGridWidget(self._album_photo_model)
 
         # Build image detail panel (for full image viewing)
         self._image_detail_panel = ImageDetailPanel(
             self,
             settings=self._runtime_settings,
-            face_review_service=self._face_review_service
+            face_review_service=self._face_review_service,
         )
 
         # Build people browser
         self._people_browser = PeopleBrowser(
             face_review_service=self._face_review_service,
             tile_store=thumbnail_tile_store,
-            parent=self
+            parent=self,
         )
 
         # Create persistent navigation header that's always visible
@@ -357,7 +381,7 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center_panel)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.addWidget(self._filter_bar)  # Filter bar at top
-        center_layout.addWidget(center_stack)      # Content below filter bar
+        center_layout.addWidget(center_stack)  # Content below filter bar
 
         # Create 3-way splitter: albums (left) | photos/detail (center) | metadata (right)
         splitter = QSplitter()
@@ -372,8 +396,8 @@ class MainWindow(QMainWindow):
 
         # Top-level mode switcher: Albums mode (splitter) vs People mode (full-width people browser)
         self._mode_stack = QStackedWidget()
-        self._mode_stack.addWidget(splitter)               # Index 0 = Albums mode
-        self._mode_stack.addWidget(self._people_browser)   # Index 1 = People mode
+        self._mode_stack.addWidget(splitter)  # Index 0 = Albums mode
+        self._mode_stack.addWidget(self._people_browser)  # Index 1 = People mode
         self._mode_stack.setCurrentIndex(0)
 
         root = QWidget(self)
@@ -415,7 +439,6 @@ class MainWindow(QMainWindow):
         self._save_ui_state()
         super().closeEvent(event)
 
-
     def _wire_signals(self) -> None:
         self._album_vm.error.connect(self._show_error)
         self._album_gallery_vm.error.connect(self._show_error)
@@ -424,28 +447,40 @@ class MainWindow(QMainWindow):
         self._album_gallery_vm.loading_finished.connect(self._on_loading_finished)
 
         self._album_tree.albumSelected.connect(
-            lambda album_id, qd: self._album_gallery_vm.select_album(album_id, query_definition=qd)
+            lambda album_id, qd: self._album_gallery_vm.select_album(
+                album_id, query_definition=qd
+            )
         )
         self._album_tree.albumSelected.connect(self._on_album_selected)
         self._album_tree.albumMoved.connect(self._on_album_moved)
         self._album_tree.createFolderRequested.connect(self._on_create_folder)
-        self._album_tree.createVirtualAlbumRequested.connect(self._on_create_virtual_album)
+        self._album_tree.createVirtualAlbumRequested.connect(
+            self._on_create_virtual_album
+        )
         self._album_tree.renameRequested.connect(self._on_rename_node)
         self._album_tree.deleteRequested.connect(self._on_delete_node)
         self._album_tree.editFiltersRequested.connect(self._on_edit_filters)
         self._album_tree.moveRequested.connect(self._on_move_node)
 
         self._album_gallery_vm.page_ready.connect(
-            lambda items, append: self._on_gallery_page(self._album_photo_model, items, append)
+            lambda items, append: self._on_gallery_page(
+                self._album_photo_model, items, append
+            )
         )
         self._album_gallery_vm.tile_ready.connect(
-            lambda tile_index, pixmap: self._on_tile_ready(self._album_photo_model, tile_index, pixmap)
+            lambda tile_index, pixmap: self._on_tile_ready(
+                self._album_photo_model, tile_index, pixmap
+            )
         )
         self._album_gallery_vm.status.connect(self._on_gallery_status)
         self._album_gallery_vm.error.connect(self._show_error)
 
-        self._album_photo_model.tileRequested.connect(self._album_gallery_vm.request_tile)
-        self._album_photo_model.loadMoreRequested.connect(self._album_gallery_vm.load_next_page)
+        self._album_photo_model.tileRequested.connect(
+            self._album_gallery_vm.request_tile
+        )
+        self._album_photo_model.loadMoreRequested.connect(
+            self._album_gallery_vm.load_next_page
+        )
 
         # Photo grid selection -> metadata editor update & detail panel
         self._album_photo_grid.photoActivated.connect(self._on_photo_selected)
@@ -456,7 +491,9 @@ class MainWindow(QMainWindow):
         # Image detail panel signals
         self._image_detail_panel.closed.connect(self._on_detail_panel_closed)
         self._image_detail_panel.image_selected.connect(self._on_detail_image_selected)
-        self._image_detail_panel.reindex_requested.connect(self._on_reindex_faces_requested)
+        self._image_detail_panel.reindex_requested.connect(
+            self._on_reindex_faces_requested
+        )
 
         # Metadata editor signals -> sync service
         self._metadata_editor.rating_changed.connect(self._on_rating_changed)
@@ -466,10 +503,16 @@ class MainWindow(QMainWindow):
         self._people_browser.person_selected.connect(self._on_person_selected)
         self._people_browser.back_to_stacks.connect(self._on_back_to_stacks)
         self._people_browser.person_renamed.connect(self._on_person_renamed)
-        self._people_browser.person_merge_requested.connect(self._on_person_merge_requested)
+        self._people_browser.person_merge_requested.connect(
+            self._on_person_merge_requested
+        )
         self._people_browser.show_unnamed_changed.connect(self._on_show_unnamed_changed)
-        self._people_browser.face_delete_requested.connect(self._on_face_delete_requested)
-        self._people_browser.face_reassign_requested.connect(self._on_face_reassign_requested)
+        self._people_browser.face_delete_requested.connect(
+            self._on_face_delete_requested
+        )
+        self._people_browser.face_reassign_requested.connect(
+            self._on_face_reassign_requested
+        )
 
     def _build_menu(self) -> None:
         """Build application menu bar."""
@@ -525,17 +568,25 @@ class MainWindow(QMainWindow):
 
         # Album operations
         QShortcut(QKeySequence(shortcuts.NEW_ALBUM), self, self._on_shortcut_new_album)
-        QShortcut(QKeySequence(shortcuts.NEW_FOLDER), self, self._on_shortcut_new_folder)
+        QShortcut(
+            QKeySequence(shortcuts.NEW_FOLDER), self, self._on_shortcut_new_folder
+        )
         QShortcut(QKeySequence(shortcuts.RENAME), self, self._on_shortcut_rename)
         QShortcut(QKeySequence(shortcuts.DELETE), self, self._on_shortcut_delete)
 
         # Photo operations
         QShortcut(QKeySequence(shortcuts.ADD_TAG), self, self._on_shortcut_add_tag)
-        QShortcut(QKeySequence(shortcuts.BATCH_FACES), self, self._on_shortcut_batch_faces)
+        QShortcut(
+            QKeySequence(shortcuts.BATCH_FACES), self, self._on_shortcut_batch_faces
+        )
 
         # Navigation shortcuts
-        QShortcut(QKeySequence(shortcuts.NEXT_PHOTO), self, self._on_shortcut_next_photo)
-        QShortcut(QKeySequence(shortcuts.PREV_PHOTO), self, self._on_shortcut_prev_photo)
+        QShortcut(
+            QKeySequence(shortcuts.NEXT_PHOTO), self, self._on_shortcut_next_photo
+        )
+        QShortcut(
+            QKeySequence(shortcuts.PREV_PHOTO), self, self._on_shortcut_prev_photo
+        )
 
         # Application
         QShortcut(QKeySequence(shortcuts.INDEX_IMAGES), self, self._run_image_index)
@@ -568,7 +619,7 @@ class MainWindow(QMainWindow):
 
         # Create Library album that shows all images
         try:
-            query_def = {"people": [], "tags": [], "cameras": [], "date_range": None}
+            query_def: dict[str, object] = {}
             library_album = self._album_vm.create_virtual_album(
                 "Library",
                 None,
@@ -737,13 +788,12 @@ class MainWindow(QMainWindow):
     def _on_gallery_page(
         self,
         model: PhotoGridModel,
-        items: list[object],
+        items: list[PhotoGridItem],
         append: bool,  # noqa: FBT001
     ) -> None:
-        typed_items = [item for item in items if hasattr(item, "image_id")]
         model.append_page(
-            typed_items,
-            has_more=len(typed_items) >= DEFAULT_PAGE_SIZE,
+            items,
+            has_more=len(items) >= DEFAULT_PAGE_SIZE,
             append=append,
         )
 
@@ -760,29 +810,35 @@ class MainWindow(QMainWindow):
         """Handle photo selection to update metadata and show detail view."""
         try:
             # Find the image in the current model
-            image_item = None
+            image_item: PhotoGridItem | None = None
             items = self._album_photo_model.items
             selected_index = 0
 
             for idx, item in enumerate(items):
-                if hasattr(item, "image_id") and item.image_id == image_id:
+                if item.image_id == image_id:
                     image_item = item
                     selected_index = idx
                     break
 
             if image_item:
                 # Update metadata editor
-                self._metadata_editor.set_image(image_item)
+                image = self._load_image_for_metadata(image_item.image_id)
+                self._metadata_editor.set_image(image)
 
                 # Switch to detail view
                 self._switch_to_detail_view(items, selected_index)
         except Exception as exc:  # noqa: BLE001
             self._show_error(f"Failed to load image: {exc}")
 
+    def _load_image_for_metadata(self, image_id: int) -> Image | None:
+        """Load a full Image entity for metadata editing."""
+        image_repo = self._album_vm.get_image_repository()
+        if image_repo is None:
+            return None
+        return image_repo.get_by_id(image_id)
+
     def _switch_to_detail_view(
-        self,
-        items: list,
-        selected_index: int
+        self, items: list[PhotoGridItem], selected_index: int
     ) -> None:
         """Switch center panel from gallery to detail view."""
         if self._viewing_mode == "detail":
@@ -809,10 +865,8 @@ class MainWindow(QMainWindow):
     def _on_detail_image_selected(self, image_id: int) -> None:
         """Update metadata when navigating images in detail view."""
         try:
-            for item in self._album_photo_model.items:
-                if hasattr(item, "image_id") and item.image_id == image_id:
-                    self._metadata_editor.set_image(item)
-                    break
+            image = self._load_image_for_metadata(image_id)
+            self._metadata_editor.set_image(image)
         except Exception as exc:  # noqa: BLE001
             self._show_error(f"Failed to update image info: {exc}")
 
@@ -823,8 +877,11 @@ class MainWindow(QMainWindow):
             return
         try:
             # Sync rating to EXIF and database
+            if image.id is None:
+                self._show_error("Missing image ID for rating update")
+                return
             self._metadata_sync_service.sync_image_metadata(
-                image_id=image.image_id,
+                image_id=image.id,
                 rating=rating,
             )
             self.statusBar().showMessage(f"Rating saved: {rating}★")
@@ -838,8 +895,11 @@ class MainWindow(QMainWindow):
             return
         try:
             # Sync tags to EXIF and database
+            if image.id is None:
+                self._show_error("Missing image ID for tag update")
+                return
             self._metadata_sync_service.sync_image_metadata(
-                image_id=image.image_id,
+                image_id=image.id,
                 tags=tags,
             )
             self.statusBar().showMessage(f"Tags saved: {len(tags)} tags")
@@ -863,11 +923,13 @@ class MainWindow(QMainWindow):
         self._albums_btn.setVisible(True)
         self._people_btn.setVisible(True)
 
-    def _on_person_selected(self, person_id: int, stack: object) -> None:
+    def _on_person_selected(self, person_id: int, stack: PersonStackSummary) -> None:
         """Handle person selection in people browser."""
         if isinstance(stack, PersonStackSummary):
             self._people_browser.show_person_detail(person_id, stack)
-            self.statusBar().showMessage(f"Viewing: {stack.person_name or f'Cluster #{person_id}'}")
+            self.statusBar().showMessage(
+                f"Viewing: {stack.person_name or f'Cluster #{person_id}'}"
+            )
         else:
             self.statusBar().showMessage(f"Selected person {person_id}")
 
@@ -901,7 +963,8 @@ class MainWindow(QMainWindow):
 
             # Get list of other people to merge with
             other_people = [
-                stack for stack in self._people_browser.get_current_stacks()
+                stack
+                for stack in self._people_browser.get_current_stacks()
                 if stack.person_id != person_id and stack.person_name
             ]
 
@@ -917,19 +980,30 @@ class MainWindow(QMainWindow):
                     # Look up cluster IDs — both stacks are already in _current_stacks
                     source_cluster_id = current_stack.cluster_id
                     target_stack = next(
-                        (s for s in self._people_browser.get_current_stacks()
-                         if s.person_id == target_person_id),
+                        (
+                            s
+                            for s in self._people_browser.get_current_stacks()
+                            if s.person_id == target_person_id
+                        ),
                         None,
                     )
-                    if source_cluster_id is None or target_stack is None or target_stack.cluster_id is None:
-                        self._show_error("Cannot merge: one or both persons have no cluster assignment")
+                    if (
+                        source_cluster_id is None
+                        or target_stack is None
+                        or target_stack.cluster_id is None
+                    ):
+                        self._show_error(
+                            "Cannot merge: one or both persons have no cluster assignment"
+                        )
                         return
                     # Perform the merge using the correct method and cluster IDs
                     self._face_review_service.merge_identity_clusters(
                         source_cluster_id, target_stack.cluster_id
                     )
                     self._refresh_people_list()
-                    self.statusBar().showMessage(f"Merged person into '{merge_dialog.selected_person_name()}'")
+                    self.statusBar().showMessage(
+                        f"Merged person into '{merge_dialog.selected_person_name()}'"
+                    )
                 else:
                     self.statusBar().showMessage("Merge cancelled")
             else:
@@ -992,7 +1066,12 @@ class MainWindow(QMainWindow):
         self._active_people_worker = worker
         self._thread_pool.start(worker)
 
-    def _on_people_list_ready(self, stacks: list, cover_lookups: dict, epoch: int) -> None:
+    def _on_people_list_ready(
+        self,
+        stacks: list[PersonStackSummary],
+        cover_lookups: dict[int, tuple[str, int, int, int, int]],
+        epoch: int,
+    ) -> None:
         """Called on the main thread when people stacks are loaded."""
         # Ignore stale results from previous epochs
         if epoch != self._people_epoch:
@@ -1008,14 +1087,17 @@ class MainWindow(QMainWindow):
         except Exception:
             LOGGER.exception("Failed to update available people filter")
 
-        threshold = self._settings_service.get_face_review_threshold() if self._settings_service else 0
+        threshold = (
+            self._settings_service.get_face_review_threshold()
+            if self._settings_service
+            else 0
+        )
         if stacks:
             self.statusBar().showMessage(
                 f"Loaded {len(stacks)} person clusters (threshold: {threshold}+ images)"
             )
         else:
             self.statusBar().showMessage(f"No person clusters with {threshold}+ images")
-
 
     def _on_face_review_settings(self) -> None:
         """Open a dialog to configure face review threshold."""
@@ -1053,12 +1135,14 @@ class MainWindow(QMainWindow):
         self._current_viewer = PhotoViewerWidget(pairs, start_row, self)
         self._current_viewer.show()
 
-    def _run_image_index(self) -> None:
+    def _run_image_index(self) -> None:  # noqa: C901
         root = Path(str(getattr(self._runtime_settings, "photo_root_dir", ".")))
 
         # Validate path before indexing
         if not root.exists():
-            self.statusBar().showMessage("No photo library folder set. Please choose a folder.")
+            self.statusBar().showMessage(
+                "No photo library folder set. Please choose a folder."
+            )
             self._on_select_library()
             return
 
@@ -1078,7 +1162,9 @@ class MainWindow(QMainWindow):
         def run_index() -> object:
             """Wrapper to call index_folder safely."""
             try:
-                return self._image_index_service.index_folder(root, on_progress=on_progress)
+                return self._image_index_service.index_folder(
+                    root, on_progress=on_progress
+                )
             except Exception:
                 LOGGER.exception("Indexing error during library scan")
                 raise
@@ -1109,18 +1195,21 @@ class MainWindow(QMainWindow):
                 self._show_error(f"Error processing index result: {exc}")
 
         worker.signals.result_ready.connect(on_index_complete)
-        worker.signals.error.connect(
-            lambda err: (self._clear_task_status(), self._show_error(f"Indexing failed: {err}"))
-        )
+
+        def on_index_error(err: str) -> None:
+            self._clear_task_status()
+            self._show_error(f"Indexing failed: {err}")
+
+        worker.signals.error.connect(on_index_error)
 
         def on_image_index_finished() -> None:
             self._active_image_index_worker = None
 
         worker.signals.finished.connect(on_image_index_finished)
-        self._active_image_index_worker = worker   # keep alive until finished
+        self._active_image_index_worker = worker  # keep alive until finished
         self._thread_pool.start(worker)
 
-    def _run_face_index(self) -> None:  # noqa: C901
+    def _run_face_index(self) -> None:  # noqa: C901, PLR0915
         if self._face_index_service is None:
             self._show_error("Face indexing unavailable")
             return
@@ -1138,8 +1227,7 @@ class MainWindow(QMainWindow):
             try:
                 overall = total_processed + current
                 self._set_task_status(
-                    f"⟳ Indexing faces — {current}/{total} "
-                    f"(batch), {overall} total"
+                    f"⟳ Indexing faces — {current}/{total} (batch), {overall} total"
                 )
             except Exception:
                 LOGGER.exception("Failed to update face index progress")
@@ -1149,7 +1237,7 @@ class MainWindow(QMainWindow):
                 msg = f"⟳ Clustering faces ({current}/{total})…"
                 QMetaObject.invokeMethod(
                     self._task_label,
-                    "setText",
+                    b"setText",
                     Qt.ConnectionType.QueuedConnection,
                     Q_ARG(str, msg),
                 )
@@ -1165,7 +1253,7 @@ class MainWindow(QMainWindow):
                 result = self._face_index_service.index_faces(
                     face_batch_size,
                     on_progress=on_progress,
-                    skip_clustering=True,       # ← skip per-batch clustering
+                    skip_clustering=True,  # ← skip per-batch clustering
                 )
                 total_processed += result.processed_images
                 total_detected += result.detected_faces
@@ -1176,7 +1264,9 @@ class MainWindow(QMainWindow):
             with contextlib.suppress(Exception):
                 self._set_task_status("⟳ Clustering faces…")
 
-            identity_cluster_service = self._face_index_service.get_identity_cluster_service()
+            identity_cluster_service = (
+                self._face_index_service.get_identity_cluster_service()
+            )
             if identity_cluster_service is not None:
                 identity_cluster_service.index_new_faces(
                     on_progress=on_cluster_progress
@@ -1199,20 +1289,23 @@ class MainWindow(QMainWindow):
             )
 
         worker = IndexWorker(run_face_index_loop)
-        worker.signals.result_ready.connect(
-            lambda result: (
-                self._clear_task_status(),
-                self.statusBar().showMessage(
-                    f"Face index complete: "
-                    f"{getattr(result, 'detected_faces', 0)} faces detected "
-                    f"across {getattr(result, 'processed_images', 0)} images"
-                ),
+
+        def on_face_index_result(result: object) -> None:
+            self._clear_task_status()
+            self.statusBar().showMessage(
+                f"Face index complete: "
+                f"{getattr(result, 'detected_faces', 0)} faces detected "
+                f"across {getattr(result, 'processed_images', 0)} images"
             )
-        )
+
+        worker.signals.result_ready.connect(on_face_index_result)
         worker.signals.result_ready.connect(self._refresh_people_list)
-        worker.signals.error.connect(
-            lambda err: (self._clear_task_status(), self._show_error(err))
-        )
+
+        def on_face_index_error(err: str) -> None:
+            self._clear_task_status()
+            self._show_error(err)
+
+        worker.signals.error.connect(on_face_index_error)
 
         def on_face_index_finished() -> None:
             self._active_face_index_worker = None
@@ -1234,7 +1327,9 @@ class MainWindow(QMainWindow):
     def _save_ui_state(self) -> None:
         self._ui_state["window_size"] = [self.size().width(), self.size().height()]
         self._ui_state["splitter_widths"] = self._splitter.sizes()
-        current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
+        current = self._album_tree_model.node_from_index(
+            self._album_tree.currentIndex()
+        )
         if current is not None and current.album_id is not None:
             self._ui_state["last_opened_album"] = current.album_id
         # Preserve the album_tree written by AlbumViewModel so we don't overwrite it
@@ -1251,8 +1346,9 @@ class MainWindow(QMainWindow):
         if not self._settings_path.exists():
             return {}
         try:
-            return json.loads(self._settings_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            data = json.loads(self._settings_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except OSError, ValueError:
             return {}
 
     def _persist_tree(self) -> None:
@@ -1331,13 +1427,17 @@ class MainWindow(QMainWindow):
 
     def _on_file_create_album(self) -> None:
         """Create a new album from File menu."""
-        current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
+        current = self._album_tree_model.node_from_index(
+            self._album_tree.currentIndex()
+        )
         parent_id = current.node_id if current else None
         self._on_create_virtual_album(parent_id)
 
     def _on_export_html_gallery(self) -> None:
         """Export current album as HTML gallery."""
-        current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
+        current = self._album_tree_model.node_from_index(
+            self._album_tree.currentIndex()
+        )
         if current is None or current.album_id is None:
             self._show_error("Select an album to export.")
             return
@@ -1351,15 +1451,17 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            exporter_module = importlib.import_module("photo_app.services.html_gallery_exporter")
+            exporter_module = importlib.import_module(
+                "photo_app.services.html_gallery_exporter"
+            )
             html_gallery_exporter_cls = exporter_module.HtmlGalleryExporter
             # For now, use a simple image repository mock
             # In production, you'd inject this properly
-            exporter = html_gallery_exporter_cls(self._album_vm.get_image_repository())
+            exporter = html_gallery_exporter_cls(self._album_service)
             result = exporter.generate_gallery(
                 album_id=current.album_id,
                 output_dir=Path(output_dir),
-                title=f"{current.text} - Photo Gallery",
+                title=f"{current.name} - Photo Gallery",
                 group_by="date",
             )
 
@@ -1422,25 +1524,33 @@ class MainWindow(QMainWindow):
 
     def _on_shortcut_new_album(self) -> None:
         """Create new virtual album (shortcut: Ctrl+N)."""
-        current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
+        current = self._album_tree_model.node_from_index(
+            self._album_tree.currentIndex()
+        )
         parent_id = current.node_id if current else None
         self._on_create_virtual_album(parent_id)
 
     def _on_shortcut_new_folder(self) -> None:
         """Create new folder (shortcut: Ctrl+Shift+N)."""
-        current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
+        current = self._album_tree_model.node_from_index(
+            self._album_tree.currentIndex()
+        )
         parent_id = current.node_id if current else None
         self._on_create_folder(parent_id)
 
     def _on_shortcut_rename(self) -> None:
         """Rename selected album (shortcut: Ctrl+R)."""
-        current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
+        current = self._album_tree_model.node_from_index(
+            self._album_tree.currentIndex()
+        )
         if current:
             self._album_tree.edit(self._album_tree.currentIndex())
 
     def _on_shortcut_delete(self) -> None:
         """Delete selected album (shortcut: Delete)."""
-        current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
+        current = self._album_tree_model.node_from_index(
+            self._album_tree.currentIndex()
+        )
         if current:
             self._on_delete_node(current.node_id)
 
@@ -1466,7 +1576,9 @@ class MainWindow(QMainWindow):
             next_idx = model.index(current.row() + 1, 0)
             if next_idx.isValid():
                 grid.setCurrentIndex(next_idx)
-                grid.photoActivated.emit(model.data(next_idx, PhotoGridModel.ImageIdRole))
+                grid.photoActivated.emit(
+                    model.data(next_idx, PhotoGridModel.ImageIdRole)
+                )
 
     def _on_shortcut_prev_photo(self) -> None:
         """Move to previous photo (shortcut: Left Arrow)."""
@@ -1477,7 +1589,9 @@ class MainWindow(QMainWindow):
             prev_idx = model.index(current.row() - 1, 0)
             if prev_idx.isValid():
                 grid.setCurrentIndex(prev_idx)
-                grid.photoActivated.emit(model.data(prev_idx, PhotoGridModel.ImageIdRole))
+                grid.photoActivated.emit(
+                    model.data(prev_idx, PhotoGridModel.ImageIdRole)
+                )
 
     def _flatten(self, nodes: list[AlbumTreeNode]) -> list[AlbumTreeNode]:
         """Flatten nested album tree nodes."""
@@ -1506,15 +1620,15 @@ class MainWindow(QMainWindow):
 
             # Update the flag in the database
             image_repo = self._album_vm.get_image_repository()
-            if hasattr(image_repo, "update_flag"):
-                image_repo.update_flag(image_id, flag_value)
+            if image_repo is None:
+                self._show_error("Image repository not available")
+                return
+            image_repo.update_flag(image_id, flag_value)
 
-                # Update the model item so the badge repaints immediately
-                self._album_photo_model.update_flag(index.row(), flag_value)
+            # Update the model item so the badge repaints immediately
+            self._album_photo_model.update_flag(index.row(), flag_value)
 
-                self.statusBar().showMessage(f"Flag updated: {flag_value or 'None'}")
-            else:
-                self._show_error("Image repository does not support flag updates")
+            self.statusBar().showMessage(f"Flag updated: {flag_value or 'None'}")
 
         except Exception as exc:  # noqa: BLE001
             self._show_error(f"Failed to update flag: {exc}")
@@ -1534,7 +1648,9 @@ class MainWindow(QMainWindow):
             query_definition = self._filter_bar.get_query_definition()
 
             # Get current album for parent context
-            current = self._album_tree_model.node_from_index(self._album_tree.currentIndex())
+            current = self._album_tree_model.node_from_index(
+                self._album_tree.currentIndex()
+            )
             parent_node_id = current.node_id if current else None
 
             # Create the virtual album
@@ -1567,9 +1683,7 @@ class MainWindow(QMainWindow):
         worker.signals.result_ready.connect(
             lambda result: self._on_reindex_complete(result, file_path)
         )
-        worker.signals.error.connect(
-            self._on_reindex_error
-        )
+        worker.signals.error.connect(self._on_reindex_error)
         QThreadPool.globalInstance().start(worker)
 
     def _on_reindex_complete(self, result: object, file_path: str) -> None:
@@ -1581,7 +1695,7 @@ class MainWindow(QMainWindow):
         )
         # Reload the detail panel so new bboxes appear immediately
         items = self._image_detail_panel.get_items()
-        idx   = self._image_detail_panel.get_current_index()
+        idx = self._image_detail_panel.get_current_index()
         if items and idx < len(items):
             self._image_detail_panel.load_image(items, idx)
 

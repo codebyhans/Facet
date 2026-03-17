@@ -64,7 +64,9 @@ def upgrade() -> None:
         op.create_table(
             "face_cluster_memberships",
             sa.Column("id", sa.Integer(), primary_key=True),
-            sa.Column("face_id", sa.Integer(), sa.ForeignKey("faces.id"), nullable=False),
+            sa.Column(
+                "face_id", sa.Integer(), sa.ForeignKey("faces.id"), nullable=False
+            ),
             sa.Column(
                 "cluster_id",
                 sa.Integer(),
@@ -75,9 +77,11 @@ def upgrade() -> None:
             sa.Column("assigned_at", sa.DateTime(), nullable=False),
             sa.UniqueConstraint("face_id"),
         )
-    membership_indexes = {
-        index["name"] for index in inspector.get_indexes("face_cluster_memberships")
-    } if "face_cluster_memberships" in set(sa.inspect(bind).get_table_names()) else set()
+    membership_indexes = (
+        {index["name"] for index in inspector.get_indexes("face_cluster_memberships")}
+        if "face_cluster_memberships" in set(sa.inspect(bind).get_table_names())
+        else set()
+    )
     if "ix_face_cluster_memberships_face_id" not in membership_indexes:
         op.create_index(
             "ix_face_cluster_memberships_face_id",
@@ -107,9 +111,11 @@ def upgrade() -> None:
             sa.Column("updated_at", sa.DateTime(), nullable=False),
             sa.UniqueConstraint("cluster_id", "time_period"),
         )
-    cluster_indexes = {
-        index["name"] for index in inspector.get_indexes("cluster_embeddings")
-    } if "cluster_embeddings" in set(sa.inspect(bind).get_table_names()) else set()
+    cluster_indexes = (
+        {index["name"] for index in inspector.get_indexes("cluster_embeddings")}
+        if "cluster_embeddings" in set(sa.inspect(bind).get_table_names())
+        else set()
+    )
     if "ix_cluster_embeddings_cluster_id" not in cluster_indexes:
         op.create_index(
             "ix_cluster_embeddings_cluster_id",

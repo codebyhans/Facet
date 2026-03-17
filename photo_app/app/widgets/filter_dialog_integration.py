@@ -11,7 +11,8 @@ if TYPE_CHECKING:
 
     from photo_app.domain.models import Album
     from photo_app.services.album_service import AlbumService
-    from photo_app.services.tags_service import TagsService
+    from photo_app.services.face_review_service import FaceReviewService
+    from photo_app.services.tags_service import TagService
 
 
 class FilterDialogIntegration:
@@ -20,10 +21,12 @@ class FilterDialogIntegration:
     def __init__(
         self,
         album_service: AlbumService,
-        tags_service: TagsService,
+        face_review_service: FaceReviewService,
+        tags_service: TagService,
     ) -> None:
         """Initialize integration helper."""
         self.album_service = album_service
+        self.face_review_service = face_review_service
         self.tags_service = tags_service
 
     def create_album_from_dialog(
@@ -39,8 +42,8 @@ class FilterDialogIntegration:
         """
         query_definition = dialog.get_query_definition()
         self.album_service.create_album(
-            name=album_name,
-            query_definition=query_definition,
+            album_name,
+            query_definition,
         )
 
     def update_album_from_dialog(
@@ -56,8 +59,8 @@ class FilterDialogIntegration:
         """
         query_definition = dialog.get_query_definition()
         self.album_service.update_album_query(
-            album_id=album_id,
-            query_definition=query_definition,
+            album_id,
+            query_definition,
         )
 
     def show_filter_dialog(
@@ -75,35 +78,15 @@ class FilterDialogIntegration:
             AdvancedFilterEditorDialog if user accepts, None if cancelled
         """
         # Get available options for dropdowns
-        all_persons = self.album_service.list_all_persons()
-        all_tags = self.tags_service.get_all_tags()
-
-        # Get available cameras from image repository
-        # This would be a new method you might add to the service
-        all_cameras = self._get_available_cameras()
+        all_persons = self.face_review_service.get_available_people()
 
         # Create and show dialog
         dialog = AdvancedFilterEditorDialog(
             parent=parent_widget,
             available_persons=all_persons,
-            available_tags=sorted(all_tags),
-            available_cameras=sorted(all_cameras),
             current_query=current_album.query_definition if current_album else None,
         )
 
-        if dialog.exec() == dialog.Accepted:
+        if dialog.exec() == dialog.DialogCode.Accepted:
             return dialog
         return None
-
-    def _get_available_cameras(self) -> list[str]:
-        """Get list of unique camera models from all images."""
-        # This queries the repository for all distinct camera models
-        # Implementation depends on adding a method to ImageRepository
-        try:
-            # Placeholder - implement this in ImageRepository.get_distinct_cameras()
-            image_repo = getattr(self.album_service, "_image_repository", None)
-        except (AttributeError, NotImplementedError):
-            return []
-        if image_repo and hasattr(image_repo, "get_distinct_cameras"):
-            return image_repo.get_distinct_cameras()
-        return []

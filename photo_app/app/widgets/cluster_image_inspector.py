@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
+
 class ClusterImageInspectorWidget(QWidget):
     """Right-hand image inspector for the cluster detail view.
 
@@ -43,13 +44,17 @@ class ClusterImageInspectorWidget(QWidget):
 
         # Face detection widget
         self._face_detection_widget = FaceDetectionWidget()
-        self._face_detection_widget.setStyleSheet("background-color: #1e1e1e; color: white;")
+        self._face_detection_widget.setStyleSheet(
+            "background-color: #1e1e1e; color: white;"
+        )
 
         # Scroll area for the face detection widget
         scroll_area = QScrollArea()
         scroll_area.setWidget(self._face_detection_widget)
         scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
+        scroll_area.setStyleSheet(
+            "QScrollArea { border: none; background-color: #1e1e1e; }"
+        )
 
         # Toolbar
         toolbar_layout = QHBoxLayout()
@@ -131,7 +136,9 @@ class ClusterImageInspectorWidget(QWidget):
 
             # Calculate zoom to fit image with aspect ratio preserved
             width_ratio = viewport_width / pixmap.width() if pixmap.width() > 0 else 1.0
-            height_ratio = viewport_height / pixmap.height() if pixmap.height() > 0 else 1.0
+            height_ratio = (
+                viewport_height / pixmap.height() if pixmap.height() > 0 else 1.0
+            )
             zoom = min(width_ratio, height_ratio)
 
             # Constrain between 0.2 and 3.0
@@ -147,7 +154,9 @@ class ClusterImageInspectorWidget(QWidget):
 
             self._face_detection_widget.set_image(scaled, zoom_factor=zoom)
             self._face_detection_widget.set_faces(faces)
-            self._face_detection_widget.set_show_bboxes(self._faces_checkbox.isChecked())
+            self._face_detection_widget.set_show_bboxes(
+                self._faces_checkbox.isChecked()
+            )
 
         except Exception:
             LOGGER.exception("Failed to load image %s", file_path)

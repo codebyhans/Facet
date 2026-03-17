@@ -4,6 +4,7 @@ Revision ID: 1c03044be575
 Revises: 0008_face_count_nullable
 Create Date: 2026-03-11 12:51:00.953960
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -39,8 +40,11 @@ def downgrade() -> None:
     op.add_column("images", sa.Column("face_count", sa.INTEGER(), nullable=True))
     op.drop_index(op.f("ix_images_file_path"), table_name="images")
     op.create_index(op.f("ix_images_file_path"), "images", ["file_path"], unique=False)
-    op.alter_column("identity_clusters", "face_count",
-               existing_type=sa.INTEGER(),
-               nullable=False,
-               existing_server_default=sa.text("'0'"))
+    op.alter_column(
+        "identity_clusters",
+        "face_count",
+        existing_type=sa.INTEGER(),
+        nullable=False,
+        existing_server_default=sa.text("'0'"),
+    )
     # ### end Alembic commands ###

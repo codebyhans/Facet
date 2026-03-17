@@ -28,6 +28,7 @@ from photo_app.app.widgets.person_card_widget import PersonCardWidget
 if TYPE_CHECKING:
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
     from photo_app.services.face_review_service import (
+        FaceReviewItem,
         FaceReviewService,
         PersonStackSummary,
     )
@@ -36,14 +37,16 @@ if TYPE_CHECKING:
 class PeopleBrowser(QWidget):
     """Dedicated People browser widget with stacks view and person detail view."""
 
-    _CARD_WIDTH = 148   # matches PersonCardWidget fixed width + border
+    _CARD_WIDTH = 148  # matches PersonCardWidget fixed width + border
     _CARD_SPACING = 12  # matches grid spacing
 
     person_selected = Signal(int, object)  # person_id, PersonStackSummary
     back_to_stacks = Signal()
     person_renamed = Signal(int, str)  # person_id, name
     person_merge_requested = Signal(int)  # person_id
-    person_merge_multiple_requested = Signal(list, int)  # source_person_ids, target_person_id
+    person_merge_multiple_requested = Signal(
+        list, int
+    )  # source_person_ids, target_person_id
     show_unnamed_changed = Signal(bool)  # show_unnamed
     face_delete_requested = Signal(int)  # face_id
     face_reassign_requested = Signal(int, str)  # face_id, new_person_name
@@ -59,6 +62,8 @@ class PeopleBrowser(QWidget):
         self._tile_store = tile_store
         self._current_stacks: list[PersonStackSummary] = []
         self._current_person_id: int | None = None
+        self._current_inspector_path: str | None = None
+        self._current_stack: PersonStackSummary | None = None
 
         self._setup_ui()
 
@@ -115,13 +120,17 @@ class PeopleBrowser(QWidget):
         self._grid_layout = QGridLayout(self._grid_widget)
         self._grid_layout.setContentsMargins(0, 0, 0, 0)
         self._grid_layout.setSpacing(12)
-        self._grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._grid_layout.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
 
         # Scroll area for the grid
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(self._grid_widget)
-        scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
+        scroll_area.setStyleSheet(
+            "QScrollArea { border: none; background-color: #1e1e1e; }"
+        )
         layout.addWidget(scroll_area, 1)
 
         # Store reference to scroll area for responsive grid
@@ -180,7 +189,9 @@ class PeopleBrowser(QWidget):
 
         # Image count label (tightened)
         self._image_count_label = QLabel()
-        self._image_count_label.setStyleSheet("color: #999; font-size: 11px; padding: 2px 0px;")
+        self._image_count_label.setStyleSheet(
+            "color: #999; font-size: 11px; padding: 2px 0px;"
+        )
         layout.addWidget(self._image_count_label)
 
         # Two-column layout for image grid and inspector
@@ -193,7 +204,9 @@ class PeopleBrowser(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
 
         gallery_label = QLabel("All images containing this person:")
-        gallery_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 8px 0px 4px 0px; color: #cccccc;")
+        gallery_label.setStyleSheet(
+            "font-weight: bold; font-size: 12px; padding: 8px 0px 4px 0px; color: #cccccc;"
+        )
         left_layout.addWidget(gallery_label)
 
         self._cluster_image_grid = ClusterImageGridWidget()
@@ -203,7 +216,9 @@ class PeopleBrowser(QWidget):
         image_scroll_area = QScrollArea()
         image_scroll_area.setWidgetResizable(True)
         image_scroll_area.setWidget(self._cluster_image_grid)
-        image_scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #1e1e1e; }")
+        image_scroll_area.setStyleSheet(
+            "QScrollArea { border: none; background-color: #1e1e1e; }"
+        )
         left_layout.addWidget(image_scroll_area, 1)
 
         splitter.addWidget(left_pane)
@@ -225,7 +240,11 @@ class PeopleBrowser(QWidget):
 
         return widget
 
-    def load_stacks(self, stacks: list[PersonStackSummary], cover_lookups: dict[int, tuple[str, int, int, int, int]] | None = None) -> None:
+    def load_stacks(
+        self,
+        stacks: list[PersonStackSummary],
+        cover_lookups: dict[int, tuple[str, int, int, int, int]] | None = None,
+    ) -> None:
         """Load and display person stacks in grid layout."""
         self._current_stacks = stacks
         self._current_cover_lookups = cover_lookups or {}
@@ -252,7 +271,11 @@ class PeopleBrowser(QWidget):
             card.person_clicked.connect(self._on_person_card_clicked)
 
             # Use pre-fetched lookup, deduplicating tile PNG reads per unique file
-            lookup = cover_lookups.get(stack.cover_image_id) if stack.cover_image_id else None
+            lookup = (
+                cover_lookups.get(stack.cover_image_id)
+                if stack.cover_image_id
+                else None
+            )
             if lookup is not None:
                 tile_path_str, x, y, w, h = lookup
                 if tile_path_str not in tile_pixmaps:
@@ -323,7 +346,9 @@ class PeopleBrowser(QWidget):
         person_id = getattr(person, "id", 0) if person is not None else 0
         self.person_selected.emit(person_id, faces)
 
-    def _on_person_card_clicked(self, person_id: int, stack: PersonStackSummary) -> None:
+    def _on_person_card_clicked(
+        self, person_id: int, stack: PersonStackSummary
+    ) -> None:
         """Handle person card click - show person detail view."""
         # For now, just emit the signal to main window
         self.person_selected.emit(person_id, stack)
@@ -335,7 +360,10 @@ class PeopleBrowser(QWidget):
 
     def _on_save_person_name(self) -> None:
         """Handle save person name."""
-        if not hasattr(self, "_current_stack") or getattr(self, "_current_stack", None) is None:
+        if (
+            not hasattr(self, "_current_stack")
+            or getattr(self, "_current_stack", None) is None
+        ):
             return
 
         name = self._person_name_input.text().strip()
@@ -351,7 +379,10 @@ class PeopleBrowser(QWidget):
 
     def _on_merge_person(self) -> None:
         """Handle merge person button click."""
-        if not hasattr(self, "_current_stack") or getattr(self, "_current_stack", None) is None:
+        if (
+            not hasattr(self, "_current_stack")
+            or getattr(self, "_current_stack", None) is None
+        ):
             return
 
         current_stack = getattr(self, "_current_stack", None)
@@ -366,14 +397,18 @@ class PeopleBrowser(QWidget):
         if not hasattr(model, "_image_paths"):
             return
         row = index.row()
-        file_path: str | None = getattr(model, "_image_paths", [])[row] if row < len(getattr(model, "_image_paths", [])) else None
+        file_path: str | None = (
+            getattr(model, "_image_paths", [])[row]
+            if row < len(getattr(model, "_image_paths", []))
+            else None
+        )
         if file_path is None:
             return
 
         self._current_inspector_path = file_path
 
         # Load faces via service
-        faces: list[object] = []
+        faces: list[FaceReviewItem] = []
         if self._face_review_service is not None:
             try:
                 faces = self._face_review_service.faces_for_image_path(file_path)
@@ -387,15 +422,17 @@ class PeopleBrowser(QWidget):
             try:
                 all_stacks = self._face_review_service.person_stacks()
                 person_names = sorted(
-                    s.person_name
-                    for s in all_stacks
-                    if s.person_name is not None
+                    s.person_name for s in all_stacks if s.person_name is not None
                 )
             except Exception:  # noqa: BLE001
                 # Fall back to names visible in this image
-                person_names = sorted({
-                    name for name in (getattr(f, "person_name", None) for f in faces) if name is not None
-                })
+                person_names = sorted(
+                    {
+                        name
+                        for name in (getattr(f, "person_name", None) for f in faces)
+                        if name is not None
+                    }
+                )
         self._inspector.set_available_persons(person_names)
         self._inspector.load_image(file_path, faces)
 
@@ -403,7 +440,7 @@ class PeopleBrowser(QWidget):
         """Reload face data for the currently inspected image."""
         if self._current_inspector_path is None:
             return
-        faces: list[object] = []
+        faces: list[FaceReviewItem] = []
         if self._face_review_service is not None:
             with contextlib.suppress(Exception):
                 faces = self._face_review_service.faces_for_image_path(
@@ -416,29 +453,35 @@ class PeopleBrowser(QWidget):
             try:
                 all_stacks = self._face_review_service.person_stacks()
                 person_names = sorted(
-                    s.person_name
-                    for s in all_stacks
-                    if s.person_name is not None
+                    s.person_name for s in all_stacks if s.person_name is not None
                 )
             except Exception:  # noqa: BLE001
                 # Fall back to names visible in this image
-                person_names = sorted({
-                    name for name in (getattr(f, "person_name", None) for f in faces) if name is not None
-                })
+                person_names = sorted(
+                    {
+                        name
+                        for name in (getattr(f, "person_name", None) for f in faces)
+                        if name is not None
+                    }
+                )
 
         self._inspector.set_available_persons(person_names)
         self._inspector.load_image(self._current_inspector_path, faces)
 
     def _on_show_unnamed_toggled(self, state: int) -> None:
         """Handle show unnamed clusters toggle."""
-        self.show_unnamed_changed.emit(state == Qt.CheckState.Checked)
+        self.show_unnamed_changed.emit(state == Qt.CheckState.Checked.value)
 
     def _calc_grid_cols(self) -> int:
         """Calculate how many cards fit in the current viewport width."""
         if not hasattr(self, "_stacks_scroll_area"):
             return 4
         viewport_w = self._stacks_scroll_area.viewport().width()
-        return max(1, (viewport_w + self._CARD_SPACING) // (self._CARD_WIDTH + self._CARD_SPACING))
+        return max(
+            1,
+            (viewport_w + self._CARD_SPACING)
+            // (self._CARD_WIDTH + self._CARD_SPACING),
+        )
 
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -452,7 +495,10 @@ class PeopleBrowser(QWidget):
             and self._current_stacks
         ):
             new_cols = self._calc_grid_cols()
-            if hasattr(self, "_current_grid_cols") and new_cols != self._current_grid_cols:
+            if (
+                hasattr(self, "_current_grid_cols")
+                and new_cols != self._current_grid_cols
+            ):
                 self.load_stacks(self._current_stacks, self._current_cover_lookups)
 
     def set_threshold(self, threshold: int) -> None:

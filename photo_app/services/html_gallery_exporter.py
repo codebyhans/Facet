@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from photo_app.domain.repositories import ImageRepository
+    from photo_app.domain.models import Image
+    from photo_app.services.album_service import AlbumService
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +19,13 @@ logger = logging.getLogger(__name__)
 class HtmlGalleryExporter:
     """Generate self-contained HTML5 photo galleries."""
 
-    def __init__(self, image_repository: ImageRepository) -> None:
+    def __init__(self, album_service: AlbumService) -> None:
         """Initialize HTML gallery exporter.
 
         Args:
-            image_repository: Repository for loading image metadata
+            album_service: Service for loading album images
         """
-        self.image_repository = image_repository
+        self._album_service = album_service
 
     def generate_gallery(
         self,
@@ -50,7 +52,7 @@ class HtmlGalleryExporter:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Get album images
-        album_images = self.image_repository.list_album_images(album_id)
+        album_images = self._load_album_images(album_id)
         if not album_images:
             logger.warning("Album %s has no images", album_id)
             return {
@@ -97,15 +99,13 @@ class HtmlGalleryExporter:
         logger.info("Gallery generated: %s", html_file)
         return result
 
-    def _group_by_date(self, images: list) -> dict[str, list]:
+    def _group_by_date(self, images: list[Image]) -> dict[str, list[Image]]:
         """Group images by date."""
-        grouped = {}
+        grouped: dict[str, list[Image]] = {}
         for image in images:
-            try:
-                dt = image.datetime_original
-                date_key = dt[:10] if isinstance(dt, str) else "Unknown"
-            except (AttributeError, TypeError, ValueError):
-                date_key = "Unknown"
+            date_key = (
+                image.capture_date.isoformat() if image.capture_date else "Unknown"
+            )
 
             if date_key not in grouped:
                 grouped[date_key] = []
@@ -113,12 +113,12 @@ class HtmlGalleryExporter:
 
         return dict(sorted(grouped.items(), reverse=True))
 
-    def _group_by_person(self, images: list) -> dict[str, list]:
+    def _group_by_person(self, images: list[Image]) -> dict[str, list[Image]]:
         """Group images by tagged person."""
-        grouped = {"Untagged": []}
+        grouped: dict[str, list[Image]] = {"Untagged": []}
         for image in images:
             person_name = getattr(image, "person_name", None)
-            if person_name:
+            if isinstance(person_name, str) and person_name:
                 if person_name not in grouped:
                     grouped[person_name] = []
                 grouped[person_name].append(image)
@@ -128,7 +128,7 @@ class HtmlGalleryExporter:
         return dict(sorted(grouped.items()))
 
     def _generate_html(
-        self, title: str, grouped: dict[str, list], all_images: list
+        self, title: str, grouped: dict[str, list[Image]], all_images: list[Image]
     ) -> str:
         """Generate HTML5 gallery content.
 
@@ -141,15 +141,20 @@ class HtmlGalleryExporter:
             HTML content as string
         """
         # Build image data for JavaScript
-        image_data = [
-            {
-                "src": f"images/{Path(image.file_path).name}",
-                "alt": Path(image.file_path).stem,
-                "rating": getattr(image, "rating", 0),
-                "date": getattr(image, "datetime_original", ""),
-            }
-            for image in all_images
-        ]
+        image_data: list[dict[str, object]] = []
+        for image in all_images:
+            capture_date = image.capture_date
+            date_value = (
+                capture_date.isoformat() if isinstance(capture_date, date) else ""
+            )
+            image_data.append(
+                {
+                    "src": f"images/{Path(image.file_path).name}",
+                    "alt": Path(image.file_path).stem,
+                    "rating": image.rating or 0,
+                    "date": date_value,
+                }
+            )
 
         image_json = json.dumps(image_data)
 
@@ -162,7 +167,7 @@ class HtmlGalleryExporter:
 
             for image in images:
                 img_name = Path(image.file_path).name
-                rating_stars = "★" * getattr(image, "rating", 0)
+                rating_stars = "★" * (image.rating or 0)
                 groups_html += f"""
                 <div class="gallery-item">
                     <img src="images/{img_name}" alt="{Path(image.file_path).stem}"
@@ -392,3 +397,22 @@ class HtmlGalleryExporter:
 </body>
 </html>
 """
+
+    def _load_album_images(self, album_id: int) -> list[Image]:
+        """Load all images for an album by paging through results."""
+        offset = 0
+        limit = 500
+        images: list[Image] = []
+        while True:
+            page = self._album_service.list_album_images(
+                album_id,
+                offset=offset,
+                limit=limit,
+            )
+            if not page.items:
+                break
+            images.extend(page.items)
+            if len(page.items) < limit:
+                break
+            offset += limit
+        return images

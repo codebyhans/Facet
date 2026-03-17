@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
@@ -10,15 +9,21 @@ from PySide6.QtCore import QObject, Signal
 from photo_app.app.models.album_tree_model import AlbumTreeNode
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
+    from photo_app.domain.models import Album, Person
+    from photo_app.domain.repositories import ImageRepository
+    from photo_app.domain.value_objects import AlbumQuery
+    from photo_app.services.album_service import AlbumPage, AlbumService
+    from photo_app.services.face_review_service import (
+        FaceReviewItem,
+        FaceReviewService,
+        PersonStackSummary,
+    )
 
-@dataclass(frozen=True)
-class FilterPerson:
-    """Person option exposed to filter editor."""
 
-    person_id: int
-    name: str
+T = TypeVar("T")
 
 
 class AlbumViewModel(QObject):
@@ -29,8 +34,8 @@ class AlbumViewModel(QObject):
 
     def __init__(
         self,
-        album_service: object,
-        face_review_service: object,
+        album_service: AlbumService,
+        face_review_service: FaceReviewService,
         settings_path: Path,
     ) -> None:
         super().__init__()
@@ -40,10 +45,9 @@ class AlbumViewModel(QObject):
         self._state = self._load_state()
 
         # Store reference to image repository for flag updates
-        if hasattr(album_service, "_image_repository"):
-            self._image_repository = getattr(album_service, "_image_repository", None)
-        else:
-            self._image_repository = None
+        self._image_repository: ImageRepository | None = (
+            album_service.get_image_repository()
+        )
 
     def load_album_tree(self) -> list[AlbumTreeNode]:
         """Load tree from local UI state and merge persisted virtual albums."""
@@ -51,7 +55,9 @@ class AlbumViewModel(QObject):
         known_by_id = {album.id: album for album in albums if album.id is not None}
         nodes = self._deserialize_nodes(self._state.get("album_tree", []), known_by_id)
 
-        seen_album_ids = {node.album_id for node in self._flatten(nodes) if node.album_id}
+        seen_album_ids = {
+            node.album_id for node in self._flatten(nodes) if node.album_id
+        }
         for album_id, album in known_by_id.items():
             if album_id in seen_album_ids:
                 continue
@@ -119,7 +125,9 @@ class AlbumViewModel(QObject):
         """Update query for one virtual album."""
         if node.kind != "virtual" or node.album_id is None:
             return query_definition
-        updated = self._album_service.update_album_query(node.album_id, query_definition)
+        updated = self._album_service.update_album_query(
+            node.album_id, query_definition
+        )
         if updated is None:
             msg = "Could not update album query"
             raise RuntimeError(msg)
@@ -133,36 +141,48 @@ class AlbumViewModel(QObject):
                 msg = "Could not delete album"
                 raise RuntimeError(msg)
 
-    def resolve_album_images(self, album_id: int, *, offset: int, limit: int, query_definition: dict[str, object] | None = None) -> object:
+    def resolve_album_images(
+        self,
+        album_id: int,
+        *,
+        offset: int,
+        limit: int,
+        query_definition: dict[str, object] | None = None,
+    ) -> AlbumPage:
         """Fetch one page of images through AlbumService."""
-        return self._album_service.list_album_images(album_id, offset=offset, limit=limit, query_definition=query_definition)
+        return self._album_service.list_album_images(
+            album_id, offset=offset, limit=limit, query_definition=query_definition
+        )
 
-    def resolve_library_images(self, *, offset: int, limit: int, query_definition: dict[str, object] | None = None) -> object:
+    def resolve_library_images(
+        self,
+        *,
+        offset: int,
+        limit: int,
+        query_definition: dict[str, object] | None = None,
+    ) -> AlbumPage:
         """Fetch one page of all-library images."""
-        return self._album_service.list_library_images(offset=offset, limit=limit, query_definition=query_definition)
+        return self._album_service.list_library_images(
+            offset=offset, limit=limit, query_definition=query_definition
+        )
 
-    def list_filter_people(self) -> list[FilterPerson]:
+    def list_filter_people(self) -> list[Person]:
         """Return named person options for the filter editor."""
-        stacks = self._safe_call(self._face_review_service.person_stacks, default=[])
-        people: list[FilterPerson] = []
-        for stack in stacks:
-            # Only include clusters that have been given a name
-            if not stack.person_name or not stack.person_name.strip():
-                continue
-            people.append(
-                FilterPerson(
-                    person_id=int(stack.person_id),
-                    name=stack.person_name.strip(),
-                )
-            )
-        return people
+        people = self._safe_call(
+            self._face_review_service.get_available_people, default=[]
+        )
+        return [
+            person
+            for person in people
+            if person.id is not None and person.name is not None and person.name.strip()
+        ]
 
-    def list_albums(self) -> list[object]:
+    def list_albums(self) -> list[Album]:
         """Return all albums for UI operations."""
         return self._safe_call(self._album_service.list_albums, default=[])
 
     @property
-    def image_repository(self) -> object | None:
+    def image_repository(self) -> ImageRepository | None:
         """Return the image repository for flag operations."""
         return self._image_repository
 
@@ -171,7 +191,7 @@ class AlbumViewModel(QObject):
         years = self._safe_call(self._album_service.list_years, default=[])
         return [int(value) for value in years]
 
-    def list_person_stacks(self) -> list[object]:
+    def list_person_stacks(self) -> list[PersonStackSummary]:
         """Return person stack summaries for naming workflows."""
         return self._safe_call(
             self._face_review_service.person_stacks,
@@ -182,7 +202,7 @@ class AlbumViewModel(QObject):
         """Rename one person stack."""
         self._face_review_service.rename_person_stack(person_id, name)
 
-    def faces_for_image_path(self, file_path: str) -> list[object]:
+    def faces_for_image_path(self, file_path: str) -> list[FaceReviewItem]:
         """Return detected faces for one image path."""
         return self._safe_call(
             lambda: self._face_review_service.faces_for_image_path(file_path),
@@ -199,9 +219,10 @@ class AlbumViewModel(QObject):
 
     def get_serialized_tree(self) -> list[dict[str, object]] | None:
         """Return the currently serialized album_tree from in-memory state."""
-        return self._state.get("album_tree")
+        value = self._state.get("album_tree")
+        return value if isinstance(value, list) else None
 
-    def get_image_repository(self) -> object:
+    def get_image_repository(self) -> ImageRepository | None:
         """Get the image repository for external access."""
         return self._image_repository
 
@@ -209,9 +230,9 @@ class AlbumViewModel(QObject):
         """Hook for tree move operation kept in UI state layer."""
         return True
 
-    def _safe_call(self, fn: object, *, default: list[object]) -> list[object]:
+    def _safe_call(self, fn: Callable[[], list[T]], *, default: list[T]) -> list[T]:
         try:
-            return fn()  # type: ignore[operator]
+            return fn()
         except Exception as exc:  # noqa: BLE001
             self.error.emit(str(exc))
             return default
@@ -220,8 +241,9 @@ class AlbumViewModel(QObject):
         if not self._settings_path.exists():
             return {}
         try:
-            return json.loads(self._settings_path.read_text(encoding="utf-8"))
-        except (ValueError, OSError):
+            data = json.loads(self._settings_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except ValueError, OSError:
             return {}
 
     def _persist_tree(self, root_nodes: list[AlbumTreeNode]) -> None:
@@ -248,7 +270,7 @@ class AlbumViewModel(QObject):
     def _deserialize_nodes(
         self,
         payload: object,
-        albums_by_id: dict[int, object],
+        albums_by_id: dict[int, Album],
     ) -> list[AlbumTreeNode]:
         if not isinstance(payload, list):
             return []
@@ -259,7 +281,11 @@ class AlbumViewModel(QObject):
             node_id = raw.get("node_id")
             name = raw.get("name")
             kind = raw.get("kind")
-            if not isinstance(node_id, str) or not isinstance(name, str) or not isinstance(kind, str):
+            if (
+                not isinstance(node_id, str)
+                or not isinstance(name, str)
+                or not isinstance(kind, str)
+            ):
                 continue
             album_id = raw.get("album_id")
             if kind == "virtual":
@@ -299,7 +325,7 @@ class AlbumViewModel(QObject):
             stack.extend(node.children)
         return output
 
-    def _album_query_to_dict(self, query: object) -> dict[str, object]:
+    def _album_query_to_dict(self, query: AlbumQuery) -> dict[str, object]:
         """Convert an AlbumQuery to a plain dict, preserving all filter fields."""
 
         def _get(attr: str, default: object = None) -> object:
@@ -318,14 +344,39 @@ class AlbumViewModel(QObject):
         if not isinstance(flags, (list, tuple)):
             flags = []
 
+        person_ids_raw = _get("person_ids", ())
+        person_ids = (
+            [int(v) for v in person_ids_raw if isinstance(v, int)]
+            if isinstance(person_ids_raw, (list, tuple))
+            else []
+        )
+        cluster_ids_raw = _get("cluster_ids", ())
+        cluster_ids = (
+            [int(v) for v in cluster_ids_raw if isinstance(v, int)]
+            if isinstance(cluster_ids_raw, (list, tuple))
+            else []
+        )
+        tag_names_raw = _get("tag_names", ())
+        tag_names = (
+            [str(v) for v in tag_names_raw if isinstance(v, str)]
+            if isinstance(tag_names_raw, (list, tuple))
+            else []
+        )
+        camera_models_raw = _get("camera_models", ())
+        camera_models = (
+            [str(v) for v in camera_models_raw if isinstance(v, str)]
+            if isinstance(camera_models_raw, (list, tuple))
+            else []
+        )
+
         return {
-            "person_ids": list(_get("person_ids") or []),
-            "cluster_ids": list(_get("cluster_ids") or []),
-            "tag_names": list(_get("tag_names") or []),
+            "person_ids": person_ids,
+            "cluster_ids": cluster_ids,
+            "tag_names": tag_names,
             "flags": list(flags),
             "rating_min": _get("rating_min"),
             "quality_min": _get("quality_min"),
-            "camera_models": list(_get("camera_models") or []),
+            "camera_models": camera_models,
             "date_from": date_from,
             "date_to": date_to,
             "location_name": _get("location_name"),

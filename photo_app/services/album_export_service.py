@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from photo_app.domain.repositories import ImageRepository
+    from photo_app.domain.models import Image
+    from photo_app.services.album_service import AlbumService
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +17,13 @@ logger = logging.getLogger(__name__)
 class AlbumExportService:
     """Export albums to filesystem with optional EXIF preservation."""
 
-    def __init__(self, image_repository: ImageRepository) -> None:
+    def __init__(self, album_service: AlbumService) -> None:
         """Initialize export service.
 
         Args:
-            image_repository: Repository for loading image metadata
+            album_service: Service for loading album images
         """
-        self.image_repository = image_repository
+        self._album_service = album_service
 
     def export_to_folder(
         self,
@@ -59,8 +59,8 @@ class AlbumExportService:
             destination.mkdir(parents=True, exist_ok=True)
             logger.info("Created export destination: %s", destination)
 
-        # Get album images
-        album_images = self.image_repository.list_album_images(album_id)
+        # Get album images (page through results)
+        album_images = self._load_album_images(album_id)
         if not album_images:
             logger.warning("Album %s has no images", album_id)
             return {
@@ -120,10 +120,12 @@ class AlbumExportService:
             "destination": str(destination),
         }
 
-        logger.info("Album export complete: %s copied, %s skipped", len(copied_files), skipped)
+        logger.info(
+            "Album export complete: %s copied, %s skipped", len(copied_files), skipped
+        )
         return result
 
-    def _generate_filename(self, image: object, pattern: str) -> str:
+    def _generate_filename(self, image: Image, pattern: str) -> str:
         """Generate destination filename from pattern.
 
         Args:
@@ -137,7 +139,7 @@ class AlbumExportService:
         ext = src_path.suffix
 
         # Extract values for pattern
-        replacements = {
+        replacements: dict[str, str] = {
             "{name}": src_path.stem,
             "{date}": "2020-01-01",  # Default if no datetime
             "{rating}": "0",
@@ -145,22 +147,11 @@ class AlbumExportService:
         }
 
         # Add actual values if available
-        if hasattr(image, "datetime_original") and image.datetime_original:
-            try:
-                dt = image.datetime_original
-                if isinstance(dt, str):
-                    dt = datetime.fromisoformat(dt)
-                replacements["{date}"] = dt.strftime("%Y-%m-%d")
-            except (ValueError, TypeError):
-                logger.debug("Failed to parse datetime_original for %s", src_path)
+        if image.capture_date:
+            replacements["{date}"] = image.capture_date.isoformat()
 
-        if hasattr(image, "rating") and image.rating:
+        if image.rating is not None:
             replacements["{rating}"] = str(image.rating)
-
-        if hasattr(image, "tags") and image.tags:
-            tag_list = image.tags if isinstance(image.tags, list) else [image.tags]
-            if tag_list:
-                replacements["{tags}"] = tag_list[0]
 
         # Apply replacements
         filename = pattern
@@ -174,7 +165,7 @@ class AlbumExportService:
 
         return filename + ext
 
-    def _get_subdirectory(self, image: object) -> str:
+    def _get_subdirectory(self, image: Image) -> str:
         """Get subdirectory path for image based on date/person.
 
         Args:
@@ -184,16 +175,29 @@ class AlbumExportService:
             Relative directory path
         """
         # Default: by year/month
-        try:
-            if hasattr(image, "datetime_original") and image.datetime_original:
-                dt = image.datetime_original
-                if isinstance(dt, str):
-                    dt = datetime.fromisoformat(dt)
-                return f"{dt.year}/{dt.month:02d}"
-        except (ValueError, TypeError):
-            logger.debug("Failed to parse datetime_original for subdir")
+        if image.capture_date:
+            return f"{image.capture_date.year}/{image.capture_date.month:02d}"
 
         return "uncategorized"
+
+    def _load_album_images(self, album_id: int) -> list[Image]:
+        """Load all images for an album by paging through results."""
+        offset = 0
+        limit = 500
+        images: list[Image] = []
+        while True:
+            page = self._album_service.list_album_images(
+                album_id,
+                offset=offset,
+                limit=limit,
+            )
+            if not page.items:
+                break
+            images.extend(page.items)
+            if len(page.items) < limit:
+                break
+            offset += limit
+        return images
 
     def _get_unique_path(self, path: Path) -> Path:
         """Get unique file path by appending number if needed.

@@ -9,8 +9,7 @@ from photo_app.app.models.photo_grid_model import PhotoGridModel
 from photo_app.app.widgets.photo_grid_delegate import PhotoGridDelegate
 
 if TYPE_CHECKING:
-    from PySide6.QtCore import QResizeEvent
-    from PySide6.QtGui import QKeyEvent, QMouseEvent, QShowEvent
+    from PySide6.QtGui import QKeyEvent, QMouseEvent, QResizeEvent, QShowEvent
 
 
 class PhotoGridWidget(QListView):
@@ -123,7 +122,11 @@ class PhotoGridWidget(QListView):
             top_index = self.indexAt(viewport_rect.topLeft())
             bottom_index = self.indexAt(viewport_rect.bottomLeft())
             first = max(0, top_index.row()) if top_index.isValid() else 0
-            last = bottom_index.row() if bottom_index.isValid() else max(first, model.rowCount() - 1)
+            last = (
+                bottom_index.row()
+                if bottom_index.isValid()
+                else max(first, model.rowCount() - 1)
+            )
 
         # Always request tiles for the range, even if empty
         model.notify_visible_rows(first, max(first, last))
@@ -163,7 +166,7 @@ class PhotoGridWidget(QListView):
             return
 
         # Handle flagging shortcuts
-        key = event.key()
+        key = Qt.Key(event.key())
         modifiers = event.modifiers()
 
         if modifiers == Qt.KeyboardModifier.NoModifier:

@@ -134,6 +134,9 @@ class PersonRepository(Protocol):
     def get_by_name(self, name: str) -> Person | None:
         """Fetch person by display name (case-insensitive)."""
 
+    def list_all(self) -> list[Person]:
+        """Fetch all persons."""
+
     def update_name(self, person_id: int, name: str) -> None:
         """Update person display name."""
 
@@ -192,7 +195,9 @@ class IdentityClusterRepository(Protocol):
     def get_membership(self, face_id: int) -> FaceClusterMembership | None:
         """Fetch membership for one face."""
 
-    def reassign_cluster_memberships(self, source_cluster_id: int, target_cluster_id: int) -> None:
+    def reassign_cluster_memberships(
+        self, source_cluster_id: int, target_cluster_id: int
+    ) -> None:
         """Move all memberships from source cluster to target cluster."""
 
     def delete_cluster(self, cluster_id: int) -> None:

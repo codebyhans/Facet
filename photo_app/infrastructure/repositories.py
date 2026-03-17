@@ -34,7 +34,6 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 
-
 def _to_image(entity: ImageModel) -> Image:
     return Image(
         id=entity.id,
@@ -103,7 +102,9 @@ def _to_album(entity: AlbumModel) -> Album:
     flags: tuple[str, ...] = ()
     if isinstance(raw_flags, list):
         valid_flags = {"keep", "discard", "undecided"}
-        flags = tuple(str(f) for f in raw_flags if isinstance(f, str) and f in valid_flags)
+        flags = tuple(
+            str(f) for f in raw_flags if isinstance(f, str) and f in valid_flags
+        )
 
     query = AlbumQuery(
         person_ids=tuple(int(i) for i in entity.query_definition.get("person_ids", [])),
@@ -133,7 +134,7 @@ def _to_identity_cluster(entity: IdentityClusterModel) -> IdentityCluster:
     return IdentityCluster(
         id=entity.id,
         canonical_embedding=entity.canonical_embedding,
-        face_count=entity.face_count,
+        face_count=entity.face_count if entity.face_count is not None else 0,
         variance=entity.variance,
         flagged_for_review=entity.flagged_for_review,
         created_at=entity.created_at,
@@ -228,9 +229,8 @@ class SqlAlchemyImageRepository:
             stmt = (
                 select(ImageModel)
                 .order_by(
-                    nulls_last(ImageModel.capture_date.asc()),
-                    ImageModel.id.asc()
-                    )
+                    nulls_last(ImageModel.capture_date.asc()), ImageModel.id.asc()
+                )
                 .offset(offset)
                 .limit(limit)
             )
@@ -362,7 +362,6 @@ class SqlAlchemyImageRepository:
                 if image is not None:
                     ordered.append(image)
             return ordered
-
 
     def update_flag(self, image_id: int, flag: str | None) -> None:
         with Session(self._engine) as session:
@@ -582,7 +581,9 @@ class SqlAlchemyPersonRepository:
 
     def find_by_cluster_id(self, cluster_id: int) -> Person | None:
         with Session(self._engine) as session:
-            stmt = select(PersonModel).where(PersonModel.identity_cluster_id == cluster_id)
+            stmt = select(PersonModel).where(
+                PersonModel.identity_cluster_id == cluster_id
+            )
             row = session.scalar(stmt)
             if row is None:
                 return None
@@ -764,7 +765,9 @@ class SqlAlchemyIdentityClusterRepository:
 
     def get_cluster(self, cluster_id: int) -> IdentityCluster | None:
         with Session(self._engine) as session:
-            stmt = select(IdentityClusterModel).where(IdentityClusterModel.id == cluster_id)
+            stmt = select(IdentityClusterModel).where(
+                IdentityClusterModel.id == cluster_id
+            )
             row = session.scalar(stmt)
             return None if row is None else _to_identity_cluster(row)
 
@@ -779,7 +782,9 @@ class SqlAlchemyIdentityClusterRepository:
         updated_at: datetime,
     ) -> None:
         with Session(self._engine) as session:
-            stmt = select(IdentityClusterModel).where(IdentityClusterModel.id == cluster_id)
+            stmt = select(IdentityClusterModel).where(
+                IdentityClusterModel.id == cluster_id
+            )
             row = session.scalar(stmt)
             if row is None:
                 return
@@ -852,16 +857,18 @@ class SqlAlchemyIdentityClusterRepository:
             temporal_stmt = select(ClusterEmbeddingModel).where(
                 ClusterEmbeddingModel.cluster_id == cluster_id
             )
-            for row in session.scalars(temporal_stmt):
-                session.delete(row)
+            for temporal in session.scalars(temporal_stmt):
+                session.delete(temporal)
 
             membership_stmt = select(FaceClusterMembershipModel).where(
                 FaceClusterMembershipModel.cluster_id == cluster_id
             )
-            for row in session.scalars(membership_stmt):
-                session.delete(row)
+            for membership in session.scalars(membership_stmt):
+                session.delete(membership)
 
-            cluster_stmt = select(IdentityClusterModel).where(IdentityClusterModel.id == cluster_id)
+            cluster_stmt = select(IdentityClusterModel).where(
+                IdentityClusterModel.id == cluster_id
+            )
             cluster = session.scalar(cluster_stmt)
             if cluster is not None:
                 session.delete(cluster)

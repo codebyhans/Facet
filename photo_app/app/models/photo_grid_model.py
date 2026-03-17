@@ -105,7 +105,9 @@ class PhotoGridModel(QAbstractListModel):
         self._has_more = False
         self.endResetModel()
 
-    def append_page(self, items: list[PhotoGridItem], *, has_more: bool, append: bool = True) -> None:
+    def append_page(
+        self, items: list[PhotoGridItem], *, has_more: bool, append: bool = True
+    ) -> None:
         """Append one paginated batch."""
         # Clear first when starting a fresh load (even if the result is empty)
         if not append:
@@ -196,4 +198,6 @@ class PhotoGridModel(QAbstractListModel):
         self._items[row] = replace(old, flag=flag)
         idx = self.index(row, 0)
         self.dataChanged.emit(idx, idx, [self.FlagRole])
+
+
 PREFETCH_THRESHOLD = 30

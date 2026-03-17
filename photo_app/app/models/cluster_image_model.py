@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
+
 class ClusterImageModel(QAbstractListModel):
     """Model for cluster image gallery in person detail view."""
 
@@ -26,7 +27,7 @@ class ClusterImageModel(QAbstractListModel):
         image_paths: list[str],
         image_ids: list[int] | None = None,
         tile_store: ThumbnailTileStore | None = None,
-        parent: QObject | None = None
+        parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._image_paths = image_paths
@@ -49,7 +50,11 @@ class ClusterImageModel(QAbstractListModel):
         index: QModelIndex | QPersistentModelIndex,
         role: int = Qt.ItemDataRole.DisplayRole,
     ) -> object | None:
-        if not index.isValid() or index.row() < 0 or index.row() >= len(self._image_paths):
+        if (
+            not index.isValid()
+            or index.row() < 0
+            or index.row() >= len(self._image_paths)
+        ):
             return None
 
         if role == Qt.ItemDataRole.DisplayRole:
@@ -77,7 +82,7 @@ class ClusterImageModel(QAbstractListModel):
         self._image_paths = image_paths
         self._image_ids = image_ids
         self._pixmap_cache.clear()  # Clear cache when images change
-        self._prefetch_tiles()   # populate cache BEFORE endResetModel triggers paint
+        self._prefetch_tiles()  # populate cache BEFORE endResetModel triggers paint
         self.endResetModel()
 
     def _prefetch_tiles(self) -> None:
@@ -135,7 +140,7 @@ class ClusterImageModel(QAbstractListModel):
                             tile_lookup.x,
                             tile_lookup.y,
                             tile_lookup.width,
-                            tile_lookup.height
+                            tile_lookup.height,
                         )
                         # Cache the result
                         self._pixmap_cache[row] = cropped
@@ -150,9 +155,10 @@ class ClusterImageModel(QAbstractListModel):
             pixmap = QPixmap(image_path)
             if not pixmap.isNull():
                 scaled = pixmap.scaled(
-                    80, 80,
+                    80,
+                    80,
                     Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
+                    Qt.TransformationMode.SmoothTransformation,
                 )
                 # Cache the result
                 self._pixmap_cache[row] = scaled

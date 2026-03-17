@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class AlbumWorkerSignals(QObject):
@@ -17,7 +20,9 @@ class AlbumWorkerSignals(QObject):
 class AlbumQueryWorker(QRunnable):
     """Executes album query resolution outside the UI thread."""
 
-    def __init__(self, fn: Any, *args: object, **kwargs: object) -> None:  # noqa: ANN401
+    def __init__(
+        self, fn: Callable[..., object], *args: object, **kwargs: object
+    ) -> None:
         super().__init__()
         self._fn = fn
         self._args = args

@@ -41,18 +41,18 @@ class QualityScorer:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
             # Score 1: Sharpness (Laplacian variance)
-            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
             sharpness_score = min(1.0, laplacian_var / 100.0)  # Normalize
 
             # Score 2: Brightness/Exposure
-            mean_brightness = np.mean(gray)
+            mean_brightness = float(np.mean(gray))
             # Optimal brightness around 127 (50% of 255)
             brightness_score = 1.0 - abs(mean_brightness - 127.0) / 127.0
 
             # Score 3: Saturation (color balance)
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
             saturation = hsv[:, :, 1]
-            mean_saturation = np.mean(saturation) / 255.0
+            mean_saturation = float(np.mean(saturation)) / 255.0
             # Prefer well-saturated images (0.3-0.8 range)
             saturation_score = min(1.0, max(0.0, (mean_saturation - 0.2) / 0.6))
 
@@ -60,7 +60,7 @@ class QualityScorer:
             hist = np.histogram(gray, bins=256, range=(0, 256))[0]
             # Entropy as proxy for contrast
             hist_normalized = hist / hist.sum()
-            entropy = -np.sum(hist_normalized * np.log2(hist_normalized + 1e-10))
+            entropy = float(-np.sum(hist_normalized * np.log2(hist_normalized + 1e-10)))
             contrast_score = min(1.0, entropy / 8.0)  # Max entropy ≈ 8 for 256 bins
 
             # Combine scores with weights

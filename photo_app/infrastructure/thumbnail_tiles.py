@@ -76,12 +76,12 @@ class ThumbnailTileBuilder:
             next_tile_index = self._next_tile_index(session)
 
         total = len(tile_rows)
-        grid_width  = max(1, self._tile_size[0] // self._thumbnail_size[0])
+        grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
         tile_canvas = self._new_tile_canvas()
         current_tile_path = self._tile_path(next_tile_index)
         pending_mappings: list[ThumbnailTileModel] = []
         tile_entries = 0
-        tiles_built  = 0
+        tiles_built = 0
         images_built = 0
 
         for image_id, file_path in tile_rows:
@@ -94,8 +94,9 @@ class ThumbnailTileBuilder:
             position = tile_entries % self._images_per_tile
             col = position % grid_width
             row = position // grid_width
-            tile_canvas.paste(thumb, (col * self._thumbnail_size[0],
-                                       row * self._thumbnail_size[1]))
+            tile_canvas.paste(
+                thumb, (col * self._thumbnail_size[0], row * self._thumbnail_size[1])
+            )
 
             pending_mappings.append(
                 ThumbnailTileModel(
@@ -147,7 +148,9 @@ class ThumbnailTileBuilder:
                 for m in mappings
             ]
             stmt = sqlite_insert(ThumbnailTileModel).values(rows)
-            stmt = stmt.on_conflict_do_nothing(index_elements=["tile_index", "position_in_tile"])
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["tile_index", "position_in_tile"]
+            )
             session.execute(stmt)
             session.commit()
 
@@ -204,7 +207,7 @@ class ThumbnailTileBuilder:
                 y = (self._thumbnail_size[1] - oriented.height) // 2
                 thumb.paste(oriented, (x, y))
                 return thumb
-        except (OSError, UnidentifiedImageError):
+        except OSError, UnidentifiedImageError:
             return None
 
 
@@ -249,7 +252,9 @@ class ThumbnailTileStore:
     def get_image_tile(self, image_id: int) -> ImageTileLookup | None:
         """Return tile lookup details for one image id."""
         with Session(self._engine) as session:
-            stmt = select(ThumbnailTileModel).where(ThumbnailTileModel.image_id == image_id)
+            stmt = select(ThumbnailTileModel).where(
+                ThumbnailTileModel.image_id == image_id
+            )
             row = session.scalar(stmt)
             if row is None:
                 return None

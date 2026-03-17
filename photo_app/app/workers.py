@@ -44,6 +44,7 @@ class Worker(QRunnable):
     @Slot()
     def run(self) -> None:
         """Run callback outside UI thread."""
+
         def safe_progress(value: int) -> None:
             self._safe_emit(self.signals.progress, value)
 

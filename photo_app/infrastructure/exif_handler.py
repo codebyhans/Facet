@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-import piexif
+import piexif  # type: ignore[import-untyped]
 from PIL import Image as PILImage
 
 logger = logging.getLogger(__name__)
@@ -87,11 +87,13 @@ class ExifMetadataHandler:
                 exif_ifd = exif_dict["Exif"]
                 if ExifMetadataHandler._DATETIME_ORIGINAL_TAG in exif_ifd:
                     try:
-                        dt_str = exif_ifd[ExifMetadataHandler._DATETIME_ORIGINAL_TAG].decode("utf-8")
+                        dt_str = exif_ifd[
+                            ExifMetadataHandler._DATETIME_ORIGINAL_TAG
+                        ].decode("utf-8")
                         result["datetime_original"] = datetime.strptime(
                             dt_str,
                             "%Y:%m:%d %H:%M:%S",
-                        ).replace(tzinfo=datetime.UTC)
+                        ).replace(tzinfo=UTC)
                     except (ValueError, AttributeError) as e:
                         logger.debug("Failed to parse DateTimeOriginal: %s", e)
 
@@ -117,7 +119,9 @@ class ExifMetadataHandler:
                     # GPS Latitude
                     if ExifMetadataHandler._GPS_LAT_TAG in gps_ifd:
                         lat_ref = (
-                            gps_ifd.get(ExifMetadataHandler._GPS_LAT_REF_TAG, b"N").decode("utf-8")
+                            gps_ifd.get(
+                                ExifMetadataHandler._GPS_LAT_REF_TAG, b"N"
+                            ).decode("utf-8")
                             if ExifMetadataHandler._GPS_LAT_REF_TAG in gps_ifd
                             else "N"
                         )
@@ -132,7 +136,9 @@ class ExifMetadataHandler:
                     # GPS Longitude
                     if ExifMetadataHandler._GPS_LON_TAG in gps_ifd:
                         lon_ref = (
-                            gps_ifd.get(ExifMetadataHandler._GPS_LON_REF_TAG, b"E").decode("utf-8")
+                            gps_ifd.get(
+                                ExifMetadataHandler._GPS_LON_REF_TAG, b"E"
+                            ).decode("utf-8")
                             if ExifMetadataHandler._GPS_LON_REF_TAG in gps_ifd
                             else "E"
                         )
@@ -205,13 +211,21 @@ class ExifMetadataHandler:
         # Rating (Windows XMP standard: 18246 or custom)
         if "rating" in metadata and metadata["rating"] is not None:
             rating = metadata["rating"]
-            if ExifMetadataHandler._MIN_RATING <= rating <= ExifMetadataHandler._MAX_RATING:
-                exif_dict["0th"][ExifMetadataHandler._RATING_TAG] = str(rating).encode("utf-8")
+            if (
+                ExifMetadataHandler._MIN_RATING
+                <= rating
+                <= ExifMetadataHandler._MAX_RATING
+            ):
+                exif_dict["0th"][ExifMetadataHandler._RATING_TAG] = str(rating).encode(
+                    "utf-8"
+                )
 
         # User comment (37510 in Exif)
         if "user_comment" in metadata and metadata["user_comment"] is not None:
             comment = metadata["user_comment"]
-            exif_dict["Exif"][ExifMetadataHandler._USER_COMMENT_TAG] = comment.encode("utf-8")
+            exif_dict["Exif"][ExifMetadataHandler._USER_COMMENT_TAG] = comment.encode(
+                "utf-8"
+            )
 
         # Keywords: store in UserComment for now (XMP would be better)
         # XMP keyword support not implemented yet.
@@ -231,7 +245,9 @@ class ExifMetadataHandler:
 
         xmp_content = '<?xml version="1.0" encoding="UTF-8"?>\n'
         xmp_content += '<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
-        xmp_content += '  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+        xmp_content += (
+            '  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+        )
         xmp_content += '    <rdf:Description rdf:about="">\n'
 
         if "rating" in metadata and metadata["rating"] is not None:

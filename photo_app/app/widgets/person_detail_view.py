@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     )
 
 LOGGER = logging.getLogger(__name__)
+
 
 class PersonDetailView(QWidget):
     """Main view for reviewing and naming face clusters."""
@@ -75,7 +77,9 @@ class PersonDetailView(QWidget):
 
         # Cover image
         self._cover_label = QLabel()
-        self._cover_label.setStyleSheet("border: 1px solid #444; background-color: #2a2a2a;")
+        self._cover_label.setStyleSheet(
+            "border: 1px solid #444; background-color: #2a2a2a;"
+        )
         self._cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover_label.setFixedHeight(200)
         right_layout.addWidget(self._cover_label)
@@ -103,7 +107,9 @@ class PersonDetailView(QWidget):
 
         # Gallery of cluster images
         gallery_label = QLabel("All images in cluster:")
-        gallery_label.setStyleSheet("font-weight: bold; font-size: 11px; padding: 8px 0px 4px 0px;")
+        gallery_label.setStyleSheet(
+            "font-weight: bold; font-size: 11px; padding: 8px 0px 4px 0px;"
+        )
         right_layout.addWidget(gallery_label)
 
         self._gallery_scroll = QScrollArea()
@@ -143,8 +149,7 @@ class PersonDetailView(QWidget):
                 pixmap = QPixmap(str(Path(stack.cover_image_path)))
                 if not pixmap.isNull():
                     scaled = pixmap.scaledToHeight(
-                        200,
-                        Qt.TransformationMode.SmoothTransformation
+                        200, Qt.TransformationMode.SmoothTransformation
                     )
                     self._cover_label.setPixmap(scaled)
             except Exception:
@@ -181,14 +186,15 @@ class PersonDetailView(QWidget):
         for idx, image_path in enumerate(stack.sample_image_paths):
             thumb_label = QLabel()
             thumb_label.setFixedSize(60, 60)
-            thumb_label.setStyleSheet("border: 1px solid #444; background-color: #2a2a2a;")
+            thumb_label.setStyleSheet(
+                "border: 1px solid #444; background-color: #2a2a2a;"
+            )
 
             try:
                 pixmap = QPixmap(str(Path(image_path)))
                 if not pixmap.isNull():
                     scaled = pixmap.scaledToHeight(
-                        60,
-                        Qt.TransformationMode.SmoothTransformation
+                        60, Qt.TransformationMode.SmoothTransformation
                     )
                     thumb_label.setPixmap(scaled)
             except Exception:
@@ -198,11 +204,15 @@ class PersonDetailView(QWidget):
 
         # Add stretch to bottom
         grid_layout.addItem(
-            QSpacerItem(0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding),
-            (len(stack.sample_image_paths) // cols) + 1, 0
+            QSpacerItem(
+                0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            ),
+            (len(stack.sample_image_paths) // cols) + 1,
+            0,
         )
 
         self._gallery_layout.addWidget(grid_widget)
+
     def _on_save_name(self) -> None:
         """Save the entered name for the current person."""
         if not self._current_stack:
@@ -218,21 +228,17 @@ class PersonDetailView(QWidget):
         # Update UI to reflect new name
         if self._face_review_service:
             try:
-                self._face_review_service.rename_person_stack(self._current_stack.person_id, name)
-                # Update local stack
-                self._current_stack = self._current_stack.__class__(
-                    person_id=self._current_stack.person_id,
-                    cluster_id=self._current_stack.cluster_id,
-                    person_name=name,
-                    face_count=self._current_stack.face_count,
-                    image_count=self._current_stack.image_count,
-                    cover_image_path=self._current_stack.cover_image_path,
-                    sample_image_paths=self._current_stack.sample_image_paths,
+                self._face_review_service.rename_person_stack(
+                    self._current_stack.person_id, name
                 )
+                # Update local stack
+                self._current_stack = replace(self._current_stack, person_name=name)
                 # Refresh the list to show updated name
                 # This would require reloading stacks from service
             except Exception:
-                LOGGER.exception("Failed to rename person stack %s", self._current_stack.person_id)
+                LOGGER.exception(
+                    "Failed to rename person stack %s", self._current_stack.person_id
+                )
 
     def _clear_detail_view(self) -> None:
         """Clear the detail view."""

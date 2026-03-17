@@ -20,9 +20,7 @@ depends_on = None
 def upgrade() -> None:
     """Add flag column to images table."""
     with op.batch_alter_table("images") as batch_op:
-        batch_op.add_column(
-            sa.Column("flag", sa.String(20), nullable=True)
-        )
+        batch_op.add_column(sa.Column("flag", sa.String(20), nullable=True))
 
     # Create index for flag queries
     op.create_index("ix_images_flag", "images", ["flag"])

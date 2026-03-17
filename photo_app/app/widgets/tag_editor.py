@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QCompleter,
     QLabel,
@@ -15,9 +14,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-if TYPE_CHECKING:
-    from PySide6.QtGui import QKeyEvent
 
 
 class TagEditorWidget(QWidget):
@@ -43,7 +39,7 @@ class TagEditorWidget(QWidget):
         # Input field with autocomplete
         self._input = QLineEdit()
         self._input.setPlaceholderText("Type tag and press Enter...")
-        self._input.keyPressEvent = self._on_input_key_press
+        self._input.installEventFilter(self)
 
         self._completer = QCompleter(self._all_tags)
         self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -80,12 +76,17 @@ class TagEditorWidget(QWidget):
             __import__("PySide6.QtCore").QStringListModel(self._all_tags)
         )
 
-    def _on_input_key_press(self, event: QKeyEvent) -> None:
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
         """Handle key press in tag input."""
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        if (
+            watched is self._input
+            and event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        ):
             self._add_tag()
-        else:
-            QLineEdit.keyPressEvent(self._input, event)
+            return True
+        return super().eventFilter(watched, event)
 
     def _add_tag(self) -> None:
         """Add tag from input field."""

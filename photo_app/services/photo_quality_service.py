@@ -50,7 +50,9 @@ class PhotoQualityService:
                     processed += 1
 
                     if processed % 100 == 0:
-                        logger.info("Computed quality scores for %s images...", processed)
+                        logger.info(
+                            "Computed quality scores for %s images...", processed
+                        )
 
                 except Exception:
                     logger.exception("Failed to score %s", image.file_path)

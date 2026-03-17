@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -59,7 +59,7 @@ class MetadataSyncService:
                 return
 
             # Prepare metadata dict for EXIF write
-            exif_metadata: dict = {}
+            exif_metadata: dict[str, object] = {}
 
             # Update and sync rating
             if rating is not None:
@@ -84,7 +84,7 @@ class MetadataSyncService:
                     session.delete(tag)
 
                 # Add new tags
-                now = datetime.now(tz=datetime.UTC)
+                now = datetime.now(tz=UTC)
                 for tag_name in tags:
                     tag = ImageTagModel(
                         image_id=image_id, tag_name=tag_name, created_at=now
@@ -102,7 +102,7 @@ class MetadataSyncService:
                     logger.exception("Failed to write EXIF for %s", image.file_path)
 
             # Update database
-            image.updated_at = datetime.now(tz=datetime.UTC)
+            image.updated_at = datetime.now(tz=UTC)
             session.commit()
             logger.info(
                 "Synced metadata for image %s: rating=%s, tags=%s, notes=%s",
@@ -133,7 +133,7 @@ class MetadataSyncService:
                 select(ImageModel).where(ImageModel.id.in_(image_ids))
             ).scalars()
 
-            now = datetime.now(tz=datetime.UTC)
+            now = datetime.now(tz=UTC)
             processed = 0
 
             for image in images:
@@ -176,7 +176,7 @@ class MetadataSyncService:
                 processed += 1
 
             # Write EXIF for all
-            exif_metadata = {}
+            exif_metadata: dict[str, object] = {}
             if rating is not None:
                 exif_metadata["rating"] = rating
             if add_tags:

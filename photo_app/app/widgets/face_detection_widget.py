@@ -19,18 +19,20 @@ class FaceDetectionWidget(QLabel):
 
     def __init__(self, parent: QLabel | None = None) -> None:
         super().__init__(parent)
-        self._original_pixmap = None  # Unscaled pixmap
-        self._display_pixmap = None   # Currently displayed (possibly scaled) pixmap
+        self._original_pixmap: QPixmap | None = None  # Unscaled pixmap
+        self._display_pixmap: QPixmap | None = (
+            None  # Currently displayed (possibly scaled) pixmap
+        )
         self._faces: list[FaceReviewItem] = []
         self._show_bboxes = False
         self._zoom_factor = 1.0  # Scale factor for bounding box coordinates
         self._bbox_colors = [
-            QColor(255, 0, 0),      # Red
-            QColor(0, 255, 0),      # Green
-            QColor(0, 0, 255),      # Blue
-            QColor(255, 255, 0),    # Yellow
-            QColor(255, 0, 255),    # Magenta
-            QColor(0, 255, 255),    # Cyan
+            QColor(255, 0, 0),  # Red
+            QColor(0, 255, 0),  # Green
+            QColor(0, 0, 255),  # Blue
+            QColor(255, 255, 0),  # Yellow
+            QColor(255, 0, 255),  # Magenta
+            QColor(0, 255, 255),  # Cyan
         ]
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setScaledContents(False)
@@ -130,7 +132,9 @@ class FaceDetectionWidget(QLabel):
 
             # Draw semi-transparent background
             painter.setOpacity(0.8)
-            painter.fillRect(label_rect_x, label_rect_y, label_rect_w, label_rect_h, color)
+            painter.fillRect(
+                label_rect_x, label_rect_y, label_rect_w, label_rect_h, color
+            )
             painter.setOpacity(1.0)
 
             # Draw text
@@ -138,7 +142,7 @@ class FaceDetectionWidget(QLabel):
             painter.drawText(
                 label_rect_x + padding,
                 label_rect_y + padding + metrics.ascent(),
-                label_text
+                label_text,
             )
 
     @override
@@ -152,8 +156,16 @@ class FaceDetectionWidget(QLabel):
 
         # Scale coordinates based on label size vs pixmap size
         label_rect = self.contentsRect()
-        scale_x = self._original_pixmap.width() / label_rect.width() if label_rect.width() > 0 else 1.0
-        scale_y = self._original_pixmap.height() / label_rect.height() if label_rect.height() > 0 else 1.0
+        scale_x = (
+            self._original_pixmap.width() / label_rect.width()
+            if label_rect.width() > 0
+            else 1.0
+        )
+        scale_y = (
+            self._original_pixmap.height() / label_rect.height()
+            if label_rect.height() > 0
+            else 1.0
+        )
 
         img_x = int(click_x * scale_x)
         img_y = int(click_y * scale_y)
@@ -161,8 +173,10 @@ class FaceDetectionWidget(QLabel):
         # Check if click is inside any face bbox (use original coordinates)
         for face in self._faces:
             bbox = face.bbox
-            if (bbox.x <= img_x <= bbox.x + bbox.w and
-                bbox.y <= img_y <= bbox.y + bbox.h):
+            if (
+                bbox.x <= img_x <= bbox.x + bbox.w
+                and bbox.y <= img_y <= bbox.y + bbox.h
+            ):
                 self.face_clicked.emit(face.face_id)
                 return
 

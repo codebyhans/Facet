@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
@@ -9,7 +9,10 @@ from PySide6.QtWidgets import QListWidget, QListWidgetItem
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from photo_app.app.view_models import ThumbnailItemViewModel
+
+class ThumbnailItemViewModel(Protocol):
+    label: str
+    thumbnail_path: str
 
 
 class GalleryView(QListWidget):

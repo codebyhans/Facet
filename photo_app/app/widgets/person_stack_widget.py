@@ -23,10 +23,13 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
+
 class PersonStackListItemWidget(QWidget):
     """Custom widget for a person stack list item."""
 
-    def __init__(self, stack: PersonStackSummary, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, stack: PersonStackSummary, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.stack = stack
         self._setup_ui()
@@ -46,12 +49,13 @@ class PersonStackListItemWidget(QWidget):
                 pixmap = QPixmap(str(Path(self.stack.cover_image_path)))
                 if not pixmap.isNull():
                     scaled = pixmap.scaledToHeight(
-                        80,
-                        Qt.TransformationMode.SmoothTransformation
+                        80, Qt.TransformationMode.SmoothTransformation
                     )
                     thumb_label.setPixmap(scaled)
             except Exception:
-                LOGGER.exception("Failed to load cover image for %s", self.stack.person_id)
+                LOGGER.exception(
+                    "Failed to load cover image for %s", self.stack.person_id
+                )
         layout.addWidget(thumb_label)
 
         info_layout = QVBoxLayout()
@@ -101,7 +105,9 @@ class PersonStackWidget(QListWidget):
 
         for stack in stacks:
             item = QListWidgetItem()
-            item.setSizeHint(PersonStackListItemWidget(stack).sizeHint() or item.sizeHint())
+            item.setSizeHint(
+                PersonStackListItemWidget(stack).sizeHint() or item.sizeHint()
+            )
             custom_widget = PersonStackListItemWidget(stack)
             self.addItem(item)
             self.setItemWidget(item, custom_widget)

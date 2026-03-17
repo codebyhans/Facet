@@ -43,7 +43,9 @@ class IdentityMaintenanceJobs:
 
     def run_all(self) -> IdentityMaintenanceResult:
         """Execute all maintenance tasks and return summary."""
-        recalculated = self.recalculate_cluster_centroids()  # includes temporal embeddings
+        recalculated = (
+            self.recalculate_cluster_centroids()
+        )  # includes temporal embeddings
         merged = self.detect_cluster_merges()
         flagged = self.monitor_cluster_variance()
         return IdentityMaintenanceResult(

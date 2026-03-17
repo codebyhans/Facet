@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import overload, override
 
-from PySide6.QtCore import QAbstractItemModel, QModelIndex, QObject, Qt
+from PySide6.QtCore import (
+    QAbstractItemModel,
+    QModelIndex,
+    QObject,
+    QPersistentModelIndex,
+    Qt,
+)
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QStyle
 
@@ -31,25 +38,49 @@ class AlbumTreeModel(QAbstractItemModel):
         super().__init__(parent)
         self._root = AlbumTreeNode(node_id="root", name="Albums", kind="root")
 
-    def columnCount(self, _parent: QModelIndex | None = None) -> int:  # noqa: N802
+    @override
+    def columnCount(
+        self, _parent: QModelIndex | QPersistentModelIndex | None = None
+    ) -> int:
         return 1
 
-    def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
-        parent = parent or QModelIndex()
-        node = self._node_from_index(parent)
+    @override
+    def rowCount(
+        self, parent: QModelIndex | QPersistentModelIndex | None = None
+    ) -> int:
+        node = self._node_from_index(parent or QModelIndex())
         return len(node.children)
 
-    def index(self, row: int, column: int, parent: QModelIndex | None = None) -> QModelIndex:
-        parent = parent or QModelIndex()
+    def index(
+        self,
+        row: int,
+        column: int,
+        parent: QModelIndex | QPersistentModelIndex | None = None,
+    ) -> QModelIndex:
+        parent_index = parent or QModelIndex()
         if row < 0 or column != 0:
             return QModelIndex()
-        parent_node = self._node_from_index(parent)
+        parent_node = self._node_from_index(parent_index)
         if row >= len(parent_node.children):
             return QModelIndex()
         child = parent_node.children[row]
         return self.createIndex(row, column, child)
 
-    def parent(self, index: QModelIndex) -> QModelIndex:
+    @overload
+    def parent(self) -> QObject: ...
+
+    @overload
+    def parent(
+        self,
+        index: QModelIndex | QPersistentModelIndex,
+        /,
+    ) -> QModelIndex: ...
+
+    def parent(
+        self, index: QModelIndex | QPersistentModelIndex | None = None
+    ) -> QObject | QModelIndex:
+        if index is None:
+            return super().parent()
         if not index.isValid():
             return QModelIndex()
         node = self._node_from_index(index)
@@ -62,7 +93,11 @@ class AlbumTreeModel(QAbstractItemModel):
         row = grand.children.index(parent)
         return self.createIndex(row, 0, parent)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object | None:
+    def data(
+        self,
+        index: QModelIndex | QPersistentModelIndex,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ) -> object | None:
         if not index.isValid():
             return None
         node = self._node_from_index(index)
@@ -84,13 +119,13 @@ class AlbumTreeModel(QAbstractItemModel):
 
         if role == Qt.ItemDataRole.ForegroundRole:
             if node.kind == "folder":
-                return QColor("#5B9BD5")   # muted blue for folders
+                return QColor("#5B9BD5")  # muted blue for folders
             if node.kind == "virtual":
-                return QColor("#D4D4D4")   # light grey for albums
+                return QColor("#D4D4D4")  # light grey for albums
 
         return None
 
-    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+    def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
         base = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if not index.isValid():
             return base | Qt.ItemFlag.ItemIsDropEnabled
@@ -124,7 +159,7 @@ class AlbumTreeModel(QAbstractItemModel):
 
     def can_move(self, node_id: str, new_parent_id: str | None) -> bool:
         """Check if move target is valid and not within own subtree."""
-        if new_parent_id in {None, "root"}:
+        if new_parent_id is None or new_parent_id == "root":
             return True
         if node_id == new_parent_id:
             return False
@@ -143,7 +178,11 @@ class AlbumTreeModel(QAbstractItemModel):
         if node is None or node.kind == "root":
             return False
         old_parent = self._find_parent(node_id)
-        target_parent = self._root if new_parent_id in {None, "root"} else self._find_node(new_parent_id)
+        target_parent: AlbumTreeNode | None
+        if new_parent_id is None or new_parent_id == "root":
+            target_parent = self._root
+        else:
+            target_parent = self._find_node(new_parent_id)
         if old_parent is None or target_parent is None:
             return False
         if target_parent.kind not in {"root", "folder"}:
@@ -157,16 +196,21 @@ class AlbumTreeModel(QAbstractItemModel):
         target_index = self.index_from_node_id(target_parent.node_id)
         insert_row = len(target_parent.children)
         self.beginInsertRows(target_index, insert_row, insert_row)
-        node.parent_id = None if target_parent.node_id == "root" else target_parent.node_id
+        node.parent_id = (
+            None if target_parent.node_id == "root" else target_parent.node_id
+        )
         target_parent.children.append(node)
         self.endInsertRows()
         return True
 
     def add_node(self, node: AlbumTreeNode, parent_id: str | None) -> None:
         """Insert a new node under one parent."""
-        parent = self._root if parent_id in {None, "root"} else self._find_node(parent_id)
-        if parent is None:
+        parent: AlbumTreeNode
+        if parent_id is None or parent_id == "root":
             parent = self._root
+        else:
+            found = self._find_node(parent_id)
+            parent = self._root if found is None else found
         row = len(parent.children)
         parent_index = self.index_from_node_id(parent.node_id)
         self.beginInsertRows(parent_index, row, row)
@@ -203,7 +247,9 @@ class AlbumTreeModel(QAbstractItemModel):
         """Return root child list for serialization."""
         return self._root.children
 
-    def _node_from_index(self, index: QModelIndex) -> AlbumTreeNode:
+    def _node_from_index(
+        self, index: QModelIndex | QPersistentModelIndex
+    ) -> AlbumTreeNode:
         if not index.isValid():
             return self._root
         node = index.internalPointer()

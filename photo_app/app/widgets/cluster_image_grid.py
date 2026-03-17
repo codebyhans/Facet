@@ -10,8 +10,8 @@ from photo_app.app.models.cluster_image_model import ClusterImageModel
 if TYPE_CHECKING:
     from PySide6.QtGui import QResizeEvent
 
-    from photo_app.app.widgets.people_browser import PersonStackSummary
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
+    from photo_app.services.face_review_service import PersonStackSummary
 
 
 class ClusterImageGridWidget(QListView):
@@ -20,7 +20,7 @@ class ClusterImageGridWidget(QListView):
     def __init__(
         self,
         tile_store: ThumbnailTileStore | None = None,
-        parent: QListView | None = None
+        parent: QListView | None = None,
     ) -> None:
         super().__init__(parent)
         self._tile_store = tile_store
@@ -65,6 +65,5 @@ class ClusterImageGridWidget(QListView):
         model = self.model()
         if isinstance(model, ClusterImageModel):
             model.set_images(
-                list(stack.sample_image_paths),
-                list(stack.sample_image_ids)
+                list(stack.sample_image_paths), list(stack.sample_image_ids)
             )

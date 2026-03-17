@@ -124,7 +124,9 @@ class AlbumTreeWidget(QTreeView):
         elif picked is create_virtual:
             self.createVirtualAlbumRequested.emit(parent_id)
         elif picked is rename and node is not None:
-            text, accepted = QInputDialog.getText(self, "Rename", "Name", text=node.name)
+            text, accepted = QInputDialog.getText(
+                self, "Rename", "Name", text=node.name
+            )
             if accepted and text.strip():
                 self.renameRequested.emit(node.node_id, text.strip())
         elif picked is delete and node is not None:

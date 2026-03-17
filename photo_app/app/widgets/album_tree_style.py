@@ -4,7 +4,13 @@ from typing import override
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleOptionViewItem, QWidget
+from PySide6.QtWidgets import (
+    QProxyStyle,
+    QStyle,
+    QStyleOption,
+    QStyleOptionViewItem,
+    QWidget,
+)
 
 
 class AlbumTreeStyle(QProxyStyle):
@@ -14,21 +20,23 @@ class AlbumTreeStyle(QProxyStyle):
     def drawPrimitive(
         self,
         element: QStyle.PrimitiveElement,
-        option: QStyleOptionViewItem,
+        option: QStyleOption,
         painter: QPainter,
         widget: QWidget | None = None,
     ) -> None:
         """Draw custom expand/collapse arrows for album tree."""
         if element == QStyle.PrimitiveElement.PE_IndicatorBranch:
             has_children = bool(option.state & QStyle.StateFlag.State_Children)
-            if has_children:
+            if has_children and isinstance(option, QStyleOptionViewItem):
                 self._draw_custom_arrow(option, painter)
             return
 
         # For other elements, use default style
         super().drawPrimitive(element, option, painter, widget)
 
-    def _draw_custom_arrow(self, option: QStyleOptionViewItem, painter: QPainter) -> None:
+    def _draw_custom_arrow(
+        self, option: QStyleOptionViewItem, painter: QPainter
+    ) -> None:
         """Draw custom dark theme arrow for expand/collapse."""
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)  # noqa: FBT003
@@ -59,15 +67,15 @@ class AlbumTreeStyle(QProxyStyle):
         path = QPainterPath()
         if is_expanded:
             # Down arrow (expanded)
-            path.moveTo(center_x - arrow_size/2, center_y - arrow_size/2)
-            path.lineTo(center_x + arrow_size/2, center_y - arrow_size/2)
-            path.lineTo(center_x, center_y + arrow_size/2)
+            path.moveTo(center_x - arrow_size / 2, center_y - arrow_size / 2)
+            path.lineTo(center_x + arrow_size / 2, center_y - arrow_size / 2)
+            path.lineTo(center_x, center_y + arrow_size / 2)
             path.closeSubpath()
         else:
             # Right arrow (collapsed)
-            path.moveTo(center_x - arrow_size/2, center_y - arrow_size/2)
-            path.lineTo(center_x - arrow_size/2, center_y + arrow_size/2)
-            path.lineTo(center_x + arrow_size/2, center_y)
+            path.moveTo(center_x - arrow_size / 2, center_y - arrow_size / 2)
+            path.lineTo(center_x - arrow_size / 2, center_y + arrow_size / 2)
+            path.lineTo(center_x + arrow_size / 2, center_y)
             path.closeSubpath()
 
         painter.drawPath(path)

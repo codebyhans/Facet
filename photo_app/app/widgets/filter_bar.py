@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDateEdit,
@@ -108,6 +108,7 @@ class FilterPill(QToolButton):
         self._dropdown_widget = widget
         # Override the showMenu method to show our custom widget
         original_show_menu = self.showMenu
+
         def show_custom_menu() -> None:
             if self._dropdown_widget:
                 # Position the dropdown below the button
@@ -118,6 +119,7 @@ class FilterPill(QToolButton):
                 self._dropdown_widget.activateWindow()
             else:
                 original_show_menu()
+
         self.showMenu = show_custom_menu  # type: ignore[method-assign]
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
@@ -161,7 +163,14 @@ class RatingFilterPill(FilterPill):
         # Rating options
         self._rating_buttons = []
         ratings = [0, 1, 2, 3, 4, 5]
-        rating_labels = ["Any", "1+ stars", "2+ stars", "3+ stars", "4+ stars", "5+ stars"]
+        rating_labels = [
+            "Any",
+            "1+ stars",
+            "2+ stars",
+            "3+ stars",
+            "4+ stars",
+            "5+ stars",
+        ]
 
         for rating, label in zip(ratings, rating_labels, strict=False):
             btn = QPushButton(label)
@@ -215,8 +224,10 @@ class RatingFilterPill(FilterPill):
 
         if rating_min is None:
             self._rating = 0
-        else:
+        elif isinstance(rating_min, (int, float)):
             self._rating = int(rating_min) if rating_min else 0
+        else:
+            self._rating = 0
 
         self._update_display()
         # Update button states
@@ -338,8 +349,8 @@ class PeopleFilterPill(FilterPill):
                 widget = item.widget()
                 if isinstance(widget, QCheckBox) and widget.isChecked():
                     person_id = widget.property("person_id")
-                    if person_id is not None:
-                        self._person_ids.append(int(person_id))
+                    if isinstance(person_id, int):
+                        self._person_ids.append(person_id)
 
         self.filter_changed.emit()
         self._update_display()
@@ -359,10 +370,7 @@ class PeopleFilterPill(FilterPill):
         """Get query parameters for this filter."""
         if not self._person_ids:
             return {}
-        return {
-            "person_ids": self._person_ids,
-            "person_logic": self._logic
-        }
+        return {"person_ids": self._person_ids, "person_logic": self._logic}
 
     def set_from_query(self, query: AlbumQuery | dict[str, object]) -> None:
         """Set filter state from query."""
@@ -373,15 +381,23 @@ class PeopleFilterPill(FilterPill):
             person_ids = list(getattr(query, "person_ids", []))
             logic = "OR"  # Default logic for old queries
 
-        self._person_ids = list(person_ids) if person_ids else []
-        self._logic = logic
+        if isinstance(person_ids, (list, tuple)):
+            self._person_ids = [int(v) for v in person_ids if isinstance(v, int)]
+        else:
+            self._person_ids = []
+        self._logic = logic if isinstance(logic, str) else "OR"
 
         # Update checkbox states
         for i in range(self._people_layout.count()):
-            widget = self._people_layout.itemAt(i).widget()
+            item = self._people_layout.itemAt(i)
+            if item is None:
+                continue
+            widget = item.widget()
             if isinstance(widget, QCheckBox):
                 person_id = widget.property("person_id")
-                widget.setChecked(person_id in self._person_ids)
+                widget.setChecked(
+                    isinstance(person_id, int) and person_id in self._person_ids
+                )
 
         # Update logic buttons
         self._and_btn.setChecked(self._logic == "AND")
@@ -393,7 +409,10 @@ class PeopleFilterPill(FilterPill):
         """Clear the people selection."""
         self._person_ids = []
         for i in range(self._people_layout.count()):
-            widget = self._people_layout.itemAt(i).widget()
+            item = self._people_layout.itemAt(i)
+            if item is None:
+                continue
+            widget = item.widget()
             if isinstance(widget, QCheckBox):
                 widget.setChecked(False)
         self._logic = "OR"
@@ -428,13 +447,14 @@ class DateFilterPill(FilterPill):
         from_label = QLabel("From (inclusive):")
         self._date_from_edit = QDateEdit()
         self._date_from_edit.setCalendarPopup(True)
-        today = datetime.now(tz=datetime.UTC).date()
-        self._date_from_edit.setDate(today.replace(year=today.year - 1))
+        today = datetime.now(tz=UTC).date()
+        start_date = today.replace(year=today.year - 1)
+        self._date_from_edit.setDate(
+            QDate(start_date.year, start_date.month, start_date.day)
+        )
         self._date_from_check = QCheckBox()
         self._date_from_check.setChecked(False)
-        self._date_from_check.toggled.connect(
-            self._date_from_edit.setEnabled
-        )
+        self._date_from_check.toggled.connect(self._date_from_edit.setEnabled)
         self._date_from_edit.setEnabled(False)
         from_layout.addWidget(self._date_from_check)
         from_layout.addWidget(from_label)
@@ -446,12 +466,10 @@ class DateFilterPill(FilterPill):
         to_label = QLabel("To (inclusive):")
         self._date_to_edit = QDateEdit()
         self._date_to_edit.setCalendarPopup(True)
-        self._date_to_edit.setDate(today)
+        self._date_to_edit.setDate(QDate(today.year, today.month, today.day))
         self._date_to_check = QCheckBox()
         self._date_to_check.setChecked(False)
-        self._date_to_check.toggled.connect(
-            self._date_to_edit.setEnabled
-        )
+        self._date_to_check.toggled.connect(self._date_to_edit.setEnabled)
         self._date_to_edit.setEnabled(False)
         to_layout.addWidget(self._date_to_check)
         to_layout.addWidget(to_label)
@@ -477,12 +495,14 @@ class DateFilterPill(FilterPill):
     def _on_date_changed(self) -> None:
         """Handle date changes."""
         if self._date_from_check.isChecked():
-            self._date_from = self._date_from_edit.date().toPython()
+            raw_from = self._date_from_edit.date().toPython()
+            self._date_from = raw_from if isinstance(raw_from, date) else None
         else:
             self._date_from = None
 
         if self._date_to_check.isChecked():
-            self._date_to = self._date_to_edit.date().toPython()
+            raw_to = self._date_to_edit.date().toPython()
+            self._date_to = raw_to if isinstance(raw_to, date) else None
         else:
             self._date_to = None
 
@@ -495,14 +515,16 @@ class DateFilterPill(FilterPill):
             self.setText("📅 Date")
             self.set_active(False)
         else:
-            from_str = self._date_from.strftime("%Y-%m-%d") if self._date_from else "Any"
+            from_str = (
+                self._date_from.strftime("%Y-%m-%d") if self._date_from else "Any"
+            )
             to_str = self._date_to.strftime("%Y-%m-%d") if self._date_to else "Any"
             self.setText(f"📅 {from_str} → {to_str}")
             self.set_active(True)
 
     def get_query_params(self) -> dict[str, object]:
         """Get query parameters for this filter."""
-        params = {}
+        params: dict[str, object] = {}
         if self._date_from:
             params["date_from"] = self._date_from
         if self._date_to:
@@ -525,7 +547,9 @@ class DateFilterPill(FilterPill):
                 self._date_from = date.fromisoformat(str(date_from))
             self._date_from_check.setChecked(True)
             self._date_from_edit.setEnabled(True)
-            self._date_from_edit.setDate(self._date_from)
+            self._date_from_edit.setDate(
+                QDate(self._date_from.year, self._date_from.month, self._date_from.day)
+            )
         else:
             self._date_from = None
             self._date_from_check.setChecked(False)
@@ -538,7 +562,9 @@ class DateFilterPill(FilterPill):
                 self._date_to = date.fromisoformat(str(date_to))
             self._date_to_check.setChecked(True)
             self._date_to_edit.setEnabled(True)
-            self._date_to_edit.setDate(self._date_to)
+            self._date_to_edit.setDate(
+                QDate(self._date_to.year, self._date_to.month, self._date_to.day)
+            )
         else:
             self._date_to = None
             self._date_to_check.setChecked(False)
@@ -650,16 +676,20 @@ class FlagFilterPill(FilterPill):
 
     def set_from_query(self, query: AlbumQuery | dict[str, object]) -> None:
         """Set filter state from query."""
-        flags = query.get("flags", []) if isinstance(query, dict) else []
-
-        self._flags = list(flags) if flags else []
+        raw_flags = query.get("flags", []) if isinstance(query, dict) else []
+        if isinstance(raw_flags, (list, tuple)):
+            self._flags = [str(flag) for flag in raw_flags if isinstance(flag, str)]
+        else:
+            self._flags = []
 
         # Update checkbox states
         self._keep_check.setChecked("keep" in self._flags)
         self._undecided_check.setChecked("undecided" in self._flags)
         self._discard_check.setChecked("discard" in self._flags)
         self._not_discarded_check.setChecked(
-            "keep" in self._flags and "undecided" in self._flags and "discard" not in self._flags
+            "keep" in self._flags
+            and "undecided" in self._flags
+            and "discard" not in self._flags
         )
 
         self._update_display()
@@ -716,7 +746,11 @@ class FilterBarWidget(QFrame):
         layout.addWidget(self._flag_pill)
 
         # Spacer to push buttons to the right
-        layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
+        layout.addSpacerItem(
+            QSpacerItem(
+                40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+            )
+        )
 
         # Control buttons
         layout.addWidget(self._clear_btn)

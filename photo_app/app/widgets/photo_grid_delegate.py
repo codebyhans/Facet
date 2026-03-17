@@ -7,7 +7,7 @@ from PySide6.QtGui import QBrush, QColor, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
 if TYPE_CHECKING:
-    from PySide6.QtCore import QAbstractItemModel, QModelIndex
+    from PySide6.QtCore import QAbstractItemModel, QModelIndex, QPersistentModelIndex
 
 
 class PhotoGridDelegate(QStyledItemDelegate):
@@ -17,8 +17,8 @@ class PhotoGridDelegate(QStyledItemDelegate):
 
     # Flag colors
     FLAG_COLORS: ClassVar[dict[str, QColor]] = {
-        "keep": QColor(67, 160, 71),      # Green
-        "discard": QColor(211, 47, 47),   # Red
+        "keep": QColor(67, 160, 71),  # Green
+        "discard": QColor(211, 47, 47),  # Red
         "undecided": QColor(117, 117, 117),  # Grey
     }
     CLEAR_BUTTON_COLOR: ClassVar[QColor] = QColor(200, 200, 200)
@@ -30,10 +30,12 @@ class PhotoGridDelegate(QStyledItemDelegate):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._hovered_index: QModelIndex | None = None
+        self._hovered_index: QModelIndex | QPersistentModelIndex | None = None
         self._hover_buttons_visible = False
 
-    def set_hovered_index(self, index: QModelIndex | None) -> None:
+    def set_hovered_index(
+        self, index: QModelIndex | QPersistentModelIndex | None
+    ) -> None:
         """Set the hovered index for the delegate."""
         self._hovered_index = index
 
@@ -45,7 +47,7 @@ class PhotoGridDelegate(QStyledItemDelegate):
         self,
         painter: QPainter,
         option: QStyleOptionViewItem,
-        index: QModelIndex,
+        index: QModelIndex | QPersistentModelIndex,
     ) -> None:
         """Paint the item with thumbnail and optional flag badge."""
         # Let the base class handle the background and thumbnail
@@ -67,7 +69,9 @@ class PhotoGridDelegate(QStyledItemDelegate):
             self._draw_hover_buttons(painter, option, index, thumbnail_rect)
 
     @override
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
+    def sizeHint(
+        self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
+    ) -> QSize:
         """Return the size hint for the item."""
         size = super().sizeHint(option, index)
         # Ensure minimum size for flag badge and hover buttons
@@ -79,7 +83,7 @@ class PhotoGridDelegate(QStyledItemDelegate):
         event: QEvent,
         model: QAbstractItemModel,
         option: QStyleOptionViewItem,
-        index: QModelIndex,
+        index: QModelIndex | QPersistentModelIndex,
     ) -> bool:
         """Handle mouse events for hover buttons."""
         if (
@@ -94,7 +98,9 @@ class PhotoGridDelegate(QStyledItemDelegate):
                     return True
         return super().editorEvent(event, model, option, index)
 
-    def _calculate_thumbnail_rect(self, item_rect: QRect, thumbnail_size: QSize) -> QRect:
+    def _calculate_thumbnail_rect(
+        self, item_rect: QRect, thumbnail_size: QSize
+    ) -> QRect:
         """Calculate the centered thumbnail rectangle within the item rectangle."""
         # Leave some padding for the flag badge and hover buttons
         padding = 8
@@ -102,8 +108,10 @@ class PhotoGridDelegate(QStyledItemDelegate):
         available_height = item_rect.height() - (padding * 2)
 
         # Scale thumbnail to fit while maintaining aspect ratio
-        scale = min(available_width / thumbnail_size.width(),
-                   available_height / thumbnail_size.height())
+        scale = min(
+            available_width / thumbnail_size.width(),
+            available_height / thumbnail_size.height(),
+        )
 
         scaled_width = int(thumbnail_size.width() * scale)
         scaled_height = int(thumbnail_size.height() * scale)
@@ -117,7 +125,7 @@ class PhotoGridDelegate(QStyledItemDelegate):
         self,
         painter: QPainter,
         _option: QStyleOptionViewItem,
-        index: QModelIndex,
+        index: QModelIndex | QPersistentModelIndex,
         thumbnail_rect: QRect,
     ) -> None:
         """Draw the flag badge in the bottom-left corner of the thumbnail."""
@@ -147,7 +155,7 @@ class PhotoGridDelegate(QStyledItemDelegate):
         self,
         painter: QPainter,
         option: QStyleOptionViewItem,
-        _index: QModelIndex,
+        _index: QModelIndex | QPersistentModelIndex,
         thumbnail_rect: QRect,
     ) -> None:
         """Draw hover buttons in the bottom-left corner."""
@@ -190,13 +198,19 @@ class PhotoGridDelegate(QStyledItemDelegate):
 
         return rects
 
-    def _should_show_hover_buttons(self, index: QModelIndex) -> bool:
+    def _should_show_hover_buttons(
+        self, index: QModelIndex | QPersistentModelIndex
+    ) -> bool:
         """Check if hover buttons should be visible for this index."""
         return self._hovered_index is not None and self._hovered_index == index
 
-    def _handle_button_click(self, index: QModelIndex, button_index: int) -> None:
+    def _handle_button_click(
+        self, index: QModelIndex | QPersistentModelIndex, button_index: int
+    ) -> None:
         """Handle click on hover button and emit signal to update flag."""
         button_labels: list[str | None] = ["keep", "discard", "undecided", None]
-        flag_value = button_labels[button_index] if button_index < len(button_labels) else None
+        flag_value = (
+            button_labels[button_index] if button_index < len(button_labels) else None
+        )
 
         self.flagChanged.emit(index, flag_value)

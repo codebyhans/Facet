@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class TileBuildWorkerSignals(QObject):
@@ -19,7 +22,9 @@ class TileBuildWorkerSignals(QObject):
 class TileBuildWorker(QRunnable):
     """Build missing thumbnail tiles in the background."""
 
-    def __init__(self, fn: Any, *args: object, **kwargs: object) -> None:  # noqa: ANN401
+    def __init__(
+        self, fn: Callable[..., object], *args: object, **kwargs: object
+    ) -> None:
         super().__init__()
         self._fn = fn
         self._args = args

@@ -6,6 +6,7 @@ import numpy as np
 
 MIN_NORM = 1e-12
 
+
 @dataclass(frozen=True)
 class AnnNeighbor:
     """Approximate nearest-neighbor result."""
@@ -33,7 +34,9 @@ class RandomProjectionAnnIndex:
 
     def build(self, vectors: dict[int, np.ndarray]) -> None:
         """Rebuild index from normalized vectors."""
-        self._vectors = {key: value.astype(np.float32) for key, value in vectors.items()}
+        self._vectors = {
+            key: value.astype(np.float32) for key, value in vectors.items()
+        }
         self._projections = []
         self._buckets = []
         if not self._vectors:

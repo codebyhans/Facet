@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
@@ -49,7 +49,7 @@ class TagService:
                 return  # Already tagged
 
             tag = ImageTagModel(
-                image_id=image_id, tag_name=tag_name, created_at=datetime.now(tz=datetime.UTC)
+                image_id=image_id, tag_name=tag_name, created_at=datetime.now(tz=UTC)
             )
             session.add(tag)
             session.commit()
@@ -102,9 +102,7 @@ class TagService:
             Sorted list of unique tag names
         """
         with Session(self._engine) as session:
-            tags = session.execute(
-                select(ImageTagModel.tag_name).distinct()
-            ).scalars()
+            tags = session.execute(select(ImageTagModel.tag_name).distinct()).scalars()
 
             return sorted(tags)
 
@@ -122,7 +120,7 @@ class TagService:
                 )
             ).all()
 
-            return dict(results)
+            return {row[0]: row[1] for row in results}
 
     def batch_tag_images(self, image_ids: list[int], tag_names: list[str]) -> None:
         """
@@ -133,7 +131,7 @@ class TagService:
             tag_names: List of tag names to add
         """
         with Session(self._engine) as session:
-            now = datetime.now(tz=datetime.UTC)
+            now = datetime.now(tz=UTC)
             added = 0
 
             for image_id in image_ids:
@@ -160,7 +158,12 @@ class TagService:
                         added += 1
 
             session.commit()
-            logger.info("Batch tagged %s images with %s tags (%s new tags)", len(image_ids), len(tag_names), added)
+            logger.info(
+                "Batch tagged %s images with %s tags (%s new tags)",
+                len(image_ids),
+                len(tag_names),
+                added,
+            )
 
     def search_images_by_tag(self, tag_name: str) -> list[int]:
         """
@@ -175,9 +178,7 @@ class TagService:
         with Session(self._engine) as session:
             tag_name = tag_name.strip().lower()
             image_ids = session.execute(
-                select(ImageTagModel.image_id).where(
-                    ImageTagModel.tag_name == tag_name
-                )
+                select(ImageTagModel.image_id).where(ImageTagModel.tag_name == tag_name)
             ).scalars()
 
             return list(image_ids)

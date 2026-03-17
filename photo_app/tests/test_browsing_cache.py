@@ -43,166 +43,165 @@ def test_thumbnail_tile_generation_and_lookup(tmp_path: Path) -> None:
     _make_image(image_paths[1], (0, 255, 0))
     _make_image(image_paths[2], (0, 0, 255))
 
-    with Session(engine) as session:
-        image_repo = SqlAlchemyImageRepository(session)
-        image_repo.add_many(
-            [
-                Image(
-                    id=None,
-                    file_path=str(path),
-                    capture_date=date(2024, 1, idx + 1),
-                    year=2024,
-                    month=1,
-                    hash=f"h{idx}",
-                    width=640,
-                    height=480,
-                    indexed_at=INDEXED_AT,
-                )
-                for idx, path in enumerate(image_paths)
-            ]
-        )
-        session.flush()
+    image_repo = SqlAlchemyImageRepository(engine)
+    image_repo.add_many(
+        [
+            Image(
+                id=None,
+                file_path=str(path),
+                capture_date=date(2024, 1, idx + 1),
+                year=2024,
+                month=1,
+                hash=f"h{idx}",
+                width=640,
+                height=480,
+                indexed_at=INDEXED_AT,
+            )
+            for idx, path in enumerate(image_paths)
+        ]
+    )
 
-        store = ThumbnailTileStore(
-            session,
-            cache_directory=tmp_path / "cache",
-            tile_size=(256, 256),
-            thumbnail_size=(64, 64),
-            images_per_tile=16,
-        )
-        result = store.build_missing_tiles()
-        session.commit()
+    store = ThumbnailTileStore(
+        engine,
+        cache_directory=tmp_path / "cache",
+        tile_size=(256, 256),
+        thumbnail_size=(64, 64),
+        images_per_tile=16,
+    )
+    result = store.build_missing_tiles()
 
-        assert result.images_built == EXPECTED_IMAGES_BUILT
-        assert result.tiles_built == 1
+    assert result.images_built == EXPECTED_IMAGES_BUILT
+    assert result.tiles_built == 1
 
-        images = image_repo.list_all()
-        first = images[0]
-        assert first.id is not None
-        lookup = store.get_image_tile(first.id)
-        assert lookup is not None
-        assert lookup.position_in_tile == 0
-        assert lookup.x == 0
-        assert lookup.y == 0
+    images = image_repo.list_all()
+    first = images[0]
+    assert first.id is not None
+    lookup = store.get_image_tile(first.id)
+    assert lookup is not None
+    assert lookup.position_in_tile == 0
+    assert lookup.x == 0
+    assert lookup.y == 0
 
-        tile_path = store.get_tile(lookup.tile_index)
-        assert tile_path is not None
-        assert tile_path.exists()
+    tile_path = store.get_tile(lookup.tile_index)
+    assert tile_path is not None
+    assert tile_path.exists()
 
 
 def test_album_query_cache_hit_miss_and_invalidation() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
 
-    with Session(engine) as session:
-        image_repo = SqlAlchemyImageRepository(session)
-        face_repo = SqlAlchemyFaceRepository(session)
-        album_repo = SqlAlchemyAlbumRepository(session)
-        cache_service = AlbumQueryCacheService(session, album_repo, image_repo)
+    image_repo = SqlAlchemyImageRepository(engine)
+    face_repo = SqlAlchemyFaceRepository(engine)
+    album_repo = SqlAlchemyAlbumRepository(engine)
+    cache_service = AlbumQueryCacheService(engine, album_repo, image_repo)
 
-        image_repo.add_many(
-            [
-                Image(
-                    id=None,
-                    file_path="C:/1.jpg",
-                    capture_date=date(2022, 1, 1),
-                    year=2022,
-                    month=1,
-                    hash="h1",
-                    width=10,
-                    height=10,
-                    indexed_at=INDEXED_AT,
-                ),
-                Image(
-                    id=None,
-                    file_path="C:/2.jpg",
-                    capture_date=date(2023, 1, 1),
-                    year=2023,
-                    month=1,
-                    hash="h2",
-                    width=10,
-                    height=10,
-                    indexed_at=INDEXED_AT,
-                ),
-                Image(
-                    id=None,
-                    file_path="C:/3.jpg",
-                    capture_date=date(2024, 1, 1),
-                    year=2024,
-                    month=1,
-                    hash="h3",
-                    width=10,
-                    height=10,
-                    indexed_at=INDEXED_AT,
-                ),
-            ]
-        )
-        session.flush()
-
-        by_path = {image.file_path: image for image in image_repo.list_all()}
-        assert by_path["C:/1.jpg"].id is not None
-        assert by_path["C:/2.jpg"].id is not None
-        assert by_path["C:/3.jpg"].id is not None
-
-        face_repo.add_many(
-            [
-                Face(
-                    id=None,
-                    image_id=int(by_path["C:/1.jpg"].id),
-                    bbox=BoundingBox(0, 0, 1, 1),
-                    embedding=b"x",
-                    person_id=7,
-                ),
-                Face(
-                    id=None,
-                    image_id=int(by_path["C:/2.jpg"].id),
-                    bbox=BoundingBox(0, 0, 1, 1),
-                    embedding=b"y",
-                    person_id=7,
-                ),
-            ]
-        )
-
-        album = album_repo.create(
-            Album(
+    image_repo.add_many(
+        [
+            Image(
                 id=None,
-                name="People",
-                query_definition=AlbumQuery(person_ids=(7,), date_from=None, date_to=None),
-                query_version=QUERY_VERSION_1,
-                created_at=CREATED_AT,
-            )
+                file_path="C:/1.jpg",
+                capture_date=date(2022, 1, 1),
+                year=2022,
+                month=1,
+                hash="h1",
+                width=10,
+                height=10,
+                indexed_at=INDEXED_AT,
+            ),
+            Image(
+                id=None,
+                file_path="C:/2.jpg",
+                capture_date=date(2023, 1, 1),
+                year=2023,
+                month=1,
+                hash="h2",
+                width=10,
+                height=10,
+                indexed_at=INDEXED_AT,
+            ),
+            Image(
+                id=None,
+                file_path="C:/3.jpg",
+                capture_date=date(2024, 1, 1),
+                year=2024,
+                month=1,
+                hash="h3",
+                width=10,
+                height=10,
+                indexed_at=INDEXED_AT,
+            ),
+        ]
+    )
+
+    by_path = {image.file_path: image for image in image_repo.list_all()}
+    assert by_path["C:/1.jpg"].id is not None
+    assert by_path["C:/2.jpg"].id is not None
+    assert by_path["C:/3.jpg"].id is not None
+
+    face_repo.add_many(
+        [
+            Face(
+                id=None,
+                image_id=int(by_path["C:/1.jpg"].id),
+                bbox=BoundingBox(0, 0, 1, 1),
+                embedding=b"x",
+                person_id=7,
+            ),
+            Face(
+                id=None,
+                image_id=int(by_path["C:/2.jpg"].id),
+                bbox=BoundingBox(0, 0, 1, 1),
+                embedding=b"y",
+                person_id=7,
+            ),
+        ]
+    )
+
+    album = album_repo.create(
+        Album(
+            id=None,
+            name="People",
+            query_definition=AlbumQuery(person_ids=(7,), date_from=None, date_to=None),
+            query_version=QUERY_VERSION_1,
+            created_at=CREATED_AT,
         )
-        session.flush()
-        assert album.id is not None
+    )
+    assert album.id is not None
 
-        # Cache miss: compute and store.
-        first_ids = cache_service.resolve_album(album.id)
-        assert first_ids == [int(by_path["C:/1.jpg"].id), int(by_path["C:/2.jpg"].id)]
+    # Cache miss: compute and store.
+    first_ids = cache_service.resolve_album(album.id)
+    assert first_ids == [int(by_path["C:/1.jpg"].id), int(by_path["C:/2.jpg"].id)]
 
+    with Session(engine) as session:
         cached_rows = session.scalars(
-            select(AlbumQueryCacheModel).where(AlbumQueryCacheModel.album_id == album.id)
+            select(AlbumQueryCacheModel).where(
+                AlbumQueryCacheModel.album_id == album.id
+            )
         ).all()
         assert len(cached_rows) == EXPECTED_CACHED_ROWS
         assert {row.query_version for row in cached_rows} == {QUERY_VERSION_1}
 
-        # Cache hit.
-        second_ids = cache_service.resolve_album(album.id)
-        assert second_ids == first_ids
+    # Cache hit.
+    second_ids = cache_service.resolve_album(album.id)
+    assert second_ids == first_ids
 
-        # Invalidate via query version bump.
-        updated = album_repo.update_query(
-            album.id,
-            AlbumQuery(person_ids=(7,), date_from=date(2023, 1, 1), date_to=None),
-        )
-        assert updated is not None
-        assert updated.query_version == QUERY_VERSION_2
-        session.flush()
+    # Invalidate via query version bump.
+    updated = album_repo.update_query(
+        album.id,
+        AlbumQuery(person_ids=(7,), date_from=date(2023, 1, 1), date_to=None),
+    )
+    assert updated is not None
+    assert updated.query_version == QUERY_VERSION_2
 
-        page = cache_service.get_album_images(album.id, offset=0, limit=10)
-        assert [image.file_path for image in page] == ["C:/2.jpg"]
+    page = cache_service.get_album_images(album.id, offset=0, limit=10)
+    assert [image.file_path for image in page] == ["C:/2.jpg"]
 
+    with Session(engine) as session:
         refreshed_rows = session.scalars(
-            select(AlbumQueryCacheModel).where(AlbumQueryCacheModel.album_id == album.id)
+            select(AlbumQueryCacheModel).where(
+                AlbumQueryCacheModel.album_id == album.id
+            )
         ).all()
         assert len(refreshed_rows) == 1
         assert {row.query_version for row in refreshed_rows} == {QUERY_VERSION_2}

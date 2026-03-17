@@ -16,87 +16,19 @@ def now_utc() -> datetime:
     return datetime.now(tz=UTC)
 
 
-def parse_album_query(definition: dict[str, object]) -> AlbumQuery:  # noqa: C901, PLR0912, PLR0915
+def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
     """Parse and validate an album query payload."""
-    raw_person_ids = definition.get("person_ids", [])
-    if isinstance(raw_person_ids, list):
-        person_values = cast("list[object]", raw_person_ids)
-    else:
-        person_values = []
-    person_ids: tuple[int, ...] = tuple(
-        value for value in person_values if isinstance(value, int)
-    )
-    raw_cluster_ids = definition.get("cluster_ids", [])
-    if isinstance(raw_cluster_ids, list):
-        cluster_values = cast("list[object]", raw_cluster_ids)
-    else:
-        cluster_values = []
-    cluster_ids: tuple[int, ...] = tuple(
-        value for value in cluster_values if isinstance(value, int)
-    )
-    raw_date_from = definition.get("date_from")
-    raw_date_to = definition.get("date_to")
-    if isinstance(raw_date_from, date):
-        date_from = raw_date_from
-    elif isinstance(raw_date_from, str):
-        date_from = parse_iso_date(raw_date_from)
-    else:
-        date_from = None
-    if isinstance(raw_date_to, date):
-        date_to = raw_date_to
-    elif isinstance(raw_date_to, str):
-        date_to = parse_iso_date(raw_date_to)
-    else:
-        date_to = None
-
-    # Parse tag names
-    raw_tag_names = definition.get("tag_names", [])
-    tag_names: tuple[str, ...] = ()
-    if isinstance(raw_tag_names, list):
-        tag_names = tuple(
-            str(t).lower().strip()
-            for t in raw_tag_names
-            if isinstance(t, str) and t.strip()
-        )
-
-    # Parse rating min
-    rating_min: int | None = None
-    raw_rating_min = definition.get("rating_min")
-    if isinstance(raw_rating_min, int):
-        rating_min = max(0, min(5, raw_rating_min))
-
-    # Parse quality min
-    quality_min: float | None = None
-    raw_quality_min = definition.get("quality_min")
-    if isinstance(raw_quality_min, (int, float)):
-        quality_min = max(0.0, min(1.0, float(raw_quality_min)))
-
-    # Parse camera models
-    raw_camera_models = definition.get("camera_models", [])
-    camera_models: tuple[str, ...] = ()
-    if isinstance(raw_camera_models, list):
-        camera_models = tuple(
-            str(m).strip() for m in raw_camera_models if isinstance(m, str) and m.strip()
-        )
-
-    # Parse location name
-    location_name: str | None = None
-    raw_location = definition.get("location_name")
-    if isinstance(raw_location, str) and raw_location.strip():
-        location_name = raw_location.strip()
-
-    # Parse GPS radius
-    gps_radius_km: float | None = None
-    raw_radius = definition.get("gps_radius_km")
-    if isinstance(raw_radius, (int, float)):
-        gps_radius_km = max(0.0, float(raw_radius))
-
-    # Parse flags
-    raw_flags = definition.get("flags", [])
-    flags: tuple[str, ...] = ()
-    if isinstance(raw_flags, list):
-        valid = {"keep", "discard", "undecided"}
-        flags = tuple(str(f) for f in raw_flags if isinstance(f, str) and f in valid)
+    person_ids = _extract_int_tuple(definition.get("person_ids"))
+    cluster_ids = _extract_int_tuple(definition.get("cluster_ids"))
+    date_from = _parse_date_field(definition.get("date_from"))
+    date_to = _parse_date_field(definition.get("date_to"))
+    tag_names = _extract_str_tuple(definition.get("tag_names"), normalize=True)
+    rating_min = _parse_rating_min(definition.get("rating_min"))
+    quality_min = _parse_quality_min(definition.get("quality_min"))
+    camera_models = _extract_str_tuple(definition.get("camera_models"))
+    location_name = _parse_location_name(definition.get("location_name"))
+    gps_radius_km = _parse_gps_radius(definition.get("gps_radius_km"))
+    flags = _parse_flags(definition.get("flags"))
 
     return AlbumQuery(
         person_ids=person_ids,
@@ -110,4 +42,70 @@ def parse_album_query(definition: dict[str, object]) -> AlbumQuery:  # noqa: C90
         location_name=location_name,
         gps_radius_km=gps_radius_km,
         flags=flags,
+    )
+
+
+def _extract_int_tuple(raw: object) -> tuple[int, ...]:
+    if isinstance(raw, list):
+        values = cast("list[object]", raw)
+        return tuple(value for value in values if isinstance(value, int))
+    return ()
+
+
+def _extract_str_tuple(raw: object, *, normalize: bool = False) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        return ()
+    values = cast("list[object]", raw)
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        result.append(cleaned.lower() if normalize else cleaned)
+    return tuple(result)
+
+
+def _parse_date_field(raw: object) -> date | None:
+    if isinstance(raw, date):
+        return raw
+    if isinstance(raw, str):
+        return parse_iso_date(raw)
+    return None
+
+
+def _parse_rating_min(raw: object) -> int | None:
+    if isinstance(raw, int):
+        return max(0, min(5, raw))
+    return None
+
+
+def _parse_quality_min(raw: object) -> float | None:
+    if isinstance(raw, (int, float)):
+        return max(0.0, min(1.0, float(raw)))
+    return None
+
+
+def _parse_location_name(raw: object) -> str | None:
+    if isinstance(raw, str):
+        cleaned = raw.strip()
+        if cleaned:
+            return cleaned
+    return None
+
+
+def _parse_gps_radius(raw: object) -> float | None:
+    if isinstance(raw, (int, float)):
+        return max(0.0, float(raw))
+    return None
+
+
+def _parse_flags(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        return ()
+    valid = {"keep", "discard", "undecided"}
+    values = cast("list[object]", raw)
+    return tuple(
+        str(flag) for flag in values if isinstance(flag, str) and flag in valid
     )
