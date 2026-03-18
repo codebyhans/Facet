@@ -38,6 +38,7 @@ from photo_app.app.widgets.advanced_filter_editor import AdvancedFilterEditorDia
 from photo_app.app.widgets.album_tree import AlbumTreeWidget
 from photo_app.app.widgets.filter_bar import FilterBarWidget
 from photo_app.app.widgets.image_detail_panel import ImageDetailPanel
+from photo_app.app.widgets.import_dialog import ImportDialog
 from photo_app.app.widgets.metadata_editor import MetadataEditorPanel
 from photo_app.app.widgets.people_browser import PeopleBrowser
 from photo_app.app.widgets.photo_grid import PhotoGridWidget
@@ -529,6 +530,11 @@ class MainWindow(QMainWindow):
 
         face_action = file_menu.addAction("Index Faces")
         face_action.triggered.connect(self._run_face_index)
+
+        file_menu.addSeparator()
+
+        import_action = file_menu.addAction("Import from camera...")
+        import_action.triggered.connect(self._open_import_dialog)
 
         file_menu.addSeparator()
 
@@ -1478,6 +1484,17 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             LOGGER.exception("Export failed")
             self._show_error(f"Export failed: {exc}")
+
+    def _open_import_dialog(self) -> None:
+        """Open the import dialog."""
+        dialog = ImportDialog(
+            image_index_service=self._image_index_service,
+            face_index_service=self._face_index_service,
+            default_dest_path=self._settings_service.get_runtime_settings().photo_root_dir,
+            parent=self,
+        )
+        dialog.set_thread_pool(self._thread_pool)
+        dialog.exec()
 
     # Keyboard shortcut handlers
     def _on_shortcut_rating_0(self) -> None:

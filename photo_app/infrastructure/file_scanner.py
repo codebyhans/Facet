@@ -9,7 +9,29 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _DATE_PATTERN = re.compile(r"^(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})$")
-_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+_MEDIA_SUFFIXES = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".heic",
+    ".heif",
+    ".raw",
+    ".cr2",
+    ".cr3",
+    ".nef",
+    ".arw",
+    ".dng",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mts",
+    ".m2ts",
+    ".3gp",
+}
 _MIN_PATH_PARTS = 2
 
 
@@ -29,7 +51,7 @@ class FileScanner:
         for path in root.rglob("*"):
             if not path.is_file():
                 continue
-            if path.suffix.lower() not in _IMAGE_SUFFIXES:
+            if path.suffix.lower() not in _MEDIA_SUFFIXES:
                 continue
             folder_date = self._extract_folder_date(path)
             files.append(ScannedFile(file_path=path, folder_date=folder_date))
