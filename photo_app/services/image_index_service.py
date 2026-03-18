@@ -49,6 +49,76 @@ class ImageIndexService:
         self._thumbnail_store = thumbnail_store
         self._query_cache_service = query_cache_service
 
+    def index_paths(
+        self,
+        paths: list[Path],
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> ImageIndexResult:
+        """Index a specific list of file paths.
+
+        Skips paths that are already indexed. Silently skips files that
+        PIL cannot open (video, unsupported formats).
+        """
+        if not paths:
+            return ImageIndexResult(scanned=0, inserted=0, skipped=0)
+
+        existing_paths: set[str] = set(self._image_repository.list_all_paths())
+
+        staged: list[ImageEntity] = []
+        skipped = 0
+        total = len(paths)
+
+        for idx, file_path in enumerate(paths):
+            if on_progress and (idx % 10 == 0 or idx == total - 1):
+                on_progress(idx + 1, total)
+
+            str_path = str(file_path)
+            if str_path in existing_paths:
+                skipped += 1
+                continue
+
+            try:
+                capture_date, width, height = self._load_image_metadata(
+                    file_path, None
+                )
+                image_hash = sha256(str_path.encode()).hexdigest()
+                entity = ImageEntity(
+                    id=None,
+                    file_path=str_path,
+                    capture_date=capture_date,
+                    year=capture_date.date().year if capture_date else None,
+                    month=capture_date.date().month if capture_date else None,
+                    hash=image_hash,
+                    width=width,
+                    height=height,
+                    indexed_at=now_utc(),
+                )
+                staged.append(entity)
+            except (OSError, UnidentifiedImageError, PermissionError):
+                skipped += 1
+                continue
+            except Exception:
+                LOGGER.exception("Unexpected error processing %s", file_path)
+                skipped += 1
+                continue
+
+        if staged:
+            try:
+                self._image_repository.add_many(staged)
+                if self._query_cache_service is not None:
+                    self._query_cache_service.invalidate_all()
+            except Exception:
+                LOGGER.exception("Database error during bulk insert")
+                return ImageIndexResult(
+                    scanned=total, inserted=0, skipped=skipped + len(staged)
+                )
+
+        return ImageIndexResult(
+            scanned=total,
+            inserted=len(staged),
+            skipped=skipped,
+        )
+
     def index_folder(  # noqa: C901
         self, root: Path, on_progress: Callable[[int, int], None] | None = None
     ) -> ImageIndexResult:
@@ -107,7 +177,7 @@ class ImageIndexService:
                 # Skip thumbnail generation during indexing - generate on-demand while browsing
                 # This prevents crashes from problematic image files
 
-            except OSError, UnidentifiedImageError, PermissionError, IsADirectoryError:
+            except (OSError, UnidentifiedImageError, PermissionError, IsADirectoryError):
                 skipped += 1
                 continue
             except Exception:

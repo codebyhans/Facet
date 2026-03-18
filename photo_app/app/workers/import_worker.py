@@ -65,12 +65,25 @@ class ImportWorker(QRunnable):
                 on_progress=safe_progress_callback,
             )
 
-            # Phase 2: Index imported files
+            # Phase 2: Index only the files that were just copied
             if self._options.run_indexing and self._image_index_service is not None:
                 self.signals.phase_changed.emit("indexing")
                 try:
-                    self._image_index_service.index_folder(
-                        self._options.destination_path
+                    imported_paths = [
+                        result.dest_path
+                        for result in summary.file_results
+                        if result.dest_path is not None and result.status == "copied"
+                    ]
+
+                    def index_progress(current: int, total: int) -> None:
+                        try:
+                            self.signals.progress.emit(current, total, "")
+                        except RuntimeError:
+                            pass
+
+                    self._image_index_service.index_paths(
+                        imported_paths,
+                        on_progress=index_progress,
                     )
                 except Exception as exc:
                     logger.exception("Indexing failed during import")
@@ -85,7 +98,34 @@ class ImportWorker(QRunnable):
             ):
                 self.signals.phase_changed.emit("face_detection")
                 try:
-                    self._face_index_service.index_faces()
+                    # Detection pass — skip per-call clustering (expensive)
+                    self._face_index_service.index_faces(
+                        skip_clustering=True,
+                    )
+
+                    # Clustering pass — incremental, new faces only
+                    identity_cluster_service = (
+                        self._face_index_service.get_identity_cluster_service()
+                    )
+                    if identity_cluster_service is not None:
+
+                        def cluster_progress(current: int, total: int) -> None:
+                            try:
+                                self.signals.progress.emit(current, total, "")
+                            except RuntimeError:
+                                pass
+
+                        identity_cluster_service.index_new_faces(
+                            on_progress=cluster_progress,
+                        )
+
+                    # Invalidate query cache so the library refreshes
+                    query_cache_service = (
+                        self._face_index_service.get_query_cache_service()
+                    )
+                    if query_cache_service is not None:
+                        query_cache_service.invalidate_all()
+
                 except Exception as exc:
                     logger.exception("Face detection failed during import")
                     error_msg = f"Face detection failed: {type(exc).__name__}: {exc}"

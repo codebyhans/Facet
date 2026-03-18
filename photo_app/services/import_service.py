@@ -4,7 +4,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from photo_app.infrastructure.exif_handler import ExifMetadataHandler
 
@@ -110,7 +110,7 @@ class ImportService:
                 on_progress(current, total_files, filename)
 
         # Build unhandled paths list
-        unhandled_paths = []
+        unhandled_paths: list[Path] = []
         for result in file_results:
             if result.status == "failed":
                 unhandled_paths.append(result.source_path)
@@ -140,8 +140,8 @@ class ImportService:
         """Read capture date from EXIF. Returns None for non-image files or missing EXIF."""
         try:
             exif_data = ExifMetadataHandler.read_exif(str(file_path))
-            datetime_original = exif_data.get("datetime_original")
-            if isinstance(datetime_original, datetime):
+            datetime_original = cast("datetime | None", exif_data.get("datetime_original"))
+            if datetime_original is not None:
                 return datetime_original.date()
         except (ValueError, AttributeError, OSError) as exc:
             # piexif fails on video files and other non-image formats
@@ -170,7 +170,7 @@ class ImportService:
 
     def _collect_files_to_import(self, source_path: Path) -> list[Path]:
         """Collect all files to import from the source path."""
-        files_to_import = []
+        files_to_import: list[Path] = []
         try:
             for file_path in source_path.rglob("*"):
                 if file_path.is_file():
