@@ -310,7 +310,10 @@ class TemporalIdentityClusterService:
         merged = 0
         already_merged: set[int] = set()
 
-        for cluster_id, vector in vectors.items():
+        for cluster_id in list(vectors):
+            vector = vectors.get(cluster_id)
+            if vector is None:
+                continue
             if cluster_id in already_merged:
                 continue
 
