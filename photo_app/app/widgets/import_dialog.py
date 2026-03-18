@@ -53,6 +53,7 @@ class ImportDialog(QDialog):
         self._face_index_service = face_index_service
         self._default_dest_path = default_dest_path
         self._thread_pool: QThreadPool | None = None  # Will be set by main window
+        self._is_running = False
 
         self.setWindowTitle("Import from Camera")
         self.setMinimumSize(600, 500)
@@ -207,6 +208,7 @@ class ImportDialog(QDialog):
         worker.signals.phase_changed.connect(self._progress_widget.on_phase_changed)
         worker.signals.finished.connect(self._on_import_finished)
         worker.signals.error.connect(self._on_import_error)
+        worker.signals.done.connect(self._on_import_done)
 
         # Show progress widget, hide start button
         self._start_btn.setEnabled(False)
@@ -231,6 +233,11 @@ class ImportDialog(QDialog):
         self._progress_widget.hide()
         self._summary_widget.show_error(error_msg)
         self._close_btn.setEnabled(True)
+
+    def _on_import_done(self) -> None:
+        """Always called when the worker exits — guarantees Close is enabled."""
+        self._close_btn.setEnabled(True)
+        self._is_running = False
 
     def _show_error(self, message: str) -> None:
         """Show error message."""

@@ -21,6 +21,7 @@ class ImportWorkerSignals(QObject):
     phase_changed = Signal(str)  # "copying" | "indexing" | "face_detection"
     finished = Signal(object)  # ImportSummary
     error = Signal(str)
+    done = Signal()  # add this — always emitted when run() exits
 
 
 class ImportWorker(QRunnable):
@@ -97,3 +98,5 @@ class ImportWorker(QRunnable):
             logger.exception("Error in ImportWorker")
             error_msg = f"{type(exc).__name__}: {exc}"
             self.signals.error.emit(error_msg)
+        finally:
+            self.signals.done.emit()
