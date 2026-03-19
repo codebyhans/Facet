@@ -78,9 +78,7 @@ class ImageIndexService:
                 continue
 
             try:
-                capture_date, width, height = self._load_image_metadata(
-                    file_path, None
-                )
+                capture_date, width, height = self._load_image_metadata(file_path, None)
                 image_hash = sha256(str_path.encode()).hexdigest()
                 entity = ImageEntity(
                     id=None,
@@ -94,7 +92,7 @@ class ImageIndexService:
                     indexed_at=now_utc(),
                 )
                 staged.append(entity)
-            except (OSError, UnidentifiedImageError, PermissionError):
+            except OSError, UnidentifiedImageError, PermissionError:
                 skipped += 1
                 continue
             except Exception:
@@ -177,7 +175,7 @@ class ImageIndexService:
                 # Skip thumbnail generation during indexing - generate on-demand while browsing
                 # This prevents crashes from problematic image files
 
-            except (OSError, UnidentifiedImageError, PermissionError, IsADirectoryError):
+            except OSError, UnidentifiedImageError, PermissionError, IsADirectoryError:
                 skipped += 1
                 continue
             except Exception:

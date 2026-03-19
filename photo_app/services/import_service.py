@@ -3,14 +3,13 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
 from photo_app.infrastructure.exif_handler import ExifMetadataHandler
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from datetime import date
     from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
@@ -137,15 +136,27 @@ class ImportService:
         return summary
 
     def _resolve_capture_date(self, file_path: Path) -> date | None:
-        """Read capture date from EXIF. Returns None for non-image files or missing EXIF."""
+        """Read capture date from EXIF, falling back to file modification date.
+
+        Falls back to the file's mtime if EXIF is unavailable or unreadable.
+        This applies to all file types including video.
+        """
         try:
             exif_data = ExifMetadataHandler.read_exif(str(file_path))
-            datetime_original = cast("datetime | None", exif_data.get("datetime_original"))
+            datetime_original = cast(
+                "datetime | None", exif_data.get("datetime_original")
+            )
             if datetime_original is not None:
                 return datetime_original.date()
         except (ValueError, AttributeError, OSError) as exc:
-            # piexif fails on video files and other non-image formats
             LOGGER.debug("Failed to read EXIF from %s: %s", file_path, exc)
+
+        # Fall back to file modification date (reliable for video files)
+        try:
+            mtime = file_path.stat().st_mtime
+            return datetime.fromtimestamp(mtime, tz=UTC).date()
+        except OSError as exc:
+            LOGGER.debug("Failed to read mtime from %s: %s", file_path, exc)
 
         return None
 

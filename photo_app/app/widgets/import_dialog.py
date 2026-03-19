@@ -219,7 +219,7 @@ class ImportDialog(QDialog):
         self._summary_widget.hide()
         self._close_btn.setEnabled(False)
         self._is_running = True
-        self._active_worker = worker          # Keep the worker alive
+        self._active_worker = worker  # Keep the worker alive
 
         # Start worker
         if self._thread_pool is not None:
@@ -241,7 +241,7 @@ class ImportDialog(QDialog):
         """Always called when the worker exits — guarantees Close is enabled."""
         self._close_btn.setEnabled(True)
         self._is_running = False
-        self._active_worker = None            # Release the reference
+        self._active_worker = None  # Release the reference
 
     def _show_error(self, message: str) -> None:
         """Show error message."""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -41,6 +42,27 @@ class ImportWorker(QRunnable):
         self._face_index_service = face_index_service
         self.signals = ImportWorkerSignals()
 
+    def _index_progress(self, current: int, total: int) -> None:
+        """Progress callback for indexing phase."""
+        with contextlib.suppress(RuntimeError):
+            self.signals.progress.emit(current, total, "")
+
+    def _cluster_progress(self, current: int, total: int) -> None:
+        """Progress callback for clustering phase."""
+        with contextlib.suppress(RuntimeError):
+            self.signals.progress.emit(current, total, "")
+
+    def _safe_progress_callback(self, current: int, total: int, filename: str) -> None:
+        """Safely emit progress signal from worker thread."""
+        try:
+            logger.debug("Progress: %s/%s - %s", current, total, filename)
+            self.signals.progress.emit(current, total, filename)
+        except RuntimeError as e:
+            # Qt object might be destroyed, ignore
+            logger.warning("Couldn't emit progress signal: %s", e)
+        except Exception:
+            logger.exception("Unexpected error in progress callback")
+
     @Slot()
     def run(self) -> None:
         """Run the import task in background thread."""
@@ -49,20 +71,9 @@ class ImportWorker(QRunnable):
             # Phase 1: Copy files
             self.signals.phase_changed.emit("copying")
 
-            def safe_progress_callback(current: int, total: int, filename: str) -> None:
-                """Safely emit progress signal from worker thread."""
-                try:
-                    logger.debug("Progress: %s/%s - %s", current, total, filename)
-                    self.signals.progress.emit(current, total, filename)
-                except RuntimeError as e:
-                    # Qt object might be destroyed, ignore
-                    logger.warning("Couldn't emit progress signal: %s", e)
-                except Exception:
-                    logger.exception("Unexpected error in progress callback")
-
             summary = self._import_service.run_import(
                 self._options,
-                on_progress=safe_progress_callback,
+                on_progress=self._safe_progress_callback,
             )
 
             # Phase 2: Index only the files that were just copied
@@ -75,15 +86,9 @@ class ImportWorker(QRunnable):
                         if result.dest_path is not None and result.status == "copied"
                     ]
 
-                    def index_progress(current: int, total: int) -> None:
-                        try:
-                            self.signals.progress.emit(current, total, "")
-                        except RuntimeError:
-                            pass
-
                     self._image_index_service.index_paths(
                         imported_paths,
-                        on_progress=index_progress,
+                        on_progress=self._index_progress,
                     )
                 except Exception as exc:
                     logger.exception("Indexing failed during import")
@@ -108,15 +113,8 @@ class ImportWorker(QRunnable):
                         self._face_index_service.get_identity_cluster_service()
                     )
                     if identity_cluster_service is not None:
-
-                        def cluster_progress(current: int, total: int) -> None:
-                            try:
-                                self.signals.progress.emit(current, total, "")
-                            except RuntimeError:
-                                pass
-
                         identity_cluster_service.index_new_faces(
-                            on_progress=cluster_progress,
+                            on_progress=self._cluster_progress,
                         )
 
                     # Invalidate query cache so the library refreshes
