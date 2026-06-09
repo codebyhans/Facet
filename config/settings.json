@@ -26,7 +26,37 @@
         "location_name": null,
         "gps_radius_km": null
       },
-      "children": []
+      "children": [
+        {
+          "node_id": "f-9d2dcaa2e3b84d15abef9614f179737c",
+          "name": "Ferier",
+          "kind": "folder",
+          "album_id": null,
+          "query_definition": null,
+          "children": [
+            {
+              "node_id": "v-3",
+              "name": "Europatur 2026",
+              "kind": "virtual",
+              "album_id": 3,
+              "query_definition": {
+                "person_ids": [],
+                "cluster_ids": [],
+                "tag_names": [],
+                "rating_min": null,
+                "quality_min": null,
+                "camera_models": [],
+                "date_from": "2026-03-20",
+                "date_to": "2026-05-06",
+                "location_name": null,
+                "gps_radius_km": null,
+                "flags": []
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
     },
     {
       "node_id": "f-0f5544142d6f4f8dbc0a57aaf9e2911d",
@@ -97,5 +127,5 @@
     1098,
     424
   ],
-  "last_opened_album": 1
+  "last_opened_album": 3
 }

@@ -39,6 +39,7 @@ from photo_app.app.widgets.album_tree import AlbumTreeWidget
 from photo_app.app.widgets.filter_bar import FilterBarWidget
 from photo_app.app.widgets.image_detail_panel import ImageDetailPanel
 from photo_app.app.widgets.import_dialog import ImportDialog
+from photo_app.app.widgets.iphone_import_dialog import IPhoneImportDialog
 from photo_app.app.widgets.metadata_editor import MetadataEditorPanel
 from photo_app.app.widgets.people_browser import PeopleBrowser
 from photo_app.app.widgets.photo_grid import PhotoGridWidget
@@ -535,6 +536,9 @@ class MainWindow(QMainWindow):
 
         import_action = file_menu.addAction("Import from camera...")
         import_action.triggered.connect(self._open_import_dialog)
+
+        iphone_action = file_menu.addAction("Import from iPhone...")
+        iphone_action.triggered.connect(self._open_iphone_import_dialog)
 
         file_menu.addSeparator()
 
@@ -1488,6 +1492,17 @@ class MainWindow(QMainWindow):
     def _open_import_dialog(self) -> None:
         """Open the import dialog."""
         dialog = ImportDialog(
+            image_index_service=self._image_index_service,
+            face_index_service=self._face_index_service,
+            default_dest_path=self._settings_service.get_runtime_settings().photo_root_dir,
+            parent=self,
+        )
+        dialog.set_thread_pool(self._thread_pool)
+        dialog.exec()
+
+    def _open_iphone_import_dialog(self) -> None:
+        """Open the iPhone import dialog."""
+        dialog = IPhoneImportDialog(
             image_index_service=self._image_index_service,
             face_index_service=self._face_index_service,
             default_dest_path=self._settings_service.get_runtime_settings().photo_root_dir,
