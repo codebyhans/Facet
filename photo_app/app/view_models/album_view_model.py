@@ -166,6 +166,14 @@ class AlbumViewModel(QObject):
             offset=offset, limit=limit, query_definition=query_definition
         )
 
+    def is_unfiltered_album(self, album_id: int) -> bool:
+        """Return True when the album shows the whole library (no criteria)."""
+        try:
+            return self._album_service.is_unfiltered_album(album_id)
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(str(exc))
+            return False
+
     def list_filter_people(self) -> list[Person]:
         """Return named person options for the filter editor."""
         people = self._safe_call(

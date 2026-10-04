@@ -44,6 +44,32 @@ def test_album_tree_add_and_move() -> None:
     assert model.rowCount() == TOP_LEVEL_AFTER_MOVE
 
 
+def test_album_tree_reorder_within_parent() -> None:
+    model = AlbumTreeModel()
+    model.set_nodes(
+        [
+            AlbumTreeNode(node_id="f-root", name="Root", kind="folder"),
+        ]
+    )
+    model.add_node(
+        AlbumTreeNode(node_id="v-1", name="Alpha", kind="virtual", album_id=1), "f-root"
+    )
+    model.add_node(
+        AlbumTreeNode(node_id="v-2", name="Beta", kind="virtual", album_id=2), "f-root"
+    )
+    model.add_node(
+        AlbumTreeNode(node_id="v-3", name="Gamma", kind="virtual", album_id=3), "f-root"
+    )
+
+    assert model.node_position("v-3") == ("f-root", 2)
+
+    moved = model.move_node("v-3", "f-root", 0)
+    assert moved
+    assert model.node_position("v-3") == ("f-root", 0)
+    assert model.node_position("v-1") == ("f-root", 1)
+    assert model.node_position("v-2") == ("f-root", 2)
+
+
 def test_album_tree_prevents_subtree_move() -> None:
     model = AlbumTreeModel()
     child = AlbumTreeNode(node_id="f-child", name="Child", kind="folder")

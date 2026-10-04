@@ -27,6 +27,7 @@ class KeyboardShortcuts(NamedTuple):
     BATCH_FACES: str = "Ctrl+B"  # Batch face tagging
     NEW_VIRTUAL_ALBUM: str = "Ctrl+Alt+A"  # Create virtual album from filter
     FIND_ALBUM: str = "Ctrl+F"  # Find/filter albums
+    DELETE_PHOTOS: str = "Shift+Delete"  # Permanently delete selected photo(s)
 
     # Image flagging
     FLAG_KEEP: str = "P"  # Mark image as keep
@@ -84,6 +85,7 @@ def describe_shortcuts() -> dict[str, str]:
         "Batch Face Tagging": shortcuts.BATCH_FACES,
         "Create Virtual Album": shortcuts.NEW_VIRTUAL_ALBUM,
         "Find Album": shortcuts.FIND_ALBUM,
+        "Delete Photos Permanently": shortcuts.DELETE_PHOTOS,
         "Flag as Keep": shortcuts.FLAG_KEEP,
         "Flag as Discard": shortcuts.FLAG_DISCARD,
         "Flag as Undecided": shortcuts.FLAG_UNDECIDED,

@@ -55,6 +55,7 @@ class ImportDialog(QDialog):
         self._thread_pool: QThreadPool | None = None  # Will be set by main window
         self._is_running = False
         self._active_worker: ImportWorker | None = None
+        self._last_summary: ImportSummary | None = None
 
         self.setWindowTitle("Import from Camera")
         self.setMinimumSize(600, 500)
@@ -225,8 +226,13 @@ class ImportDialog(QDialog):
         if self._thread_pool is not None:
             self._thread_pool.start(worker)
 
+    def files_copied(self) -> int:
+        """Return number of files copied in the last import, or 0 if none ran."""
+        return self._last_summary.copied if self._last_summary else 0
+
     def _on_import_finished(self, summary: ImportSummary) -> None:
         """Handle import completion."""
+        self._last_summary = summary
         self._progress_widget.hide()
         self._summary_widget.show_summary(summary)
         self._close_btn.setEnabled(True)
@@ -371,6 +377,7 @@ class ImportSummaryWidget(QWidget):
         # Set stats
         stats_text = (
             f"{summary.copied} files copied  •  "
+            f"{summary.skipped_duplicates} already in library  •  "
             f"{summary.failed} failed  •  "
             f"{summary.no_capture_date_count} without capture date"
         )

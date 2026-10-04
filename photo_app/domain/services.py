@@ -40,6 +40,8 @@ def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
     location_name = _parse_location_name(definition.get("location_name"))
     gps_radius_km = _parse_gps_radius(definition.get("gps_radius_km"))
     flags = _parse_flags(definition.get("flags"))
+    raw_has_date = definition.get("has_date")
+    has_date = raw_has_date if isinstance(raw_has_date, bool) else None
 
     return AlbumQuery(
         person_ids=person_ids,
@@ -53,6 +55,7 @@ def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
         location_name=location_name,
         gps_radius_km=gps_radius_km,
         flags=flags,
+        has_date=has_date,
     )
 
 

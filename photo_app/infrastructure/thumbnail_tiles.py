@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 
 from photo_app.infrastructure.sqlalchemy_models import ImageModel, ThumbnailTileModel
 
+_VIDEO_SUFFIXES = frozenset({".mov", ".mp4", ".avi", ".mts", ".m2ts", ".3gp"})
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -28,7 +30,16 @@ class TileBuildResult:
 
 @dataclass(frozen=True)
 class ImageTileLookup:
-    """Tile lookup payload for one image."""
+    """Tile lookup payload for one image.
+
+    `image_width`/`image_height` are the source photo's own EXIF-corrected
+    dimensions (from `ImageModel.width/height`, joined in for free) — not
+    the tile cell size. Combined with `width`/`height` (the fixed cell
+    size the photo was fit-and-centered into), this is everything needed
+    to map a bbox from the original photo's coordinate space onto this
+    tile crop without ever opening the full-resolution source — see
+    `image_loading.render_face_highlight_from_tile`.
+    """
 
     image_id: int
     tile_index: int
@@ -38,6 +49,8 @@ class ImageTileLookup:
     y: int
     width: int
     height: int
+    image_width: int
+    image_height: int
 
 
 class ThumbnailTileBuilder:
@@ -198,6 +211,8 @@ class ThumbnailTileBuilder:
         tile_canvas.save(tile_path, format="PNG")
 
     def _load_thumbnail(self, source_path: Path) -> Image.Image | None:
+        if source_path.suffix.lower() in _VIDEO_SUFFIXES:
+            return None
         try:
             with Image.open(source_path) as source:
                 oriented = ImageOps.exif_transpose(source).convert("RGB")
@@ -252,12 +267,15 @@ class ThumbnailTileStore:
     def get_image_tile(self, image_id: int) -> ImageTileLookup | None:
         """Return tile lookup details for one image id."""
         with Session(self._engine) as session:
-            stmt = select(ThumbnailTileModel).where(
-                ThumbnailTileModel.image_id == image_id
+            stmt = (
+                select(ThumbnailTileModel, ImageModel.width, ImageModel.height)
+                .join(ImageModel, ImageModel.id == ThumbnailTileModel.image_id)
+                .where(ThumbnailTileModel.image_id == image_id)
             )
-            row = session.scalar(stmt)
-            if row is None:
+            row_result = session.execute(stmt).first()
+            if row_result is None:
                 return None
+            row, image_width, image_height = row_result
             grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
             col = row.position_in_tile % grid_width
             line = row.position_in_tile // grid_width
@@ -270,6 +288,8 @@ class ThumbnailTileStore:
                 y=line * self._thumbnail_size[1],
                 width=self._thumbnail_size[0],
                 height=self._thumbnail_size[1],
+                image_width=image_width,
+                image_height=image_height,
             )
 
     def get_image_tiles_batch(self, image_ids: list[int]) -> dict[int, ImageTileLookup]:
@@ -277,12 +297,14 @@ class ThumbnailTileStore:
         if not image_ids:
             return {}
         with Session(self._engine) as session:
-            stmt = select(ThumbnailTileModel).where(
-                ThumbnailTileModel.image_id.in_(image_ids)
+            stmt = (
+                select(ThumbnailTileModel, ImageModel.width, ImageModel.height)
+                .join(ImageModel, ImageModel.id == ThumbnailTileModel.image_id)
+                .where(ThumbnailTileModel.image_id.in_(image_ids))
             )
             grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
             result: dict[int, ImageTileLookup] = {}
-            for row in session.scalars(stmt):
+            for row, image_width, image_height in session.execute(stmt):
                 col = row.position_in_tile % grid_width
                 line = row.position_in_tile // grid_width
                 result[row.image_id] = ImageTileLookup(
@@ -292,6 +314,8 @@ class ThumbnailTileStore:
                     position_in_tile=row.position_in_tile,
                     x=col * self._thumbnail_size[0],
                     y=line * self._thumbnail_size[1],
+                    image_width=image_width,
+                    image_height=image_height,
                     width=self._thumbnail_size[0],
                     height=self._thumbnail_size[1],
                 )

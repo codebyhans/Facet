@@ -55,7 +55,7 @@ class ImageModel(Base):
 
 
 class PersonModel(Base):
-    """Detected person cluster."""
+    """Name tag: a name plus (usually) a fixed birth date."""
 
     __tablename__ = "persons"
 
@@ -63,15 +63,9 @@ class PersonModel(Base):
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    identity_cluster_id: Mapped[int | None] = mapped_column(
-        ForeignKey("identity_clusters.id"),
-        nullable=True,
-        unique=True,
-        index=True,
-    )
 
     faces: Mapped[list[FaceModel]] = relationship(back_populates="person")
-    identity_cluster: Mapped[IdentityClusterModel | None] = relationship(
+    clusters: Mapped[list[IdentityClusterModel]] = relationship(
         back_populates="person",
     )
 
@@ -121,12 +115,14 @@ class IdentityClusterModel(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-
-    person: Mapped[PersonModel | None] = relationship(back_populates="identity_cluster")
-    memberships: Mapped[list[FaceClusterMembershipModel]] = relationship(
-        back_populates="cluster",
+    person_id: Mapped[int | None] = mapped_column(
+        ForeignKey("persons.id"),
+        nullable=True,
+        index=True,
     )
-    temporal_embeddings: Mapped[list[ClusterEmbeddingModel]] = relationship(
+
+    person: Mapped[PersonModel | None] = relationship(back_populates="clusters")
+    memberships: Mapped[list[FaceClusterMembershipModel]] = relationship(
         back_populates="cluster",
     )
 
@@ -153,28 +149,6 @@ class FaceClusterMembershipModel(Base):
 
     face: Mapped[FaceModel] = relationship(back_populates="cluster_membership")
     cluster: Mapped[IdentityClusterModel] = relationship(back_populates="memberships")
-
-
-class ClusterEmbeddingModel(Base):
-    """Per-life-stage cluster embedding profile."""
-
-    __tablename__ = "cluster_embeddings"
-    __table_args__ = (UniqueConstraint("cluster_id", "time_period"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    cluster_id: Mapped[int] = mapped_column(
-        ForeignKey("identity_clusters.id"),
-        nullable=False,
-        index=True,
-    )
-    time_period: Mapped[str] = mapped_column(String(32), nullable=False)
-    embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-
-    cluster: Mapped[IdentityClusterModel] = relationship(
-        back_populates="temporal_embeddings",
-    )
 
 
 class ImageTagModel(Base):

@@ -26,6 +26,7 @@ env/
 # === App runtime data ===
 # Database, thumbnail tiles, face embeddings, ML model cache
 photo_app_data/
+photo_app_data*/
 
 # === User config / settings ===
 # Contains window state, last-opened album, album tree — machine-specific

@@ -37,6 +37,8 @@ class GalleryViewModel(QObject):
     loading_finished = Signal()
     tile_building_started = Signal()
     tile_building_finished = Signal()
+    # Emitted on each album/library load: whether the Dated/Undated tabs apply
+    date_tabs_available = Signal(bool)
 
     def __init__(
         self,
@@ -88,6 +90,10 @@ class GalleryViewModel(QObject):
         # Filter state management
         self._filter_query_definition: dict[str, object] | None = None
 
+        # Dated/Undated tabs: only applied when viewing the whole library
+        self._date_tabs_active = False
+        self._date_tab_has_date = True
+
     def select_album(
         self, album_id: int, query_definition: dict[str, object] | None = None
     ) -> None:
@@ -102,6 +108,18 @@ class GalleryViewModel(QObject):
     def get_current_album_id(self) -> int | None:
         """Get the currently selected album ID."""
         return self._current_album_id
+
+    def refresh_current(self) -> None:
+        """Reload the currently selected album/library from scratch.
+
+        Equivalent to re-selecting the current view (e.g. what happens when
+        switching albums and coming back), used as a guaranteed-correct
+        fallback after operations like permanent delete.
+        """
+        if self._library_mode:
+            self.select_library(query_definition=self._current_query_definition)
+        elif self._current_album_id is not None:
+            self.select_album(self._current_album_id, self._current_query_definition)
 
     def select_library(self, query_definition: dict[str, object] | None = None) -> None:
         """Load first page for all-library browsing with debouncing."""
@@ -123,6 +141,22 @@ class GalleryViewModel(QObject):
             self.select_library(query_definition=query_definition)
         elif self._current_album_id is not None:
             self.select_album(self._current_album_id, combined_query)
+
+    def set_date_tab(self, *, has_date: bool) -> None:
+        """Switch between the Dated (True) and Undated (False) library tabs."""
+        if has_date == self._date_tab_has_date:
+            return
+        self._date_tab_has_date = has_date
+        if self._date_tabs_active:
+            self.refresh_current()
+
+    def _effective_query(self) -> dict[str, object] | None:
+        if not self._date_tabs_active:
+            return self._current_query_definition
+        return {
+            **(self._current_query_definition or {}),
+            "has_date": self._date_tab_has_date,
+        }
 
     def _combine_queries(
         self,
@@ -214,6 +248,9 @@ class GalleryViewModel(QObject):
             )
         self._tile_building = False
         self.tile_building_finished.emit()
+        self._offset = (
+            0  # Reload from the start so the tile-refresh replaces page 1, not page 2+
+        )
         self._load_page(append=False)
 
     def _load_page(self, *, append: bool) -> None:
@@ -223,7 +260,7 @@ class GalleryViewModel(QObject):
                 self._album_view_model.resolve_library_images,
                 offset=self._offset,
                 limit=self._page_size,
-                query_definition=self._current_query_definition,
+                query_definition=self._effective_query(),
             )
         else:
             album_id = self._current_album_id
@@ -235,7 +272,7 @@ class GalleryViewModel(QObject):
                 album_id,
                 offset=self._offset,
                 limit=self._page_size,
-                query_definition=self._current_query_definition,
+                query_definition=self._effective_query(),
             )
 
         # Create a closure that captures the append parameter and current epoch
@@ -341,6 +378,10 @@ class GalleryViewModel(QObject):
         if self._pending_album_id is not None:
             self._library_mode = False
             self._current_album_id = self._pending_album_id
+            self._date_tabs_active = self._album_view_model.is_unfiltered_album(
+                self._pending_album_id
+            )
+            self.date_tabs_available.emit(self._date_tabs_active)
             self._offset = 0
             self._has_more = True
             self.status.emit(f"Loading album {self._pending_album_id}...")
@@ -350,6 +391,8 @@ class GalleryViewModel(QObject):
         elif self._pending_library_mode:
             self._library_mode = True
             self._current_album_id = None
+            self._date_tabs_active = True
+            self.date_tabs_available.emit(self._date_tabs_active)
             self._offset = 0
             self._has_more = True
             self.status.emit("Loading library...")

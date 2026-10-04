@@ -3,13 +3,27 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import QEvent, QModelIndex, QSize, Qt, QTimer, Signal
-from PySide6.QtWidgets import QListView
+from PySide6.QtWidgets import QListView, QMenu
 
 from photo_app.app.models.photo_grid_model import PhotoGridModel
 from photo_app.app.widgets.photo_grid_delegate import PhotoGridDelegate
 
 if TYPE_CHECKING:
-    from PySide6.QtGui import QKeyEvent, QMouseEvent, QResizeEvent, QShowEvent
+    from PySide6.QtGui import (
+        QContextMenuEvent,
+        QKeyEvent,
+        QMouseEvent,
+        QResizeEvent,
+        QShowEvent,
+        QWheelEvent,
+    )
+
+# Ctrl+scroll zoom bounds, relative to the model's configured thumbnail size
+_ZOOM_SCALE_MIN = 0.35
+_ZOOM_SCALE_MAX = 3.0
+_ZOOM_STEP_PER_NOTCH = 1.1
+_THUMB_PX_MIN = 32
+_THUMB_PX_MAX = 640
 
 
 class PhotoGridWidget(QListView):
@@ -17,6 +31,7 @@ class PhotoGridWidget(QListView):
 
     photoActivated = Signal(int)  # noqa: N815
     flagChanged = Signal(object, object)  # noqa: N815  # index, flag_value
+    deletePhotosRequested = Signal(list)  # noqa: N815  # list[int] of image_ids
 
     def __init__(self, model: PhotoGridModel, parent: QListView | None = None) -> None:
         super().__init__(parent)
@@ -27,9 +42,10 @@ class PhotoGridWidget(QListView):
         self.setUniformItemSizes(True)
         self.setWrapping(True)
         self.setWordWrap(True)
-        self.setSelectionMode(QListView.SelectionMode.SingleSelection)
+        self.setSelectionMode(QListView.SelectionMode.ExtendedSelection)
         self.setSpacing(10)
         self.setIconSize(QSize(180, 180))
+        self._zoom_scale = 1.0
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.doubleClicked.connect(self._on_double_click)
 
@@ -65,21 +81,38 @@ class PhotoGridWidget(QListView):
         super().resizeEvent(event)
         self._update_grid_size()
 
+    @override
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        """Handle Ctrl+scroll to zoom the thumbnail grid in/out."""
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            notches = event.angleDelta().y() / 120
+            if notches:
+                new_scale = self._zoom_scale * (_ZOOM_STEP_PER_NOTCH**notches)
+                self._zoom_scale = min(_ZOOM_SCALE_MAX, max(_ZOOM_SCALE_MIN, new_scale))
+                self._update_grid_size()
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def _effective_thumbnail_size(self) -> tuple[int, int]:
+        """Return the current on-screen thumbnail size (model size x zoom)."""
+        model = self.model()
+        if model is not None and hasattr(model, "thumbnail_size"):
+            base_w, base_h = model.thumbnail_size
+        else:
+            base_w, base_h = (128, 128)
+
+        w = max(_THUMB_PX_MIN, min(_THUMB_PX_MAX, round(base_w * self._zoom_scale)))
+        h = max(_THUMB_PX_MIN, min(_THUMB_PX_MAX, round(base_h * self._zoom_scale)))
+        return w, h
+
     def _update_grid_size(self) -> None:
         """Calculate and set grid size to fill viewport width with even distribution."""
         viewport_width = self.viewport().width()
         if viewport_width <= 0:
             return
 
-        # Use the configured thumbnail size from the model
-        model = self.model()
-        if model is not None and hasattr(model, "thumbnail_size"):
-            thumbnail_size = model.thumbnail_size
-        else:
-            # Fallback to default size
-            thumbnail_size = (128, 128)
-
-        thumb_w, thumb_h = thumbnail_size
+        thumb_w, thumb_h = self._effective_thumbnail_size()
 
         # Calculate how many thumbnails fit per row (minimum 1)
         cols = max(1, viewport_width // thumb_w)
@@ -89,7 +122,18 @@ class PhotoGridWidget(QListView):
 
         # Set grid size - add some padding for spacing and labels
         label_padding = 20  # Space for labels if any
-        self.setGridSize(QSize(cell_w, thumb_h + label_padding))
+        new_grid_size = QSize(cell_w, thumb_h + label_padding)
+        new_icon_size = QSize(thumb_w, thumb_h)
+        size_changed = (
+            new_grid_size != self.gridSize() or new_icon_size != self.iconSize()
+        )
+        self.setGridSize(new_grid_size)
+        self.setIconSize(new_icon_size)
+        if size_changed:
+            # setUniformItemSizes() caches the delegate's sizeHint()-derived item
+            # size the first time it's computed; changing iconSize/gridSize alone
+            # doesn't invalidate that cache, so force a relayout to pick it up.
+            self.doItemsLayout()
 
     @override
     def showEvent(self, event: QShowEvent) -> None:
@@ -150,9 +194,30 @@ class PhotoGridWidget(QListView):
         if hasattr(self, "flagChanged"):
             self.flagChanged.emit(index, flag_value)
 
+    def _selected_image_ids(self) -> list[int]:
+        """Return image IDs for all currently selected rows."""
+        model = self.model()
+        if not isinstance(model, PhotoGridModel):
+            return []
+        ids: list[int] = []
+        for index in self.selectedIndexes():
+            image_id = model.data(index, PhotoGridModel.ImageIdRole)
+            if isinstance(image_id, int):
+                ids.append(image_id)
+        return ids
+
     @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Handle keyboard shortcuts for flagging images."""
+        """Handle keyboard shortcuts for flagging and deleting images."""
+        key = Qt.Key(event.key())
+        modifiers = event.modifiers()
+
+        if key == Qt.Key.Key_Delete and modifiers == Qt.KeyboardModifier.ShiftModifier:
+            image_ids = self._selected_image_ids()
+            if image_ids:
+                self.deletePhotosRequested.emit(image_ids)
+            return
+
         if not self.currentIndex().isValid():
             super().keyPressEvent(event)
             return
@@ -166,9 +231,6 @@ class PhotoGridWidget(QListView):
             return
 
         # Handle flagging shortcuts
-        key = Qt.Key(event.key())
-        modifiers = event.modifiers()
-
         if modifiers == Qt.KeyboardModifier.NoModifier:
             flag_by_key: dict[Qt.Key, str | None] = {
                 Qt.Key.Key_P: "keep",
@@ -177,10 +239,37 @@ class PhotoGridWidget(QListView):
                 Qt.Key.Key_Backspace: None,
             }
             if key in flag_by_key:
-                self._on_flag_changed(current_index, flag_by_key[key])
+                flag_value = flag_by_key[key]
+                targets = self.selectedIndexes() or [current_index]
+                for index in targets:
+                    self._on_flag_changed(index, flag_value)
                 return
 
         super().keyPressEvent(event)
+
+    @override
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        """Show a context menu with permanent delete for the selected photo(s)."""
+        index = self.indexAt(event.pos())
+        if index.isValid() and not self.selectionModel().isSelected(index):
+            self.setCurrentIndex(index)
+            self.selectionModel().select(
+                index, self.selectionModel().SelectionFlag.ClearAndSelect
+            )
+
+        image_ids = self._selected_image_ids()
+        if not image_ids:
+            return
+
+        label = (
+            "Delete Permanently…"
+            if len(image_ids) == 1
+            else f"Delete {len(image_ids)} Photos Permanently…"
+        )
+        menu = QMenu(self)
+        action = menu.addAction(label)
+        action.triggered.connect(lambda: self.deletePhotosRequested.emit(image_ids))
+        menu.exec(event.globalPos())
 
     @override
     def mouseMoveEvent(self, event: QMouseEvent) -> None:

@@ -1,35 +1,39 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from sqlalchemy import and_, exists, func, nulls_last, select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from photo_app.domain.models import (
     Album,
-    ClusterEmbedding,
     Face,
     FaceClusterMembership,
+    FaceStackRow,
     IdentityCluster,
     Image,
+    ImageSummary,
     Person,
 )
 from photo_app.domain.value_objects import AlbumQuery, BoundingBox
 from photo_app.infrastructure.sqlalchemy_models import (
     AlbumModel,
+    AlbumQueryCacheModel,
     AppSettingModel,
-    ClusterEmbeddingModel,
     FaceClusterMembershipModel,
     FaceModel,
     IdentityClusterModel,
     ImageModel,
     ImageTagModel,
     PersonModel,
+    ThumbnailTileModel,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from sqlalchemy.engine import Engine
 
@@ -74,6 +78,15 @@ def _to_face(entity: FaceModel) -> Face:
         confidence_score=entity.confidence_score,
         manual_assignment=entity.manual_assignment,
         excluded=entity.excluded,
+    )
+
+
+def _to_person(entity: PersonModel) -> Person:
+    return Person(
+        id=entity.id,
+        name=entity.name,
+        created_at=entity.created_at,
+        birth_date=entity.birth_date,
     )
 
 
@@ -139,6 +152,7 @@ def _to_identity_cluster(entity: IdentityClusterModel) -> IdentityCluster:
         flagged_for_review=entity.flagged_for_review,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
+        person_id=entity.person_id,
     )
 
 
@@ -148,17 +162,6 @@ def _to_membership(entity: FaceClusterMembershipModel) -> FaceClusterMembership:
         cluster_id=entity.cluster_id,
         confidence=entity.confidence,
         assigned_at=entity.assigned_at,
-    )
-
-
-def _to_cluster_embedding(entity: ClusterEmbeddingModel) -> ClusterEmbedding:
-    return ClusterEmbedding(
-        id=entity.id,
-        cluster_id=entity.cluster_id,
-        time_period=entity.time_period,
-        embedding=entity.embedding,
-        sample_count=entity.sample_count,
-        updated_at=entity.updated_at,
     )
 
 
@@ -173,6 +176,18 @@ def _parse_query_date(raw: object) -> date | None:
         except ValueError:
             return None
     return None
+
+
+# SQLite's default build caps bound parameters per statement at 999; chunking
+# `IN (...)` lookups keeps id-list queries working regardless of how large
+# the input collection is (e.g. resetting identities across a whole library).
+_ID_CHUNK_SIZE = 500
+_T = TypeVar("_T")
+
+
+def _chunked(items: Sequence[_T], size: int = _ID_CHUNK_SIZE) -> Iterator[Sequence[_T]]:
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
 
 
 class SqlAlchemyImageRepository:
@@ -236,6 +251,30 @@ class SqlAlchemyImageRepository:
             stmt = select(ImageModel)
             return [_to_image(row) for row in session.scalars(stmt)]
 
+    def list_all_summary(self) -> list[ImageSummary]:
+        """Lightweight projection for grouping/display — skips large optional
+        text columns (user_notes, location_name, etc.) that callers like
+        `person_stacks()` never touch, cutting the row size (and Python
+        object allocation) considerably at library scale."""
+        with Session(self._engine) as session:
+            stmt = select(
+                ImageModel.id,
+                ImageModel.file_path,
+                ImageModel.width,
+                ImageModel.height,
+                ImageModel.capture_date,
+            )
+            return [
+                ImageSummary(
+                    id=row.id,
+                    file_path=row.file_path,
+                    width=row.width,
+                    height=row.height,
+                    capture_date=row.capture_date,
+                )
+                for row in session.execute(stmt)
+            ]
+
     def list_paginated(self, *, offset: int, limit: int) -> list[Image]:
         """Paginated query to avoid loading all images into memory."""
         with Session(self._engine) as session:
@@ -261,6 +300,7 @@ class SqlAlchemyImageRepository:
         quality_min: float | None = None,
         camera_models: Sequence[str] = (),
         flags: Sequence[str] = (),
+        has_date: bool | None = None,
         offset: int,
         limit: int,
     ) -> list[Image]:
@@ -274,6 +314,7 @@ class SqlAlchemyImageRepository:
             quality_min=quality_min,
             camera_models=camera_models,
             flags=flags,
+            has_date=has_date,
         )
         page_ids = ordered_ids[offset : offset + limit]
         return self.list_by_ids(page_ids)
@@ -290,46 +331,57 @@ class SqlAlchemyImageRepository:
         quality_min: float | None = None,
         camera_models: Sequence[str] = (),
         flags: Sequence[str] = (),
+        has_date: bool | None = None,
     ) -> list[int]:
         with Session(self._engine) as session:
             stmt = select(ImageModel.id)
 
+            # Dated / undated split (undated images never match a date range)
+            if has_date is True:
+                stmt = stmt.where(ImageModel.capture_date.is_not(None))
+            elif has_date is False:
+                stmt = stmt.where(ImageModel.capture_date.is_(None))
+
+            # People/cluster/tag filters use uncorrelated IN subqueries: SQLite
+            # evaluates them once. A correlated EXISTS made it rescan every face
+            # of the person for each image (~minutes for a large library).
+
             # Filter by people
             if person_ids:
-                person_clause = exists(
-                    select(FaceModel.id).where(
-                        FaceModel.image_id == ImageModel.id,
-                        FaceModel.excluded.is_(False),
-                        FaceModel.person_id.in_(person_ids),
+                stmt = stmt.where(
+                    ImageModel.id.in_(
+                        select(FaceModel.image_id).where(
+                            FaceModel.excluded.is_(False),
+                            FaceModel.person_id.in_(person_ids),
+                        )
                     )
                 )
-                stmt = stmt.where(person_clause)
 
             # Filter by clusters
             if cluster_ids:
-                cluster_clause = exists(
-                    select(FaceModel.id)
-                    .join(
-                        FaceClusterMembershipModel,
-                        FaceClusterMembershipModel.face_id == FaceModel.id,
-                    )
-                    .where(
-                        FaceModel.image_id == ImageModel.id,
-                        FaceModel.excluded.is_(False),
-                        FaceClusterMembershipModel.cluster_id.in_(cluster_ids),
+                stmt = stmt.where(
+                    ImageModel.id.in_(
+                        select(FaceModel.image_id)
+                        .join(
+                            FaceClusterMembershipModel,
+                            FaceClusterMembershipModel.face_id == FaceModel.id,
+                        )
+                        .where(
+                            FaceModel.excluded.is_(False),
+                            FaceClusterMembershipModel.cluster_id.in_(cluster_ids),
+                        )
                     )
                 )
-                stmt = stmt.where(cluster_clause)
 
             # Filter by tags
             if tag_names:
-                tag_clause = exists(
-                    select(ImageTagModel.id).where(
-                        ImageTagModel.image_id == ImageModel.id,
-                        ImageTagModel.tag_name.in_(tag_names),
+                stmt = stmt.where(
+                    ImageModel.id.in_(
+                        select(ImageTagModel.image_id).where(
+                            ImageTagModel.tag_name.in_(tag_names)
+                        )
                     )
                 )
-                stmt = stmt.where(tag_clause)
 
             # Filter by rating
             if rating_min is not None:
@@ -367,8 +419,10 @@ class SqlAlchemyImageRepository:
         with Session(self._engine) as session:
             if not image_ids:
                 return []
-            stmt = select(ImageModel).where(ImageModel.id.in_(image_ids))
-            by_id = {row.id: _to_image(row) for row in session.scalars(stmt)}
+            by_id: dict[int, Image] = {}
+            for chunk in _chunked(image_ids):
+                stmt = select(ImageModel).where(ImageModel.id.in_(chunk))
+                by_id.update((row.id, _to_image(row)) for row in session.scalars(stmt))
             ordered: list[Image] = []
             for image_id in image_ids:
                 image = by_id.get(image_id)
@@ -397,6 +451,87 @@ class SqlAlchemyImageRepository:
         with Session(self._engine) as session:
             stmt = select(ImageModel.file_path)
             return [str(row) for row in session.scalars(stmt)]
+
+    def list_without_capture_date(self) -> list[Image]:
+        """Return all images that have no capture_date stored."""
+        with Session(self._engine) as session:
+            stmt = select(ImageModel).where(ImageModel.capture_date.is_(None))
+            return [_to_image(row) for row in session.scalars(stmt)]
+
+    def list_without_real_timestamp(self) -> list[Image]:
+        """Return images with no capture_date, or capture_date at exactly midnight (folder-date fallback)."""
+        with Session(self._engine) as session:
+            stmt = select(ImageModel).where(
+                ImageModel.capture_date.is_(None)
+                | (func.strftime("%H:%M:%S", ImageModel.capture_date) == "00:00:00")
+            )
+            return [_to_image(row) for row in session.scalars(stmt)]
+
+    def update_capture_date(self, image_id: int, capture_date: datetime) -> None:
+        """Set capture_date (and year/month) for an image."""
+        with Session(self._engine) as session:
+            stmt = select(ImageModel).where(ImageModel.id == image_id)
+            row = session.scalar(stmt)
+            if row is not None:
+                row.capture_date = capture_date
+                row.year = capture_date.year
+                row.month = capture_date.month
+                session.commit()
+
+    def delete_by_paths(self, paths: list[str]) -> int:
+        """Delete images (and all dependent rows) for the given file paths.
+
+        Deletion order follows FK constraints:
+        face_cluster_memberships -> faces -> image_tags -> thumbnail_tiles
+        -> album_query_cache -> images
+        """
+        if not paths:
+            return 0
+        with Session(self._engine) as session:
+            ids: list[int] = []
+            for path_chunk in _chunked(paths):
+                ids.extend(
+                    session.scalars(
+                        select(ImageModel.id).where(
+                            ImageModel.file_path.in_(path_chunk)
+                        )
+                    )
+                )
+            if not ids:
+                return 0
+            face_ids: list[int] = []
+            for chunk in _chunked(ids):
+                face_ids.extend(
+                    session.scalars(
+                        select(FaceModel.id).where(FaceModel.image_id.in_(chunk))
+                    )
+                )
+            for chunk in _chunked(face_ids):
+                session.execute(
+                    sa_delete(FaceClusterMembershipModel).where(
+                        FaceClusterMembershipModel.face_id.in_(chunk)
+                    )
+                )
+            for chunk in _chunked(ids):
+                session.execute(
+                    sa_delete(FaceModel).where(FaceModel.image_id.in_(chunk))
+                )
+                session.execute(
+                    sa_delete(ImageTagModel).where(ImageTagModel.image_id.in_(chunk))
+                )
+                session.execute(
+                    sa_delete(ThumbnailTileModel).where(
+                        ThumbnailTileModel.image_id.in_(chunk)
+                    )
+                )
+                session.execute(
+                    sa_delete(AlbumQueryCacheModel).where(
+                        AlbumQueryCacheModel.image_id.in_(chunk)
+                    )
+                )
+                session.execute(sa_delete(ImageModel).where(ImageModel.id.in_(chunk)))
+            session.commit()
+            return len(ids)
 
 
 class SqlAlchemyFaceRepository:
@@ -434,6 +569,33 @@ class SqlAlchemyFaceRepository:
             stmt = select(FaceModel).where(FaceModel.excluded.is_(False))
             return [_to_face(row) for row in session.scalars(stmt)]
 
+    def list_active_stack_rows(self) -> list[FaceStackRow]:
+        """Lightweight projection of non-excluded faces for stack grouping —
+        skips the embedding BLOB (a few KB per face), which is otherwise
+        fetched and deserialized for every face on every People-tab refresh
+        despite never being used for grouping or cover selection."""
+        with Session(self._engine) as session:
+            stmt = select(
+                FaceModel.id,
+                FaceModel.image_id,
+                FaceModel.person_id,
+                FaceModel.bbox_x,
+                FaceModel.bbox_y,
+                FaceModel.bbox_w,
+                FaceModel.bbox_h,
+            ).where(FaceModel.excluded.is_(False))
+            return [
+                FaceStackRow(
+                    id=row.id,
+                    image_id=row.image_id,
+                    person_id=row.person_id,
+                    bbox=BoundingBox(
+                        x=row.bbox_x, y=row.bbox_y, w=row.bbox_w, h=row.bbox_h
+                    ),
+                )
+                for row in session.execute(stmt)
+            ]
+
     def list_without_cluster_membership(self, limit: int | None = None) -> list[Face]:
         with Session(self._engine) as session:
             stmt = (
@@ -459,6 +621,14 @@ class SqlAlchemyFaceRepository:
             )
             return [_to_face(row) for row in session.scalars(stmt)]
 
+    def list_by_person(self, person_id: int) -> list[Face]:
+        with Session(self._engine) as session:
+            stmt = select(FaceModel).where(
+                FaceModel.person_id == person_id,
+                FaceModel.excluded.is_(False),
+            )
+            return [_to_face(row) for row in session.scalars(stmt)]
+
     def get(self, face_id: int) -> Face | None:
         """Get a single face by ID."""
         with Session(self._engine) as session:
@@ -466,38 +636,108 @@ class SqlAlchemyFaceRepository:
             row = session.scalar(stmt)
             return None if row is None else _to_face(row)
 
-    def assign_person_auto(self, face_ids: Sequence[int], person_id: int) -> None:
+    def get_many(self, face_ids: Sequence[int]) -> list[Face]:
+        """Load multiple faces by ID in a single query."""
+        if not face_ids:
+            return []
+        faces: list[Face] = []
         with Session(self._engine) as session:
-            if not face_ids:
-                return
-            stmt = select(FaceModel).where(FaceModel.id.in_(face_ids))
-            for face in session.scalars(stmt):
-                if face.excluded or face.manual_assignment:
-                    continue
-                face.person_id = person_id
+            for chunk in _chunked(face_ids):
+                stmt = select(FaceModel).where(FaceModel.id.in_(chunk))
+                faces.extend(_to_face(row) for row in session.scalars(stmt))
+        return faces
+
+    def assign_person_auto(self, face_ids: Sequence[int], person_id: int) -> None:
+        if not face_ids:
+            return
+        with Session(self._engine) as session:
+            for chunk in _chunked(face_ids):
+                stmt = select(FaceModel).where(FaceModel.id.in_(chunk))
+                for face in session.scalars(stmt):
+                    if face.excluded or face.manual_assignment:
+                        continue
+                    face.person_id = person_id
+            session.commit()
+
+    def unassign_faces(self, face_ids: Sequence[int]) -> None:
+        with Session(self._engine) as session:
+            for chunk in _chunked(face_ids):
+                session.execute(
+                    sa_update(FaceModel)
+                    .where(FaceModel.id.in_(chunk))
+                    .values(person_id=None, manual_assignment=False)
+                )
             session.commit()
 
     def assign_person_manual(self, face_ids: Sequence[int], person_id: int) -> None:
+        if not face_ids:
+            return
         with Session(self._engine) as session:
-            if not face_ids:
-                return
-            stmt = select(FaceModel).where(FaceModel.id.in_(face_ids))
+            for chunk in _chunked(face_ids):
+                stmt = select(FaceModel).where(FaceModel.id.in_(chunk))
+                for face in session.scalars(stmt):
+                    if face.excluded:
+                        continue
+                    face.person_id = person_id
+                    face.manual_assignment = True
+            session.commit()
+
+    def reassign_person(self, old_person_id: int, new_person_id: int) -> None:
+        """Repoint every face from one person record to another.
+
+        Unlike `assign_person_auto`, this does not skip manually-tagged
+        faces: it's for consolidating two Person rows that turned out to be
+        the same identity (e.g. two clusters merging), not for automatic
+        re-clustering overriding a manual choice. `manual_assignment` is left
+        as-is so the face's provenance (manual vs. auto) is preserved.
+        """
+        with Session(self._engine) as session:
+            stmt = select(FaceModel).where(FaceModel.person_id == old_person_id)
             for face in session.scalars(stmt):
-                if face.excluded:
-                    continue
-                face.person_id = person_id
-                face.manual_assignment = True
+                face.person_id = new_person_id
             session.commit()
 
     def exclude(self, face_ids: Sequence[int]) -> None:
+        if not face_ids:
+            return
         with Session(self._engine) as session:
-            if not face_ids:
-                return
-            stmt = select(FaceModel).where(FaceModel.id.in_(face_ids))
-            for face in session.scalars(stmt):
-                face.excluded = True
-                face.person_id = None
-                face.manual_assignment = True
+            for chunk in _chunked(face_ids):
+                stmt = select(FaceModel).where(FaceModel.id.in_(chunk))
+                for face in session.scalars(stmt):
+                    face.excluded = True
+                    face.person_id = None
+                    face.manual_assignment = True
+            session.commit()
+
+    def list_excluded(self, limit: int | None = None) -> list[Face]:
+        with Session(self._engine) as session:
+            stmt = select(FaceModel).where(FaceModel.excluded.is_(True))
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            return [_to_face(row) for row in session.scalars(stmt)]
+
+    def count_excluded(self) -> int:
+        with Session(self._engine) as session:
+            stmt = (
+                select(func.count())
+                .select_from(FaceModel)
+                .where(FaceModel.excluded.is_(True))
+            )
+            return session.scalar(stmt) or 0
+
+    def restore(self, face_ids: Sequence[int]) -> None:
+        """Undo `exclude()`: the face re-enters normal auto-clustering on
+        the next `index_new_faces()` run — as a fresh (likely new) cluster,
+        since the old one was removed when it was excluded, but the
+        underlying photo/bbox/embedding was never touched either way."""
+        if not face_ids:
+            return
+        with Session(self._engine) as session:
+            for chunk in _chunked(face_ids):
+                stmt = select(FaceModel).where(FaceModel.id.in_(chunk))
+                for face in session.scalars(stmt):
+                    face.excluded = False
+                    face.manual_assignment = False
             session.commit()
 
     def delete_by_image(self, image_id: int) -> None:
@@ -514,16 +754,13 @@ class SqlAlchemyFaceRepository:
                 session.delete(face)
             session.commit()
 
-    def find_cluster_id_for_person(self, person_id: int) -> int | None:
-        """Return the cluster_id for any face membership belonging to this person."""
+    def clear_all_person_assignments(self) -> None:
+        """Unassign every face (including manually-tagged ones) for a full reset."""
         with Session(self._engine) as session:
-            stmt = (
-                select(FaceClusterMembershipModel.cluster_id)
-                .join(FaceModel, FaceModel.id == FaceClusterMembershipModel.face_id)
-                .where(FaceModel.person_id == person_id)
-                .limit(1)
+            session.execute(
+                sa_update(FaceModel).values(person_id=None, manual_assignment=False)
             )
-            return session.scalar(stmt)
+            session.commit()
 
 
 class SqlAlchemyPersonRepository:
@@ -538,32 +775,17 @@ class SqlAlchemyPersonRepository:
                 name=person.name,
                 created_at=person.created_at,
                 birth_date=person.birth_date,
-                identity_cluster_id=person.identity_cluster_id,
             )
             session.add(row)
             session.flush()
             session.commit()
-            return Person(
-                id=row.id,
-                name=row.name,
-                created_at=row.created_at,
-                birth_date=row.birth_date,
-                identity_cluster_id=row.identity_cluster_id,
-            )
+            return _to_person(row)
 
     def get(self, person_id: int) -> Person | None:
         with Session(self._engine) as session:
             stmt = select(PersonModel).where(PersonModel.id == person_id)
             row = session.scalar(stmt)
-            if row is None:
-                return None
-            return Person(
-                id=row.id,
-                name=row.name,
-                created_at=row.created_at,
-                birth_date=row.birth_date,
-                identity_cluster_id=row.identity_cluster_id,
-            )
+            return None if row is None else _to_person(row)
 
     def get_by_name(self, name: str) -> Person | None:
         with Session(self._engine) as session:
@@ -574,15 +796,7 @@ class SqlAlchemyPersonRepository:
                 func.lower(PersonModel.name) == cleaned.lower()
             )
             row = session.scalar(stmt)
-            if row is None:
-                return None
-            return Person(
-                id=row.id,
-                name=row.name,
-                created_at=row.created_at,
-                birth_date=row.birth_date,
-                identity_cluster_id=row.identity_cluster_id,
-            )
+            return None if row is None else _to_person(row)
 
     def update_name(self, person_id: int, name: str) -> None:
         with Session(self._engine) as session:
@@ -592,44 +806,19 @@ class SqlAlchemyPersonRepository:
                 row.name = name
             session.commit()
 
-    def find_by_cluster_id(self, cluster_id: int) -> Person | None:
-        with Session(self._engine) as session:
-            stmt = select(PersonModel).where(
-                PersonModel.identity_cluster_id == cluster_id
-            )
-            row = session.scalar(stmt)
-            if row is None:
-                return None
-            return Person(
-                id=row.id,
-                name=row.name,
-                created_at=row.created_at,
-                birth_date=row.birth_date,
-                identity_cluster_id=row.identity_cluster_id,
-            )
-
-    def bind_cluster(self, person_id: int, cluster_id: int) -> None:
+    def update_birth_date(self, person_id: int, birth_date: date | None) -> None:
         with Session(self._engine) as session:
             stmt = select(PersonModel).where(PersonModel.id == person_id)
             row = session.scalar(stmt)
             if row is not None:
-                row.identity_cluster_id = cluster_id
+                row.birth_date = birth_date
             session.commit()
 
     def list_all(self) -> list[Person]:
         """Fetch all persons in a single query to avoid N+1 DB round-trips."""
         with Session(self._engine) as session:
             stmt = select(PersonModel)
-            return [
-                Person(
-                    id=row.id,
-                    name=row.name,
-                    created_at=row.created_at,
-                    birth_date=row.birth_date,
-                    identity_cluster_id=row.identity_cluster_id,
-                )
-                for row in session.scalars(stmt)
-            ]
+            return [_to_person(row) for row in session.scalars(stmt)]
 
     def delete(self, person_id: int) -> None:
         """Delete a person record by ID."""
@@ -639,6 +828,18 @@ class SqlAlchemyPersonRepository:
             if row is not None:
                 session.delete(row)
                 session.commit()
+
+    def delete_many(self, person_ids: Sequence[int]) -> None:
+        with Session(self._engine) as session:
+            for chunk in _chunked(person_ids):
+                session.execute(sa_delete(PersonModel).where(PersonModel.id.in_(chunk)))
+            session.commit()
+
+    def delete_all(self) -> None:
+        """Delete every person record, for a full identity reset."""
+        with Session(self._engine) as session:
+            session.execute(sa_delete(PersonModel))
+            session.commit()
 
 
 class SqlAlchemyAlbumRepository:
@@ -784,6 +985,33 @@ class SqlAlchemyIdentityClusterRepository:
             row = session.scalar(stmt)
             return None if row is None else _to_identity_cluster(row)
 
+    def get_clusters(self, cluster_ids: Sequence[int]) -> dict[int, IdentityCluster]:
+        """Load multiple clusters by ID in a single query."""
+        if not cluster_ids:
+            return {}
+        with Session(self._engine) as session:
+            stmt = select(IdentityClusterModel).where(
+                IdentityClusterModel.id.in_(cluster_ids)
+            )
+            return {row.id: _to_identity_cluster(row) for row in session.scalars(stmt)}
+
+    def set_cluster_person(self, cluster_id: int, person_id: int | None) -> None:
+        with Session(self._engine) as session:
+            stmt = select(IdentityClusterModel).where(
+                IdentityClusterModel.id == cluster_id
+            )
+            row = session.scalar(stmt)
+            if row is not None:
+                row.person_id = person_id
+            session.commit()
+
+    def list_clusters_for_person(self, person_id: int) -> list[IdentityCluster]:
+        with Session(self._engine) as session:
+            stmt = select(IdentityClusterModel).where(
+                IdentityClusterModel.person_id == person_id
+            )
+            return [_to_identity_cluster(row) for row in session.scalars(stmt)]
+
     def update_cluster_state(  # noqa: PLR0913
         self,
         cluster_id: int,
@@ -867,12 +1095,6 @@ class SqlAlchemyIdentityClusterRepository:
 
     def delete_cluster(self, cluster_id: int) -> None:
         with Session(self._engine) as session:
-            temporal_stmt = select(ClusterEmbeddingModel).where(
-                ClusterEmbeddingModel.cluster_id == cluster_id
-            )
-            for temporal in session.scalars(temporal_stmt):
-                session.delete(temporal)
-
             membership_stmt = select(FaceClusterMembershipModel).where(
                 FaceClusterMembershipModel.cluster_id == cluster_id
             )
@@ -887,43 +1109,26 @@ class SqlAlchemyIdentityClusterRepository:
                 session.delete(cluster)
             session.commit()
 
-    def list_temporal_embeddings(self, cluster_id: int) -> list[ClusterEmbedding]:
+    def delete_clusters(self, cluster_ids: Sequence[int]) -> None:
         with Session(self._engine) as session:
-            stmt = select(ClusterEmbeddingModel).where(
-                ClusterEmbeddingModel.cluster_id == cluster_id
-            )
-            return [_to_cluster_embedding(row) for row in session.scalars(stmt)]
-
-    def upsert_temporal_embedding(
-        self,
-        *,
-        cluster_id: int,
-        time_period: str,
-        embedding: bytes,
-        sample_count: int,
-        updated_at: datetime,
-    ) -> None:
-        with Session(self._engine) as session:
-            stmt = select(ClusterEmbeddingModel).where(
-                ClusterEmbeddingModel.cluster_id == cluster_id,
-                ClusterEmbeddingModel.time_period == time_period,
-            )
-            row = session.scalar(stmt)
-            if row is None:
-                session.add(
-                    ClusterEmbeddingModel(
-                        cluster_id=cluster_id,
-                        time_period=time_period,
-                        embedding=embedding,
-                        sample_count=sample_count,
-                        updated_at=updated_at,
+            for chunk in _chunked(cluster_ids):
+                session.execute(
+                    sa_delete(FaceClusterMembershipModel).where(
+                        FaceClusterMembershipModel.cluster_id.in_(chunk)
                     )
                 )
-                session.commit()
-                return
-            row.embedding = embedding
-            row.sample_count = sample_count
-            row.updated_at = updated_at
+                session.execute(
+                    sa_delete(IdentityClusterModel).where(
+                        IdentityClusterModel.id.in_(chunk)
+                    )
+                )
+            session.commit()
+
+    def delete_all_clusters(self) -> None:
+        """Wipe every cluster and membership at once."""
+        with Session(self._engine) as session:
+            session.execute(sa_delete(FaceClusterMembershipModel))
+            session.execute(sa_delete(IdentityClusterModel))
             session.commit()
 
 

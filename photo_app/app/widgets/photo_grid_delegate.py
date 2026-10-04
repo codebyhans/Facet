@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar, override
 
 from PySide6.QtCore import QEvent, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QMouseEvent, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QIcon, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
 if TYPE_CHECKING:
@@ -43,6 +43,24 @@ class PhotoGridDelegate(QStyledItemDelegate):
         """Set whether hover buttons should be visible."""
         self._hover_buttons_visible = visible
 
+    @override
+    def initStyleOption(
+        self,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        """Populate style option but blank the icon out.
+
+        We draw the thumbnail pixmap ourselves in paint() (scaled explicitly
+        with SmoothTransformation) instead of letting the base class paint
+        the icon — Qt's built-in icon painting refuses to enlarge a raster
+        pixmap past its native resolution, which would silently cap zoomed-in
+        thumbnails at their on-disk tile size.
+        """
+        super().initStyleOption(option, index)
+        option.icon = QIcon()
+        option.decorationSize = QSize(0, 0)
+
     def paint(
         self,
         painter: QPainter,
@@ -50,7 +68,8 @@ class PhotoGridDelegate(QStyledItemDelegate):
         index: QModelIndex | QPersistentModelIndex,
     ) -> None:
         """Paint the item with thumbnail and optional flag badge."""
-        # Let the base class handle the background and thumbnail
+        # Let the base class handle the background, selection and text
+        # (initStyleOption() above strips the icon so it isn't drawn here).
         super().paint(painter, option, index)
 
         # Get the decoration (thumbnail)
@@ -60,6 +79,16 @@ class PhotoGridDelegate(QStyledItemDelegate):
 
         # Calculate thumbnail rect (centered in the item rect)
         thumbnail_rect = self._calculate_thumbnail_rect(option.rect, decoration.size())
+
+        # Draw the thumbnail ourselves, scaled to fill thumbnail_rect — this
+        # is what actually lets zoom enlarge past the tile's native size.
+        scaled = decoration.scaled(
+            thumbnail_rect.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawPixmap(thumbnail_rect.topLeft(), scaled)
 
         # Draw flag badge
         self._draw_flag_badge(painter, option, index, thumbnail_rect)
@@ -72,10 +101,16 @@ class PhotoGridDelegate(QStyledItemDelegate):
     def sizeHint(
         self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
     ) -> QSize:
-        """Return the size hint for the item."""
+        """Return the size hint for the item.
+
+        QIcon only ever scales a pixmap down to fit a requested size, never up
+        past its native resolution — so super().sizeHint() silently caps out at
+        the decoration's native pixmap size. Expanding to option.decorationSize
+        (the view's current, possibly zoomed, iconSize) instead of a fixed
+        constant lets items grow past that native resolution when zoomed in.
+        """
         size = super().sizeHint(option, index)
-        # Ensure minimum size for flag badge and hover buttons
-        return size.expandedTo(QSize(180, 180))
+        return size.expandedTo(option.decorationSize)
 
     @override
     def editorEvent(

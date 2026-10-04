@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from PySide6.QtCore import Qt, QThreadPool, Slot
-from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -33,6 +32,8 @@ from photo_app.services.iphone_import_service import (
 )
 
 if TYPE_CHECKING:
+    from PySide6.QtGui import QCloseEvent
+
     from photo_app.services.face_index_service import FaceIndexService
     from photo_app.services.image_index_service import ImageIndexService
 
@@ -58,6 +59,7 @@ class IPhoneImportDialog(QDialog):
         self._active_worker: IPhoneImportWorker | None = None
         self._devices: list[IPhoneDevice] = []
         self._import_service = IPhoneImportService()
+        self._last_summary: IPhoneImportSummary | None = None
 
         self.setWindowTitle("Import from iPhone")
         self.setMinimumSize(640, 560)
@@ -73,13 +75,13 @@ class IPhoneImportDialog(QDialog):
     # UI setup
     # ------------------------------------------------------------------
 
-    def _setup_ui(self) -> None:
+    def _setup_ui(self) -> None:  # noqa: PLR0915
         layout = QVBoxLayout(self)
 
         # Prerequisites hint
         prereq_label = QLabel(
             "Prerequisites: iTunes (or Apple Mobile Device Support) must be installed, "
-            "and your iPhone must be unlocked with ‘Trust This Computer’ accepted."
+            "and your iPhone must be unlocked with 'Trust This Computer' accepted."
         )
         prereq_label.setWordWrap(True)
         prereq_label.setStyleSheet("color: #888888; font-size: 11px;")
@@ -91,8 +93,8 @@ class IPhoneImportDialog(QDialog):
 
         self._device_combo = QComboBox()
         self._device_combo.setSizePolicy(
-            self._device_combo.sizePolicy().horizontalPolicy(),  # type: ignore[arg-type]
-            self._device_combo.sizePolicy().verticalPolicy(),  # type: ignore[arg-type]
+            self._device_combo.sizePolicy().horizontalPolicy(),
+            self._device_combo.sizePolicy().verticalPolicy(),
         )
         self._device_combo.setMinimumWidth(300)
 
@@ -124,7 +126,9 @@ class IPhoneImportDialog(QDialog):
         self._index_checkbox = QCheckBox("Index imported files into library")
         self._index_checkbox.setChecked(True)
 
-        self._face_detection_checkbox = QCheckBox("Run face detection on imported files")
+        self._face_detection_checkbox = QCheckBox(
+            "Run face detection on imported files"
+        )
         self._face_detection_checkbox.setChecked(False)
 
         options_layout.addWidget(self._index_checkbox)
@@ -177,7 +181,9 @@ class IPhoneImportDialog(QDialog):
         self._devices = self._import_service.list_devices()
 
         if not self._devices:
-            self._device_combo.addItem("No iPhone detected — connect your iPhone and tap Trust")
+            self._device_combo.addItem(
+                "No iPhone detected — connect your iPhone and tap Trust"
+            )
             self._start_btn.setEnabled(False)
             self._close_btn.setEnabled(True)
             return
@@ -246,8 +252,13 @@ class IPhoneImportDialog(QDialog):
         if self._thread_pool is not None:
             self._thread_pool.start(worker)
 
+    def files_copied(self) -> int:
+        """Return number of files copied in the last import, or 0 if none ran."""
+        return self._last_summary.copied if self._last_summary else 0
+
     @Slot(object)
     def _on_import_finished(self, summary: IPhoneImportSummary) -> None:
+        self._last_summary = summary
         self._progress_widget.hide()
         self._summary_widget.show_summary(summary)
 
@@ -344,7 +355,9 @@ class IPhoneSummaryWidget(QWidget):
             f"font-weight: bold; font-size: 16px; color: {color};"
         )
 
-        sidecars = sum(1 for r in summary.file_results if r.is_sidecar and r.status == "copied")
+        sidecars = sum(
+            1 for r in summary.file_results if r.is_sidecar and r.status == "copied"
+        )
         images_copied = summary.copied - sidecars
 
         stats_parts = [
@@ -352,6 +365,7 @@ class IPhoneSummaryWidget(QWidget):
             f"{sidecars} Live Photo sidecars",
             f"{summary.failed} failed",
             f"{summary.skipped_icloud} iCloud placeholders skipped",
+            f"{summary.skipped_existing} already existed (skipped)",
         ]
         self._stats_label.setText("  •  ".join(stats_parts))
         self._dest_label.setText(f"Files saved to: {summary.destination_path}")

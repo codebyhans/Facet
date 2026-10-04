@@ -27,11 +27,12 @@ class IPhoneImportWorker(QRunnable):
     3. Optionally run face detection
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         iphone_import_service: IPhoneImportService,
         udid: str,
         dest_path: Path,
+        *,
         run_indexing: bool,
         run_face_detection: bool,
         image_index_service: ImageIndexService | None,
@@ -84,11 +85,14 @@ class IPhoneImportWorker(QRunnable):
                         and not r.is_sidecar
                     ]
                     self._image_index_service.index_paths(
-                        image_paths, on_progress=self._index_progress,
+                        image_paths,
+                        on_progress=self._index_progress,
                     )
                 except Exception as exc:
                     logger.exception("Indexing failed during iPhone import")
-                    self.signals.error.emit(f"Indexing failed: {type(exc).__name__}: {exc}")
+                    self.signals.error.emit(
+                        f"Indexing failed: {type(exc).__name__}: {exc}"
+                    )
                     return
 
             # Phase 3: Face detection
@@ -105,7 +109,9 @@ class IPhoneImportWorker(QRunnable):
                             on_progress=self._cluster_progress,
                         )
 
-                    query_cache_service = self._face_index_service.get_query_cache_service()
+                    query_cache_service = (
+                        self._face_index_service.get_query_cache_service()
+                    )
                     if query_cache_service is not None:
                         query_cache_service.invalidate_all()
 

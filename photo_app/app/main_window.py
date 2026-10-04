@@ -5,6 +5,7 @@ import dataclasses
 import importlib
 import json
 import logging
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,13 +20,13 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListWidget,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QSplitter,
     QStackedWidget,
     QStatusBar,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
@@ -36,6 +37,8 @@ from photo_app.app.view_models.album_view_model import AlbumViewModel
 from photo_app.app.view_models.gallery_view_model import GalleryViewModel
 from photo_app.app.widgets.advanced_filter_editor import AdvancedFilterEditorDialog
 from photo_app.app.widgets.album_tree import AlbumTreeWidget
+from photo_app.app.widgets.chromecast_slideshow_dialog import ChromecastSlideshowDialog
+from photo_app.app.widgets.excluded_faces_dialog import ExcludedFacesDialog
 from photo_app.app.widgets.filter_bar import FilterBarWidget
 from photo_app.app.widgets.image_detail_panel import ImageDetailPanel
 from photo_app.app.widgets.import_dialog import ImportDialog
@@ -46,10 +49,7 @@ from photo_app.app.widgets.photo_grid import PhotoGridWidget
 from photo_app.app.widgets.photo_viewer import PhotoViewerWidget
 from photo_app.app.workers.indexing_worker import IndexWorker
 from photo_app.app.workers.people_list_worker import PeopleListWorker
-from photo_app.config.constants import (
-    DEFAULT_PAGE_SIZE,
-    TEST_FACE_COUNT,
-)
+from photo_app.config.constants import DEFAULT_PAGE_SIZE
 from photo_app.config.keyboard_shortcuts import get_shortcuts
 from photo_app.services.face_index_service import FaceIndexResult
 from photo_app.services.face_review_service import PersonStackSummary
@@ -59,8 +59,9 @@ if TYPE_CHECKING:
     from photo_app.domain.models import Image
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
     from photo_app.services.album_service import AlbumService
+    from photo_app.services.chromecast_service import ChromecastService
     from photo_app.services.face_index_service import FaceIndexService
-    from photo_app.services.face_review_service import FaceReviewItem, FaceReviewService
+    from photo_app.services.face_review_service import FaceReviewService
     from photo_app.services.image_index_service import ImageIndexService
     from photo_app.services.metadata_sync_service import MetadataSyncService
     from photo_app.services.settings_service import RuntimeSettings, SettingsService
@@ -102,125 +103,6 @@ class CreateFolderDialog(QDialog):
         return self._name.text().strip()
 
 
-class FaceAssignDialog(QDialog):
-    """Assign one person name to one or many faces in a selected image."""
-
-    def __init__(
-        self, faces: list[FaceReviewItem], parent: QWidget | None = None
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Name Faces")
-        self._faces = faces
-        self._list = QListWidget(self)
-        for face in faces:
-            face_id = int(getattr(face, "face_id", 0))
-            person_name = getattr(face, "person_name", None) or "Unknown"
-            self._list.addItem(f"Face {face_id} ({person_name})")
-        if self._list.count() > 0:
-            self._list.setCurrentRow(0)
-
-        self._name = QLineEdit(self)
-        self._name.setPlaceholderText("Enter person name")
-
-        buttons = QDialogButtonBox(self)
-        apply_one = buttons.addButton(
-            "Apply to Selected", QDialogButtonBox.ButtonRole.AcceptRole
-        )
-        apply_all = buttons.addButton(
-            "Apply to All", QDialogButtonBox.ButtonRole.ActionRole
-        )
-        cancel = buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self._list)
-        layout.addWidget(self._name)
-        layout.addWidget(buttons)
-
-        apply_one.clicked.connect(lambda: self.done(1))
-        apply_all.clicked.connect(lambda: self.done(2))
-        cancel.clicked.connect(self.reject)
-
-    def selected_face_ids(self) -> list[int]:
-        """Return selected face IDs according to dialog action."""
-        if self.result() == TEST_FACE_COUNT:
-            return [int(getattr(face, "face_id", 0)) for face in self._faces]
-        row = self._list.currentRow()
-        if row < 0 or row >= len(self._faces):
-            return []
-        return [int(getattr(self._faces[row], "face_id", 0))]
-
-    def entered_name(self) -> str:
-        """Return entered person name."""
-        return self._name.text().strip()
-
-
-class MergePersonDialog(QDialog):
-    """Dialog for merging one person into another person."""
-
-    def __init__(
-        self,
-        source_stack: PersonStackSummary,
-        target_stacks: list[PersonStackSummary],
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Merge Person")
-        self._source_stack = source_stack
-        self._target_stacks = target_stacks
-
-        layout = QVBoxLayout(self)
-
-        # Source person info
-        source_label = QLabel(
-            f"Merge '{source_stack.person_name or f'Cluster #{source_stack.person_id}'}' into:"
-        )
-        source_label.setStyleSheet("font-weight: bold; color: #cccccc;")
-        layout.addWidget(source_label)
-
-        # Target person selection
-        self._target_combo = QListWidget(self)
-        for stack in target_stacks:
-            self._target_combo.addItem(
-                f"{stack.person_name} ({stack.image_count} images)"
-            )
-        if self._target_combo.count() > 0:
-            self._target_combo.setCurrentRow(0)
-
-        layout.addWidget(self._target_combo)
-
-        # Warning message
-        warning_label = QLabel(
-            "This will merge all faces from the source person into the target person."
-        )
-        warning_label.setStyleSheet("color: #ffcc00; font-size: 11px;")
-        layout.addWidget(warning_label)
-
-        # Buttons
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            self,
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self.setMinimumWidth(300)
-
-    def selected_person_id(self) -> int | None:
-        """Return the selected target person ID."""
-        current_row = self._target_combo.currentRow()
-        if current_row >= 0 and current_row < len(self._target_stacks):
-            return self._target_stacks[current_row].person_id
-        return None
-
-    def selected_person_name(self) -> str | None:
-        """Return the selected target person name."""
-        current_row = self._target_combo.currentRow()
-        if current_row >= 0 and current_row < len(self._target_stacks):
-            return self._target_stacks[current_row].person_name
-        return None
-
-
 class MainWindow(QMainWindow):
     """3-panel layout: Albums (left) | Photos (center) | Metadata (right)."""
 
@@ -228,13 +110,14 @@ class MainWindow(QMainWindow):
         self,
         image_index_service: ImageIndexService,
         album_service: AlbumService,
-        face_index_service: FaceIndexService,
+        face_index_service: FaceIndexService | None,
         face_review_service: FaceReviewService,
         metadata_sync_service: MetadataSyncService,
         tag_service: TagService,
         _settings_service: SettingsService,
         runtime_settings: RuntimeSettings,
         thumbnail_tile_store: ThumbnailTileStore,
+        cache_directory: Path | None = None,
     ) -> None:
         super().__init__()
         self._settings_path = Path("config/settings.json")
@@ -247,6 +130,7 @@ class MainWindow(QMainWindow):
         self._metadata_sync_service = metadata_sync_service
         self._tag_service = tag_service
         self._runtime_settings = runtime_settings
+        self._cache_directory = cache_directory
         self._thread_pool = QThreadPool.globalInstance()
 
         # Worker references to prevent GC
@@ -296,6 +180,7 @@ class MainWindow(QMainWindow):
             face_review_service=self._face_review_service,
             tile_store=thumbnail_tile_store,
             parent=self,
+            cache_directory=self._cache_directory,
         )
 
         # Create persistent navigation header that's always visible
@@ -349,9 +234,36 @@ class MainWindow(QMainWindow):
         """)
         self._people_btn.clicked.connect(self._on_switch_to_people)
 
+        self._cast_btn = QPushButton("Cast to TV")
+        self._cast_btn.setFixedHeight(32)
+        self._cast_btn.setEnabled(False)
+        self._cast_btn.setToolTip(
+            "Cast the current album as a slideshow to a Chromecast TV"
+        )
+        self._cast_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2d2d30;
+                color: #ffffff;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            QPushButton:enabled:hover {
+                background-color: #3e3e42;
+            }
+            QPushButton:disabled {
+                color: #666666;
+            }
+        """)
+        self._cast_btn.clicked.connect(self._on_cast_to_tv)
+        self._chromecast_service: ChromecastService | None = (
+            None  # created lazily on first cast
+        )
+
         nav_layout.addWidget(self._albums_btn)
         nav_layout.addWidget(self._people_btn)
         nav_layout.addStretch()
+        nav_layout.addWidget(self._cast_btn)
 
         # Create left panel for albums tree only (no people browser)
         left_panel = QWidget()
@@ -383,6 +295,14 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center_panel)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.addWidget(self._filter_bar)  # Filter bar at top
+        # Dated/Undated split, only shown while viewing the whole library
+        self._date_tabs = QTabBar()
+        self._date_tabs.addTab("Dated")
+        self._date_tabs.addTab("Undated")
+        self._date_tabs.setDrawBase(False)
+        self._date_tabs.setVisible(False)
+        self._date_tabs.currentChanged.connect(self._on_date_tab_changed)
+        center_layout.addWidget(self._date_tabs)
         center_layout.addWidget(center_stack)  # Content below filter bar
 
         # Create 3-way splitter: albums (left) | photos/detail (center) | metadata (right)
@@ -425,9 +345,32 @@ class MainWindow(QMainWindow):
         self._ensure_library_album()
         self._load_tree()
         self._album_gallery_vm.select_library()
-        self._refresh_people_list()
+        # Populate the Albums filter bar's person dropdown cheaply, without
+        # paying for the full People-tab stack computation (which scans
+        # every face and image in the library) before the window can even
+        # open. The People tab itself refreshes on first switch — see
+        # `_on_switch_to_people()`.
+        self._refresh_available_people_filter()
         self._restore_geometry()
         self.setWindowTitle("Facet - Photo browser")
+
+    def set_face_index_service(
+        self, face_index_service: FaceIndexService | None
+    ) -> None:
+        """Attach the face indexing service once it's ready.
+
+        Face ML initialization (loading the InsightFace model) takes
+        several seconds and runs on a background worker started from the
+        composition root (`main.py`) after this window is already visible,
+        rather than blocking construction/`show()` on it — see
+        `_start_face_ml_init_async`. Until this is called, face-indexing
+        actions report "unavailable" via the existing
+        `self._face_index_service is None` checks, the same as when ML
+        initialization fails outright.
+        """
+        self._face_index_service = face_index_service
+        if face_index_service is not None:
+            self.statusBar().showMessage("Face indexing ready", 5000)
 
     def _set_task_status(self, message: str) -> None:
         """Show a persistent background-task message (left side of status bar)."""
@@ -439,6 +382,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._save_ui_state()
+        if self._chromecast_service is not None:
+            self._chromecast_service.shutdown()
         super().closeEvent(event)
 
     def _wire_signals(self) -> None:
@@ -447,6 +392,7 @@ class MainWindow(QMainWindow):
         self._album_gallery_vm.status.connect(self._on_gallery_status)
         self._album_gallery_vm.loading_started.connect(self._on_loading_started)
         self._album_gallery_vm.loading_finished.connect(self._on_loading_finished)
+        self._album_gallery_vm.date_tabs_available.connect(self._date_tabs.setVisible)
 
         self._album_tree.albumSelected.connect(
             lambda album_id, qd: self._album_gallery_vm.select_album(
@@ -469,6 +415,9 @@ class MainWindow(QMainWindow):
                 self._album_photo_model, items, append
             )
         )
+        self._album_gallery_vm.page_ready.connect(
+            lambda items, _append: self._cast_btn.setEnabled(bool(items))
+        )
         self._album_gallery_vm.tile_ready.connect(
             lambda tile_index, pixmap: self._on_tile_ready(
                 self._album_photo_model, tile_index, pixmap
@@ -490,12 +439,18 @@ class MainWindow(QMainWindow):
         # Photo grid flag changes -> update database
         self._album_photo_grid.flagChanged.connect(self._on_flag_changed)
 
+        # Photo grid permanent delete requests (disk + library)
+        self._album_photo_grid.deletePhotosRequested.connect(
+            self._on_delete_photos_requested
+        )
+
         # Image detail panel signals
         self._image_detail_panel.closed.connect(self._on_detail_panel_closed)
         self._image_detail_panel.image_selected.connect(self._on_detail_image_selected)
         self._image_detail_panel.reindex_requested.connect(
             self._on_reindex_faces_requested
         )
+        self._image_detail_panel.faces_changed.connect(self._on_face_names_changed)
 
         # Metadata editor signals -> sync service
         self._metadata_editor.rating_changed.connect(self._on_rating_changed)
@@ -505,8 +460,17 @@ class MainWindow(QMainWindow):
         self._people_browser.person_selected.connect(self._on_person_selected)
         self._people_browser.back_to_stacks.connect(self._on_back_to_stacks)
         self._people_browser.person_renamed.connect(self._on_person_renamed)
-        self._people_browser.person_merge_requested.connect(
-            self._on_person_merge_requested
+        self._people_browser.cluster_tag_requested.connect(
+            self._on_cluster_tag_requested
+        )
+        self._people_browser.clusters_tag_requested.connect(
+            self._on_clusters_tag_requested
+        )
+        self._people_browser.person_birth_date_changed.connect(
+            self._on_person_birth_date_changed
+        )
+        self._people_browser.people_exclude_requested.connect(
+            self._on_people_exclude_requested
         )
         self._people_browser.show_unnamed_changed.connect(self._on_show_unnamed_changed)
         self._people_browser.face_delete_requested.connect(
@@ -514,6 +478,10 @@ class MainWindow(QMainWindow):
         )
         self._people_browser.face_reassign_requested.connect(
             self._on_face_reassign_requested
+        )
+        self._people_browser.faces_changed.connect(self._on_face_names_changed)
+        self._people_browser.images_move_requested.connect(
+            self._on_images_move_requested
         )
 
     def _build_menu(self) -> None:
@@ -531,6 +499,15 @@ class MainWindow(QMainWindow):
 
         face_action = file_menu.addAction("Index Faces")
         face_action.triggered.connect(self._run_face_index)
+
+        fix_ts_action = file_menu.addAction("Fix Missing Timestamps")
+        fix_ts_action.triggered.connect(self._run_backfill_timestamps)
+
+        prune_action = file_menu.addAction("Remove Missing Files")
+        prune_action.triggered.connect(self._run_prune_missing_files)
+
+        dupes_action = file_menu.addAction("Find Duplicates…")
+        dupes_action.triggered.connect(self._open_duplicate_dialog)
 
         file_menu.addSeparator()
 
@@ -563,6 +540,18 @@ class MainWindow(QMainWindow):
 
         threshold_action = people_menu.addAction("Face Review Threshold...")
         threshold_action.triggered.connect(self._on_face_review_settings)
+
+        people_menu.addSeparator()
+
+        reset_identities_action = people_menu.addAction(
+            "Reset All People && Re-cluster..."
+        )
+        reset_identities_action.triggered.connect(self._on_reset_identities_requested)
+
+        people_menu.addSeparator()
+
+        excluded_faces_action = people_menu.addAction("Excluded Faces...")
+        excluded_faces_action.triggered.connect(self._on_excluded_faces_requested)
 
     def _setup_keyboard_shortcuts(self) -> None:
         """Set up application-wide keyboard shortcuts."""
@@ -770,8 +759,11 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._show_error(str(exc))
 
-    def _on_move_node(self, node_id: str, new_parent: object) -> None:
+    def _on_move_node(
+        self, node_id: str, new_parent: object, position: object = None
+    ) -> None:
         new_parent_id = new_parent if isinstance(new_parent, str) else None
+        new_position = position if isinstance(position, int) else None
         index = self._album_tree_model.index_from_node_id(node_id)
         node = self._album_tree_model.node_from_index(index)
         if node is None:
@@ -779,7 +771,7 @@ class MainWindow(QMainWindow):
         if not self._album_tree_model.can_move(node_id, new_parent_id):
             self._show_error("Cannot move album into its own subtree.")
             return
-        moved = self._album_tree_model.move_node(node_id, new_parent_id)
+        moved = self._album_tree_model.move_node(node_id, new_parent_id, new_position)
         if not moved:
             return
         self._album_vm.move_album(node_id, new_parent_id)
@@ -789,6 +781,9 @@ class MainWindow(QMainWindow):
 
     def _on_album_moved(self, _album_id: int, _new_parent: object) -> None:
         self.statusBar().showMessage("Album moved")
+
+    def _on_date_tab_changed(self, index: int) -> None:
+        self._album_gallery_vm.set_date_tab(has_date=index == 0)
 
     def _on_album_selected(self, album_id: int) -> None:
         """Handle album selection - no longer updates album label."""
@@ -948,80 +943,137 @@ class MainWindow(QMainWindow):
         self._refresh_people_list()
 
     def _on_person_renamed(self, person_id: int, name: str) -> None:
-        """Handle person rename from people browser."""
+        """Handle a tag rename from people browser.
+
+        Renaming to a name another person already has offers to merge this
+        tag into that one (e.g. a cluster mistakenly tagged "A1" instead of
+        "A") rather than failing.
+        """
+        existing = self._face_review_service.get_person_repository().get_by_name(
+            name.strip()
+        )
+        if (
+            existing is not None
+            and existing.id is not None
+            and existing.id != person_id
+        ):
+            self._merge_person_into(person_id, existing.id, existing.name or name)
+            return
         try:
             self._face_review_service.rename_person_stack(person_id, name)
             self._refresh_people_list()
             self.statusBar().showMessage(f"Renamed person to '{name}'")
+        except ValueError as exc:
+            self._show_error(str(exc))
         except Exception as exc:
             LOGGER.exception("Failed to rename person")
             self._show_error(f"Failed to rename person: {exc}")
 
-    def _on_person_merge_requested(self, person_id: int) -> None:
-        """Handle person merge request from people browser."""
+    def _merge_person_into(
+        self, source_person_id: int, target_person_id: int, target_name: str
+    ) -> None:
+        """Confirm, then fold one person tag into another existing one."""
+        source = self._face_review_service.get_person_repository().get(source_person_id)
+        source_name = source.name if source is not None else "this person"
+        reply = QMessageBox.question(
+            self,
+            "Merge People",
+            f"'{target_name}' already exists.\n\n"
+            f"Merge '{source_name}' into '{target_name}'? All of "
+            f"'{source_name}''s photos will be tagged '{target_name}' and "
+            f"'{source_name}' will be removed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
         try:
-            # Get current person info
-            current_stack = None
-            for stack in self._people_browser.get_current_stacks():
-                if stack.person_id == person_id:
-                    current_stack = stack
-                    break
-
-            if current_stack is None:
-                self._show_error("Person not found for merge operation")
-                return
-
-            # Get list of other people to merge with
-            other_people = [
-                stack
-                for stack in self._people_browser.get_current_stacks()
-                if stack.person_id != person_id and stack.person_name
-            ]
-
-            if not other_people:
-                self._show_error("No other named people available to merge with")
-                return
-
-            # Create merge dialog
-            merge_dialog = MergePersonDialog(current_stack, other_people, self)
-            if merge_dialog.exec() == QDialog.DialogCode.Accepted:
-                target_person_id = merge_dialog.selected_person_id()
-                if target_person_id and target_person_id != person_id:
-                    # Look up cluster IDs — both stacks are already in _current_stacks
-                    source_cluster_id = current_stack.cluster_id
-                    target_stack = next(
-                        (
-                            s
-                            for s in self._people_browser.get_current_stacks()
-                            if s.person_id == target_person_id
-                        ),
-                        None,
-                    )
-                    if (
-                        source_cluster_id is None
-                        or target_stack is None
-                        or target_stack.cluster_id is None
-                    ):
-                        self._show_error(
-                            "Cannot merge: one or both persons have no cluster assignment"
-                        )
-                        return
-                    # Perform the merge using the correct method and cluster IDs
-                    self._face_review_service.merge_identity_clusters(
-                        source_cluster_id, target_stack.cluster_id
-                    )
-                    self._refresh_people_list()
-                    self.statusBar().showMessage(
-                        f"Merged person into '{merge_dialog.selected_person_name()}'"
-                    )
-                else:
-                    self.statusBar().showMessage("Merge cancelled")
-            else:
-                self.statusBar().showMessage("Merge cancelled")
-
+            self._face_review_service.merge_person_into(
+                source_person_id, target_person_id
+            )
+            self._refresh_people_list()
+            self.statusBar().showMessage(f"Merged '{source_name}' into '{target_name}'")
         except Exception as exc:
-            LOGGER.exception("Failed to merge person")
-            self._show_error(f"Failed to merge person: {exc}")
+            LOGGER.exception("Failed to merge people")
+            self._show_error(f"Failed to merge people: {exc}")
+
+    def _on_cluster_tag_requested(self, cluster_id: int, name: str) -> None:
+        """Apply a name tag to an untagged cluster from people browser.
+
+        Resolves an existing tag by name or creates a new one — never
+        merges cluster state, so tagging several different clusters with
+        the same name is just this action repeated on each one.
+        """
+        try:
+            self._face_review_service.tag_cluster(cluster_id, name)
+            self._refresh_people_list()
+            self.statusBar().showMessage(f"Tagged as '{name}'")
+        except Exception as exc:
+            LOGGER.exception("Failed to tag cluster")
+            self._show_error(f"Failed to tag cluster: {exc}")
+
+    def _on_clusters_tag_requested(self, cluster_ids: list[int], name: str) -> None:
+        """Apply one name tag to several selected clusters at once."""
+        try:
+            for cluster_id in cluster_ids:
+                self._face_review_service.tag_cluster(cluster_id, name)
+            self._refresh_people_list()
+            self.statusBar().showMessage(
+                f"Tagged {len(cluster_ids)} cluster(s) as '{name}'"
+            )
+        except Exception as exc:
+            LOGGER.exception("Failed to tag clusters")
+            self._show_error(f"Failed to tag clusters: {exc}")
+
+    def _on_person_birth_date_changed(self, person_id: int, date_text: str) -> None:
+        """Handle a birth date set (or cleared) from the people browser."""
+        parsed: date | None = None
+        if date_text:
+            try:
+                parsed = date.fromisoformat(date_text)
+            except ValueError:
+                self._show_error(f"Invalid birth date: {date_text!r}")
+                return
+        try:
+            self._face_review_service.set_person_birth_date(person_id, parsed)
+            self._refresh_people_list()
+            label = parsed.isoformat() if parsed is not None else "cleared"
+            self.statusBar().showMessage(f"Birth date {label}")
+        except Exception as exc:
+            LOGGER.exception("Failed to set birth date")
+            self._show_error(f"Failed to set birth date: {exc}")
+
+    def _on_people_exclude_requested(self, person_ids: list[int]) -> None:
+        """Bulk-exclude selected people not of interest (e.g. strangers).
+
+        Nothing is deleted: the underlying photo/bbox/embedding for every
+        face is untouched. Only the `excluded` flag gets set (hiding them
+        from the People tab and future clustering) and the now-empty
+        cluster/person records are removed. Fully undoable any time via
+        People → Excluded Faces... → Restore. Confirmed first since it
+        affects everything currently labeled with the selected tags, not
+        just one photo.
+        """
+        if not person_ids:
+            return
+        reply = QMessageBox.warning(
+            self,
+            "Mark Not of Interest",
+            f"Exclude all faces for {len(person_ids)} selected person(s)? "
+            "They'll no longer be clustered or shown in the People tab. "
+            "Nothing is deleted — undo any time via "
+            "People → Excluded Faces...",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            excluded = self._face_review_service.exclude_people(person_ids)
+            self._refresh_people_list()
+            self.statusBar().showMessage(f"Excluded {excluded} face(s)")
+        except Exception as exc:
+            LOGGER.exception("Failed to exclude selected people")
+            self._show_error(f"Failed to exclude selected people: {exc}")
 
     def _on_show_unnamed_changed(self, show_unnamed: bool) -> None:  # noqa: FBT001
         """Handle show unnamed clusters toggle from people browser."""
@@ -1029,23 +1081,76 @@ class MainWindow(QMainWindow):
         self._refresh_people_list()
 
     def _on_face_delete_requested(self, face_id: int) -> None:
-        """Remove a face detection from a cluster image."""
+        """Remove a face detection from a cluster image.
+
+        The inspector has already dropped the face from its overlay, so on
+        success nothing is reloaded (that would interrupt face naming); the
+        people list refresh waits for `_on_face_names_changed`.
+        """
         try:
             self._face_review_service.remove_face(face_id)
-            self._people_browser.reload_current_inspector_image()
             self.statusBar().showMessage("Face removed")
         except Exception as exc:  # noqa: BLE001
+            self._people_browser.reload_current_inspector_image()
             self._show_error(f"Could not remove face: {exc}")
 
     def _on_face_reassign_requested(self, face_id: int, new_person_name: str) -> None:
-        """Reassign a face to a different named person."""
+        """Persist a face name set in the inspector (already shown there)."""
         try:
             self._face_review_service.assign_name(face_id, new_person_name)
-            self._people_browser.reload_current_inspector_image()
-            self._refresh_people_list()
-            self.statusBar().showMessage(f"Face reassigned to '{new_person_name}'")
+            self.statusBar().showMessage(f"Face named '{new_person_name}'")
         except Exception as exc:  # noqa: BLE001
-            self._show_error(f"Could not reassign face: {exc}")
+            self._people_browser.reload_current_inspector_image()
+            self._show_error(f"Could not name face: {exc}")
+
+    def _on_face_names_changed(self) -> None:
+        """A face-naming session ended with edits: refresh people views once."""
+        self._refresh_people_list()
+        self._refresh_available_people_filter()
+
+    def _on_images_move_requested(
+        self, image_ids: list[int], source_person_id: int, target_person_name: str
+    ) -> None:
+        """Split selected photos out of the open person into a different one."""
+        try:
+            moved = self._face_review_service.move_images_to_person(
+                image_ids, source_person_id, target_person_name
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Could not move photos: {exc}")
+            return
+
+        if moved == 0:
+            self.statusBar().showMessage("No photos moved")
+            return
+
+        self.statusBar().showMessage(
+            f"Moved {moved} photo(s) to '{target_person_name}'"
+        )
+        # Drop the moved photos from the open grid immediately instead of
+        # re-fetching stacks (person_stacks() scans the whole library and
+        # isn't cheap on a large one) — the person-list counts catch up on
+        # the next natural refresh, same as after a merge today.
+        if self._people_browser.get_current_person_id() == source_person_id:
+            self._people_browser.remove_images_from_current_gallery(image_ids)
+        self._refresh_people_list()
+
+    def _refresh_available_people_filter(self) -> None:
+        """Populate the Albums filter bar's person dropdown.
+
+        Uses the cheap, direct persons-table query rather than waiting on
+        `person_stacks()` (grouped via `_refresh_people_list()`), which also
+        does a full faces/images library scan and per-person cover-image
+        selection — far more work than needed just to list display names for
+        a filter dropdown, and something the Albums view shouldn't have to
+        wait on before it can filter by person.
+        """
+        try:
+            all_people = self._face_review_service.get_available_people()
+            named_people = [p for p in all_people if p.name]
+            self._filter_bar.set_available_people(named_people)
+        except Exception:
+            LOGGER.exception("Failed to update available people filter")
 
     def _refresh_people_list(self) -> None:
         """Refresh the people clusters list in a background thread."""
@@ -1065,6 +1170,7 @@ class MainWindow(QMainWindow):
         worker = PeopleListWorker(
             self._face_review_service,
             tile_store=self._thumbnail_tile_store,
+            cover_cache_dir=self._cache_directory,
             min_image_count=threshold,
             show_unnamed=show_unnamed,
             epoch=self._people_epoch,
@@ -1080,6 +1186,7 @@ class MainWindow(QMainWindow):
         self,
         stacks: list[PersonStackSummary],
         cover_lookups: dict[int, tuple[str, int, int, int, int]],
+        cover_highlight_pngs: dict[int, bytes],
         epoch: int,
     ) -> None:
         """Called on the main thread when people stacks are loaded."""
@@ -1088,14 +1195,8 @@ class MainWindow(QMainWindow):
             return
 
         self._active_people_worker = None
-        self._people_browser.load_stacks(stacks, cover_lookups)
-
-        try:
-            all_people = self._face_review_service.get_available_people()
-            named_people = [p for p in all_people if p.name]
-            self._filter_bar.set_available_people(named_people)
-        except Exception:
-            LOGGER.exception("Failed to update available people filter")
+        self._people_browser.load_stacks(stacks, cover_lookups, cover_highlight_pngs)
+        self._refresh_available_people_filter()
 
         threshold = (
             self._settings_service.get_face_review_threshold()
@@ -1181,7 +1282,9 @@ class MainWindow(QMainWindow):
 
         worker = IndexWorker(
             run_index,
-            progress_callback=lambda _current, _total: None,  # Progress comes from on_progress callback
+            progress_callback=lambda _current, _total: (
+                None
+            ),  # Progress comes from on_progress callback
         )
 
         def on_index_complete(result: object) -> None:
@@ -1218,6 +1321,115 @@ class MainWindow(QMainWindow):
         worker.signals.finished.connect(on_image_index_finished)
         self._active_image_index_worker = worker  # keep alive until finished
         self._thread_pool.start(worker)
+
+    def _run_backfill_timestamps(self) -> None:
+        """Fix images that have no capture_date, reading EXIF then falling back to mtime."""
+        self._set_task_status("⟳ Fixing timestamps…")
+
+        def run() -> object:
+            def _cb(current: int, total: int) -> None:
+                worker.signals.progress_detailed.emit(current, total)
+
+            return self._image_index_service.backfill_missing_timestamps(
+                on_progress=_cb
+            )
+
+        worker = IndexWorker(
+            run,
+            progress_callback=lambda current, total: (
+                self._set_task_status(f"⟳ Fixing timestamps {current}/{total}…")
+                if total > 0
+                else None
+            ),
+        )
+
+        def on_done(result: object) -> None:
+            count = int(result) if isinstance(result, int) else 0
+            self._clear_task_status()
+            self.statusBar().showMessage(
+                f"Timestamps fixed: {count} image(s) updated from file date"
+            )
+            if count > 0:
+                self._album_gallery_vm.select_library()
+
+        def on_err(msg: str) -> None:
+            self._clear_task_status()
+            self._show_error(f"Timestamp backfill failed: {msg}")
+
+        worker.signals.result_ready.connect(on_done)
+        worker.signals.error.connect(on_err)
+        self._thread_pool.start(worker)
+
+    def _run_prune_missing_files(self) -> None:
+        """Remove DB records for files that no longer exist on disk."""
+        self._set_task_status("⟳ Checking for missing files…")
+
+        def run() -> object:
+            def _cb(current: int, total: int) -> None:
+                worker.signals.progress_detailed.emit(current, total)
+
+            return self._image_index_service.prune_missing_files(on_progress=_cb)
+
+        worker = IndexWorker(
+            run,
+            progress_callback=lambda current, total: (
+                self._set_task_status(f"⟳ Checking files {current}/{total}…")
+                if total > 0
+                else None
+            ),
+        )
+
+        def on_done(result: object) -> None:
+            count = int(result) if isinstance(result, int) else 0
+            self._clear_task_status()
+            self.statusBar().showMessage(
+                f"Removed {count} stale record(s) for missing files"
+            )
+            if count > 0:
+                self._reload_album_tree()
+                self._album_gallery_vm.select_library()
+                self._refresh_people_list()
+
+        def on_err(msg: str) -> None:
+            self._clear_task_status()
+            self._show_error(f"Prune failed: {msg}")
+
+        worker.signals.result_ready.connect(on_done)
+        worker.signals.error.connect(on_err)
+        self._thread_pool.start(worker)
+
+    def _open_duplicate_dialog(self) -> None:
+        """Open the Find Duplicates dialog."""
+        from photo_app.app.widgets.duplicate_review_dialog import (  # noqa: PLC0415
+            DuplicateReviewDialog,
+        )
+        from photo_app.services.duplicate_detection_service import (  # noqa: PLC0415
+            DuplicateDetectionService,
+        )
+
+        image_repo = self._album_vm.get_image_repository()
+        if image_repo is None:
+            self._show_error("Image repository not available.")
+            return
+
+        service = DuplicateDetectionService(image_repo)
+        photo_root = Path(
+            str(getattr(self._runtime_settings, "photo_root_dir", Path.home()))
+        )
+        trash_dir = photo_root / ".trash"
+
+        dialog = DuplicateReviewDialog(
+            service=service,
+            default_trash_dir=trash_dir,
+            thread_pool=self._thread_pool,
+            parent=self,
+        )
+        dialog.exec()
+        # Refresh gallery — duplicates that were trashed are now missing from the index
+        self._album_gallery_vm.select_library()
+        # Trashing duplicates cascades to their faces, which can change or
+        # remove person clusters — keep the People tab in sync too.
+        self._refresh_people_list()
 
     def _run_face_index(self) -> None:  # noqa: C901, PLR0915
         if self._face_index_service is None:
@@ -1499,6 +1711,29 @@ class MainWindow(QMainWindow):
         )
         dialog.set_thread_pool(self._thread_pool)
         dialog.exec()
+        if dialog.files_copied() > 0:
+            self._album_gallery_vm.select_library()
+
+    def _on_cast_to_tv(self) -> None:
+        """Open Chromecast slideshow dialog for the current album."""
+        from photo_app.services.chromecast_service import (  # noqa: PLC0415
+            ChromecastService,
+        )
+
+        if self._chromecast_service is None:
+            self._chromecast_service = ChromecastService()
+
+        image_paths = [item.file_path for item in self._album_photo_model.items]
+        if not image_paths:
+            self.statusBar().showMessage("No images in the current album to cast.")
+            return
+
+        dialog = ChromecastSlideshowDialog(
+            service=self._chromecast_service,
+            image_paths=image_paths,
+            parent=self,
+        )
+        dialog.exec()
 
     def _open_iphone_import_dialog(self) -> None:
         """Open the iPhone import dialog."""
@@ -1510,6 +1745,8 @@ class MainWindow(QMainWindow):
         )
         dialog.set_thread_pool(self._thread_pool)
         dialog.exec()
+        if dialog.files_copied() > 0:
+            self._album_gallery_vm.select_library()
 
     # Keyboard shortcut handlers
     def _on_shortcut_rating_0(self) -> None:
@@ -1665,6 +1902,54 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._show_error(f"Failed to update flag: {exc}")
 
+    def _on_delete_photos_requested(self, image_ids: list[int]) -> None:
+        """Permanently delete selected photo(s) from disk and the library."""
+        if not image_ids:
+            return
+
+        count = len(image_ids)
+        noun = "photo" if count == 1 else "photos"
+        reply = QMessageBox.warning(
+            self,
+            "Delete Permanently",
+            f"Permanently delete {count} {noun} from disk and the library?\n\n"
+            "This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        worker = IndexWorker(lambda: self._image_index_service.delete_images(image_ids))
+
+        def on_done(result: object) -> None:
+            deleted = int(getattr(result, "deleted", 0))
+            failed = int(getattr(result, "failed", 0))
+            if deleted:
+                self._album_photo_model.remove_items(set(image_ids))
+                # Belt-and-suspenders: force a full reload of the current
+                # view too, so the grid is guaranteed to match the database
+                # immediately rather than only on the next album switch.
+                self._album_gallery_vm.refresh_current()
+                # Deleting images cascades to their faces, which can change
+                # or remove person clusters — refresh so the People tab
+                # doesn't keep showing stale cards for deleted photos.
+                self._refresh_people_list()
+            if failed:
+                self._show_error(
+                    f"Deleted {deleted} {noun}, but {failed} could not be removed "
+                    "(check file permissions)."
+                )
+            else:
+                self.statusBar().showMessage(f"Permanently deleted {deleted} {noun}")
+
+        def on_err(msg: str) -> None:
+            self._show_error(f"Delete failed: {msg}")
+
+        worker.signals.result_ready.connect(on_done)
+        worker.signals.error.connect(on_err)
+        self._thread_pool.start(worker)
+
     def _on_filter_changed(self) -> None:
         """Handle filter changes from the filter bar."""
         # Get the current query definition from the filter bar
@@ -1700,6 +1985,70 @@ class MainWindow(QMainWindow):
 
         except Exception as exc:  # noqa: BLE001
             self._show_error(f"Failed to save filter as album: {exc}")
+
+    def _on_reset_identities_requested(self) -> None:
+        """Wipe every person/name/cluster and re-cluster from scratch.
+
+        Destructive: for a library whose clusters have become too mixed up
+        to be worth untangling photo-by-photo.
+        """
+        if self._face_index_service is None:
+            self._show_error("Face indexing service not available")
+            return
+
+        reply = QMessageBox.warning(
+            self,
+            "Reset All People?",
+            "This deletes every person and name in your library — including "
+            "any face you individually confirmed by hand — and re-clusters "
+            "everyone from scratch.\n\n"
+            "Photos, face detections, and embeddings are not touched; only "
+            "who's-who assignments are reset. This cannot be undone. "
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._set_task_status("⟳ Resetting all people…")
+        worker = IndexWorker(
+            self._face_index_service.reset_all_identities,
+            progress_callback=self._on_reset_identities_progress,
+        )
+        worker.signals.result_ready.connect(self._on_reset_identities_complete)
+        worker.signals.error.connect(self._on_reset_identities_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_reset_identities_progress(self, current: int, total: int) -> None:
+        """Update the status bar with reset progress."""
+        self._set_task_status(f"⟳ Resetting all people… {current}/{total}")
+
+    def _on_reset_identities_complete(self, result: object) -> None:
+        """Called on the main thread when the reset finishes."""
+        self._clear_task_status()
+        assigned = result if isinstance(result, int) else "?"
+        self.statusBar().showMessage(f"Reset complete: re-clustered {assigned} face(s)")
+        self._refresh_people_list()
+
+    def _on_reset_identities_error(self, msg: str) -> None:
+        """Called on the main thread if the reset fails."""
+        self._clear_task_status()
+        self._show_error(f"Resetting people failed: {msg}")
+
+    def _on_excluded_faces_requested(self) -> None:
+        """Open the excluded-faces browser — restore anyone excluded by
+        mistake (single "Remove" or bulk "Not of Interest"); nothing
+        excluded is ever a one-way door.
+        """
+        dialog = ExcludedFacesDialog(
+            self._face_review_service,
+            self._cache_directory,
+            self,
+            tile_store=self._thumbnail_tile_store,
+        )
+        dialog.exec()
+        self._refresh_people_list()
 
     def _on_reindex_faces_requested(self, file_path: str) -> None:
         """Re-index faces for a single image in a background worker."""

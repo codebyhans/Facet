@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from photo_app.domain.models import Album, Image
 from photo_app.domain.services import parse_album_query
+from photo_app.domain.value_objects import AlbumQuery
 
 if TYPE_CHECKING:
     from photo_app.domain.repositories import AlbumRepository, ImageRepository
@@ -142,6 +143,11 @@ class AlbumService:
                 combined_camera_models = (
                     filter_query.camera_models or album.query_definition.camera_models
                 )
+                combined_has_date = (
+                    filter_query.has_date
+                    if filter_query.has_date is not None
+                    else album.query_definition.has_date
+                )
             else:
                 # Use album query only
                 combined_person_ids = album.query_definition.person_ids
@@ -152,6 +158,7 @@ class AlbumService:
                 combined_rating_min = album.query_definition.rating_min
                 combined_quality_min = album.query_definition.quality_min
                 combined_camera_models = album.query_definition.camera_models
+                combined_has_date = album.query_definition.has_date
 
             if self._query_cache_service is None:
                 images = self._image_repository.list_by_filters(
@@ -163,6 +170,7 @@ class AlbumService:
                     rating_min=combined_rating_min,
                     quality_min=combined_quality_min,
                     camera_models=combined_camera_models,
+                    has_date=combined_has_date,
                     offset=offset,
                     limit=limit,
                 )
@@ -180,6 +188,7 @@ class AlbumService:
                     rating_min=combined_rating_min,
                     quality_min=combined_quality_min,
                     camera_models=combined_camera_models,
+                    has_date=combined_has_date,
                     offset=offset,
                     limit=limit,
                 )
@@ -194,6 +203,11 @@ class AlbumService:
         except Exception:
             logger.exception("Failed to list album images for album %s", album_id)
             return AlbumPage(items=[], offset=offset, limit=limit)
+
+    def is_unfiltered_album(self, album_id: int) -> bool:
+        """True when the album has no criteria, i.e. it shows the whole library."""
+        album = self._album_repository.get(album_id)
+        return album is not None and album.query_definition == AlbumQuery()
 
     def list_years(self) -> list[int]:
         """Return distinct indexed years for filter pickers."""
@@ -224,6 +238,7 @@ class AlbumService:
                 rating_min=filter_query.rating_min,
                 quality_min=filter_query.quality_min,
                 camera_models=filter_query.camera_models,
+                has_date=filter_query.has_date,
                 offset=offset,
                 limit=limit,
             )

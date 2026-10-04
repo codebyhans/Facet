@@ -170,8 +170,13 @@ class AlbumTreeModel(QAbstractItemModel):
             cursor = self._find_parent(cursor.node_id)
         return True
 
-    def move_node(self, node_id: str, new_parent_id: str | None) -> bool:
-        """Move one node to another parent."""
+    def move_node(
+        self,
+        node_id: str,
+        new_parent_id: str | None,
+        position: int | None = None,
+    ) -> bool:
+        """Move one node to another parent, optionally at a specific sibling index."""
         if not self.can_move(node_id, new_parent_id):
             return False
         node = self._find_node(node_id)
@@ -194,14 +199,32 @@ class AlbumTreeModel(QAbstractItemModel):
         self.endRemoveRows()
 
         target_index = self.index_from_node_id(target_parent.node_id)
-        insert_row = len(target_parent.children)
+        if position is None:
+            insert_row = len(target_parent.children)
+        else:
+            insert_row = position
+            if old_parent is target_parent and old_row < position:
+                insert_row -= 1
+            insert_row = max(0, min(insert_row, len(target_parent.children)))
         self.beginInsertRows(target_index, insert_row, insert_row)
         node.parent_id = (
             None if target_parent.node_id == "root" else target_parent.node_id
         )
-        target_parent.children.append(node)
+        target_parent.children.insert(insert_row, node)
         self.endInsertRows()
         return True
+
+    def node_position(self, node_id: str) -> tuple[str | None, int] | None:
+        """Return (parent_id, row) for one node; parent_id is None at root level."""
+        node = self._find_node(node_id)
+        if node is None or node.kind == "root":
+            return None
+        parent = self._find_parent(node_id)
+        if parent is None:
+            return None
+        row = parent.children.index(node)
+        parent_id = None if parent.node_id == "root" else parent.node_id
+        return parent_id, row
 
     def add_node(self, node: AlbumTreeNode, parent_id: str | None) -> None:
         """Insert a new node under one parent."""

@@ -8,11 +8,12 @@ if TYPE_CHECKING:
 
     from photo_app.domain.models import (
         Album,
-        ClusterEmbedding,
         Face,
         FaceClusterMembership,
+        FaceStackRow,
         IdentityCluster,
         Image,
+        ImageSummary,
         Person,
     )
     from photo_app.domain.value_objects import AlbumQuery
@@ -39,6 +40,9 @@ class ImageRepository(Protocol):
     def list_all(self) -> list[Image]:
         """Return all images."""
 
+    def list_all_summary(self) -> list[ImageSummary]:
+        """Return a lightweight (id, file_path, width, height, capture_date) projection of every image, for grouping/display use cases that don't need the full row."""
+
     def list_paginated(self, *, offset: int, limit: int) -> list[Image]:
         """Return paginated images to avoid loading all into memory."""
 
@@ -53,6 +57,7 @@ class ImageRepository(Protocol):
         rating_min: int | None = None,
         quality_min: float | None = None,
         camera_models: Sequence[str] = (),
+        has_date: bool | None = None,
         offset: int,
         limit: int,
     ) -> list[Image]:
@@ -69,8 +74,13 @@ class ImageRepository(Protocol):
         rating_min: int | None = None,
         quality_min: float | None = None,
         camera_models: Sequence[str] = (),
+        has_date: bool | None = None,
     ) -> list[int]:
-        """Query image IDs by filter criteria with stable ordering."""
+        """Query image IDs by filter criteria with stable ordering.
+
+        has_date: True = only images with a capture date, False = only undated
+        images, None = both.
+        """
 
     def list_by_ids(self, image_ids: Sequence[int]) -> list[Image]:
         """Load images by explicit ID order."""
@@ -83,6 +93,15 @@ class ImageRepository(Protocol):
 
     def list_all_paths(self) -> list[str]:
         """Return all indexed file paths in a single query."""
+
+    def list_without_real_timestamp(self) -> list[Image]:
+        """Return images with no capture_date, or a capture_date whose time is exactly midnight (folder-date fallback)."""
+
+    def update_capture_date(self, image_id: int, capture_date: datetime) -> None:
+        """Set capture_date (and year/month) for an image."""
+
+    def delete_by_paths(self, paths: list[str]) -> int:
+        """Delete images and all dependent rows for the given file paths."""
 
 
 class FaceRepository(Protocol):
@@ -97,11 +116,20 @@ class FaceRepository(Protocol):
     def list_by_image(self, image_id: int) -> list[Face]:
         """Load faces for one image."""
 
+    def list_by_person(self, person_id: int) -> list[Face]:
+        """Load non-excluded faces assigned to one person."""
+
     def get(self, face_id: int) -> Face | None:
         """Load a single face by ID."""
 
+    def get_many(self, face_ids: Sequence[int]) -> list[Face]:
+        """Load multiple faces by ID in a single query."""
+
     def list_all_active(self) -> list[Face]:
         """Load non-excluded faces."""
+
+    def list_active_stack_rows(self) -> list[FaceStackRow]:
+        """Load a lightweight (id, image_id, person_id, bbox) projection of non-excluded faces, without the embedding BLOB, for stack grouping."""
 
     def list_without_cluster_membership(self, limit: int | None = None) -> list[Face]:
         """Load non-excluded faces that are not linked to an identity cluster."""
@@ -112,14 +140,30 @@ class FaceRepository(Protocol):
     def assign_person_manual(self, face_ids: Sequence[int], person_id: int) -> None:
         """Set person_id and mark faces as manual assignments."""
 
+    def reassign_person(self, old_person_id: int, new_person_id: int) -> None:
+        """Repoint every face from one person record to another (incl. manual tags)."""
+
     def exclude(self, face_ids: Sequence[int]) -> None:
         """Mark faces excluded from review and future auto-clustering."""
+
+    def list_excluded(self, limit: int | None = None) -> list[Face]:
+        """Load excluded faces (optionally capped), for a "restore" browser."""
+
+    def count_excluded(self) -> int:
+        """Count all currently-excluded faces, regardless of `limit`."""
+
+    def restore(self, face_ids: Sequence[int]) -> None:
+        """Undo `exclude()`: face re-enters normal auto-clustering on the
+        next indexing run. Never deletes anything — always reversible."""
 
     def delete_by_image(self, image_id: int) -> None:
         """Delete all faces for one image, including excluded/manual rows."""
 
-    def find_cluster_id_for_person(self, person_id: int) -> int | None:
-        """Return the cluster_id for any face membership belonging to this person."""
+    def unassign_faces(self, face_ids: Sequence[int]) -> None:
+        """Clear the person label (and manual flag) of the given faces."""
+
+    def clear_all_person_assignments(self) -> None:
+        """Unassign every face (including manually-tagged ones) for a full reset."""
 
 
 class PersonRepository(Protocol):
@@ -140,14 +184,17 @@ class PersonRepository(Protocol):
     def update_name(self, person_id: int, name: str) -> None:
         """Update person display name."""
 
-    def find_by_cluster_id(self, cluster_id: int) -> Person | None:
-        """Fetch person linked to one identity cluster."""
-
-    def bind_cluster(self, person_id: int, cluster_id: int) -> None:
-        """Attach person to one identity cluster."""
+    def update_birth_date(self, person_id: int, birth_date: date | None) -> None:
+        """Update person birth date (None clears it)."""
 
     def delete(self, person_id: int) -> None:
         """Delete a person record by ID."""
+
+    def delete_many(self, person_ids: Sequence[int]) -> None:
+        """Delete several person records by ID."""
+
+    def delete_all(self) -> None:
+        """Delete every person record, for a full identity reset."""
 
 
 class IdentityClusterRepository(Protocol):
@@ -166,6 +213,9 @@ class IdentityClusterRepository(Protocol):
 
     def get_cluster(self, cluster_id: int) -> IdentityCluster | None:
         """Load one cluster."""
+
+    def get_clusters(self, cluster_ids: Sequence[int]) -> dict[int, IdentityCluster]:
+        """Load multiple clusters by ID in a single query."""
 
     def update_cluster_state(  # noqa: PLR0913
         self,
@@ -201,21 +251,24 @@ class IdentityClusterRepository(Protocol):
         """Move all memberships from source cluster to target cluster."""
 
     def delete_cluster(self, cluster_id: int) -> None:
-        """Delete cluster and attached temporal rows."""
+        """Delete cluster and its memberships."""
 
-    def list_temporal_embeddings(self, cluster_id: int) -> list[ClusterEmbedding]:
-        """Load temporal profile rows for one cluster."""
+    def delete_clusters(self, cluster_ids: Sequence[int]) -> None:
+        """Delete several clusters and their memberships in bulk."""
 
-    def upsert_temporal_embedding(
-        self,
-        *,
-        cluster_id: int,
-        time_period: str,
-        embedding: bytes,
-        sample_count: int,
-        updated_at: datetime,
-    ) -> None:
-        """Create or update one temporal bucket embedding."""
+    def delete_all_clusters(self) -> None:
+        """Wipe every cluster and membership at once."""
+
+    def set_cluster_person(self, cluster_id: int, person_id: int | None) -> None:
+        """Set (or clear, with None) the name tag applied to one cluster.
+
+        Never touches the cluster's embedding or membership — tagging only ever labels a cluster, it doesn't merge it
+        with anything. Many different clusters may carry the same
+        `person_id`.
+        """
+
+    def list_clusters_for_person(self, person_id: int) -> list[IdentityCluster]:
+        """Return every cluster currently tagged with this person."""
 
 
 class AlbumRepository(Protocol):

@@ -164,6 +164,22 @@ class PhotoGridModel(QAbstractListModel):
         """Current model rows."""
         return list(self._items)
 
+    @property
+    def thumbnail_size(self) -> tuple[int, int]:
+        """Configured native thumbnail pixel size."""
+        return self._thumbnail_size
+
+    def remove_items(self, image_ids: set[int]) -> None:
+        """Remove rows for the given image IDs (e.g. after permanent deletion)."""
+        rows = sorted(
+            (row for row, item in enumerate(self._items) if item.image_id in image_ids),
+            reverse=True,
+        )
+        for row in rows:
+            self.beginRemoveRows(QModelIndex(), row, row)
+            del self._items[row]
+            self.endRemoveRows()
+
     def _resolve_decoration(self, item: PhotoGridItem) -> QPixmap | None:
         tile_index = item.tile_index
         position_in_tile = item.position_in_tile

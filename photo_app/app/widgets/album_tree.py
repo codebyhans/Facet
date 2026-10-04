@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -67,7 +68,7 @@ class AlbumTreeWidget(QTreeView):
     renameRequested = Signal(str, str)  # noqa: N815
     deleteRequested = Signal(str)  # noqa: N815
     editFiltersRequested = Signal(str)  # noqa: N815
-    moveRequested = Signal(str, object)  # noqa: N815
+    moveRequested = Signal(str, object, object)  # noqa: N815
 
     def __init__(self, model: AlbumTreeModel, parent: QTreeView | None = None) -> None:
         super().__init__(parent)
@@ -95,10 +96,41 @@ class AlbumTreeWidget(QTreeView):
         source_node = model.node_from_index(source_index)
         if source_node is None:
             return
+
         target_index = self.indexAt(event.position().toPoint())
         target_node = model.node_from_index(target_index)
-        parent_id = None if target_node is None else target_node.node_id
-        self.moveRequested.emit(source_node.node_id, parent_id)
+        drop_position = self.dropIndicatorPosition()
+
+        if (
+            target_node is None
+            or drop_position == QAbstractItemView.DropIndicatorPosition.OnViewport
+        ):
+            # Dropped on empty space: move to top level, append at the end.
+            self.moveRequested.emit(source_node.node_id, None, None)
+            event.accept()
+            return
+
+        if (
+            drop_position == QAbstractItemView.DropIndicatorPosition.OnItem
+            and target_node.kind == "folder"
+        ):
+            # Dropped directly on a folder: move into it, append at the end.
+            self.moveRequested.emit(source_node.node_id, target_node.node_id, None)
+            event.accept()
+            return
+
+        # Dropped above/below a sibling (or on a non-folder item): reorder in place.
+        position_info = model.node_position(target_node.node_id)
+        if position_info is None:
+            event.ignore()
+            return
+        parent_id, row = position_info
+        insert_row = (
+            row
+            if drop_position == QAbstractItemView.DropIndicatorPosition.AboveItem
+            else row + 1
+        )
+        self.moveRequested.emit(source_node.node_id, parent_id, insert_row)
         event.accept()
 
     def _show_context_menu(self, position: QPoint) -> None:
@@ -137,7 +169,7 @@ class AlbumTreeWidget(QTreeView):
             all_nodes = self._flatten(model.all_nodes())
             dialog = MoveAlbumDialog(all_nodes, node.node_id, parent=self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
-                self.moveRequested.emit(node.node_id, dialog.target_parent_id())
+                self.moveRequested.emit(node.node_id, dialog.target_parent_id(), None)
 
     def _on_clicked(self) -> None:
         model = self.model()

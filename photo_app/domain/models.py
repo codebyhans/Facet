@@ -49,14 +49,51 @@ class Face:
 
 
 @dataclass(frozen=True)
+class ImageSummary:
+    """Lightweight image projection for grouping/display.
+
+    Omits large optional text columns (user_notes, location_name, etc.) that
+    stack-grouping and cover-selection never touch, so loading every image
+    for that purpose doesn't drag megabytes of unused text through SQLite.
+    """
+
+    id: int
+    file_path: str
+    width: int
+    height: int
+    capture_date: datetime | None
+
+
+@dataclass(frozen=True)
+class FaceStackRow:
+    """Lightweight active-face projection for stack grouping.
+
+    Omits the embedding BLOB (a few KB per face) that stack grouping and
+    cover selection never touch — the dominant cost of loading every face
+    in a large library just to group them by person.
+    """
+
+    id: int
+    image_id: int
+    person_id: int | None
+    bbox: BoundingBox
+
+
+@dataclass(frozen=True)
 class Person:
-    """Person entity."""
+    """A name tag: a name plus (usually) a fixed, known birth date.
+
+    Deliberately not tied to any one cluster — `IdentityCluster.person_id`
+    is the other direction of this relationship, and many clusters can
+    carry the same tag (e.g. a child's separate baby/toddler/kid clusters),
+    since tagging never merges cluster state. See `tag_cluster` in
+    `TemporalIdentityClusterService`.
+    """
 
     id: int | None
     name: str | None
     created_at: datetime
     birth_date: date | None
-    identity_cluster_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -72,7 +109,14 @@ class Album:
 
 @dataclass(frozen=True)
 class IdentityCluster:
-    """Temporal identity cluster for one person across age stages."""
+    """A machine-formed group of visually similar faces.
+
+    `person_id` is the name tag applied to this cluster, if any (nullable,
+    not unique — several clusters may carry the same tag). Tagging only
+    ever sets this field plus `Face.person_id` on the members; it never
+    touches `canonical_embedding` or membership, so
+    a cluster's own ML state is unaffected by which tag (if any) it wears.
+    """
 
     id: int | None
     canonical_embedding: bytes
@@ -81,6 +125,7 @@ class IdentityCluster:
     flagged_for_review: bool
     created_at: datetime
     updated_at: datetime
+    person_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -91,18 +136,6 @@ class FaceClusterMembership:
     cluster_id: int
     confidence: float
     assigned_at: datetime
-
-
-@dataclass(frozen=True)
-class ClusterEmbedding:
-    """Representative embedding for one cluster life-stage bucket."""
-
-    id: int | None
-    cluster_id: int
-    time_period: str
-    embedding: bytes
-    sample_count: int
-    updated_at: datetime
 
 
 @dataclass(frozen=True)

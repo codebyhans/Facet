@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from photo_app.domain.models import Face, Person
 from photo_app.domain.models import Image as ImageEntity
@@ -108,7 +108,15 @@ class FaceIndexService:
         )
 
     def reindex_image(self, image_path: str) -> FaceIndexResult:
-        """Re-detect one image and overwrite all existing face rows for it."""
+        """Re-detect one image and overwrite all existing face rows for it.
+
+        Deliberately doesn't run full `IdentityMaintenanceJobs.run_all()`
+        (recomputes every cluster in the library, plus a full duplicate-merge
+        sweep) for a single re-indexed photo — same reasoning as the bulk
+        import path (`main_window.run_face_index_loop`): `index_new_faces()`
+        already refreshes the one or two clusters this image's face(s)
+        actually touch, which is all a single-image reindex needs.
+        """
         image = self._image_repository.get_by_path(image_path)
         if image is None or image.id is None:
             return FaceIndexResult(processed_images=0, detected_faces=0)
@@ -122,8 +130,6 @@ class FaceIndexService:
             self._cluster_all_faces()
         else:
             self._identity_cluster_service.index_new_faces()
-        if self._identity_maintenance_jobs is not None:
-            self._identity_maintenance_jobs.run_all()
         if self._query_cache_service is not None:
             self._query_cache_service.invalidate_all()
         return FaceIndexResult(processed_images=1, detected_faces=len(staged_faces))
@@ -131,7 +137,13 @@ class FaceIndexService:
     def _extract_faces_for_image(self, image: ImageEntity) -> list[Face]:
         try:
             with Image.open(image.file_path) as image_file:
-                np_image = np.array(image_file.convert("RGB"))
+                # Orient to match how everything else already displays this
+                # photo (thumbnails, the inspector) — Image.width/height in
+                # the DB are already the post-orientation dimensions (see
+                # image_index_service.py), so bboxes need to be computed in
+                # that same corrected space, not the file's raw pixel grid.
+                oriented = ImageOps.exif_transpose(image_file)
+                np_image = np.array(oriented.convert("RGB"))
         except (UnidentifiedImageError, OSError, PermissionError) as exc:
             logger.warning("Skipping %s: %s", image.file_path, exc)
             return []
@@ -157,6 +169,33 @@ class FaceIndexService:
                 )
             )
         return staged
+
+    def reset_all_identities(
+        self, on_progress: Callable[[int, int], None] | None = None
+    ) -> int:
+        """Wipe every person, name, and cluster assignment, then re-cluster.
+
+        Destructive: deletes every Person record — including faces you
+        individually hand-confirmed — and all cluster/membership state, then
+        re-runs identity matching under the current algorithm.
+        Face detections and embeddings are untouched, so this never re-scans
+        pixels for *detection* purposes; it only re-decides who's who.
+
+        """
+        self._face_repository.clear_all_person_assignments()
+        self._person_repository.delete_all()
+
+        assigned = 0
+        if self._identity_cluster_service is not None:
+            self._identity_cluster_service.delete_all_clusters()
+            assigned = self._identity_cluster_service.index_new_faces(
+                on_progress=on_progress
+            )
+            if self._identity_maintenance_jobs is not None:
+                self._identity_maintenance_jobs.run_all()
+        if self._query_cache_service is not None:
+            self._query_cache_service.invalidate_all()
+        return assigned
 
     def _collect_capture_dates(
         self,

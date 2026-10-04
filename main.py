@@ -7,8 +7,10 @@ import traceback
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import pillow_heif
 from alembic import command
 from alembic.config import Config
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 from PySide6.QtWidgets import QApplication
 
 if TYPE_CHECKING:
@@ -56,7 +58,14 @@ from photo_app.services.tags_service import TagService
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from photo_app.domain.repositories import (
+        FaceRepository,
+        ImageRepository,
+        PersonRepository,
+    )
     from photo_app.ml.protocols import EmbeddingModel
+
+pillow_heif.register_heif_opener()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -77,6 +86,12 @@ class ServiceContainer:
     thumbnail_tile_store: ThumbnailTileStore
     identity_cluster_service: TemporalIdentityClusterService
     identity_maintenance_jobs: IdentityMaintenanceJobs
+    # Exposed so the composition root can kick off the deferred face-ML
+    # initialization (see `_FaceMlInitWorker`) after the window is visible.
+    image_repo: ImageRepository
+    face_repo: FaceRepository
+    person_repo: PersonRepository
+    query_cache_service: AlbumQueryCacheService
 
 
 def _db_url_from_path(db_path: Path) -> str:
@@ -162,12 +177,62 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
         identity_cluster_service=identity_cluster_service,
     )
 
-    face_index_service: FaceIndexService | None = None
+    # Face ML stack (InsightFace model load, several seconds) is initialized
+    # separately, after the window is already visible — see
+    # `_FaceMlInitWorker` / `_start_face_ml_init_async`. Building it here
+    # synchronously used to block the very first window paint on it.
+
+    # Create metadata and tags services
+    metadata_sync_service = MetadataSyncService(engine)
+    tag_service = TagService(engine)
+    LOGGER.info("Service graph ready.")
+    return ServiceContainer(
+        image_index_service=image_index_service,
+        album_service=album_service,
+        person_service=person_service,
+        face_index_service=None,
+        face_review_service=face_review_service,
+        metadata_sync_service=metadata_sync_service,
+        tag_service=tag_service,
+        settings_service=settings_service,
+        runtime_settings=runtime_settings,
+        thumbnail_tile_store=thumbnail_tile_store,
+        identity_cluster_service=identity_cluster_service,
+        identity_maintenance_jobs=identity_maintenance_jobs,
+        image_repo=image_repo,
+        face_repo=face_repo,
+        person_repo=person_repo,
+        query_cache_service=query_cache_service,
+    )
+
+
+def _init_face_ml_stack(  # noqa: PLR0913
+    *,
+    runtime_settings: RuntimeSettings,
+    image_repo: ImageRepository,
+    face_repo: FaceRepository,
+    person_repo: PersonRepository,
+    query_cache_service: AlbumQueryCacheService,
+    identity_cluster_service: TemporalIdentityClusterService,
+    identity_maintenance_jobs: IdentityMaintenanceJobs,
+) -> FaceIndexService | None:
+    """Initialize InsightFace and build the face indexing service.
+
+    `FaceAnalysis(...).prepare()` loads several ONNX models from disk and
+    commonly takes multiple seconds — safe to call off the main thread since
+    nothing here touches Qt objects, only ML/repository objects (the same
+    reasoning workers elsewhere in this app use for PIL image decoding).
+    """
     try:
         insightface = importlib.import_module("insightface")
 
         LOGGER.info("Initializing InsightFace detector (default pipeline)...")
-        face_app = insightface.app.FaceAnalysis(providers=["CPUExecutionProvider"])
+        # Only detection + recognition (embeddings) are used; skipping the
+        # landmark and gender/age submodels saves work on every face.
+        face_app = insightface.app.FaceAnalysis(
+            allowed_modules=["detection", "recognition"],
+            providers=["CPUExecutionProvider"],
+        )
         face_app.prepare(
             ctx_id=0,
             det_thresh=runtime_settings.detector_confidence_threshold,
@@ -212,25 +277,87 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
         LOGGER.info("Face ML stack initialized.")
     except Exception:
         LOGGER.exception("Face ML initialization failed; disabling face indexing.")
+        return None
+    return face_index_service
 
-    # Create metadata and tags services
-    metadata_sync_service = MetadataSyncService(engine)
-    tag_service = TagService(engine)
-    LOGGER.info("Service graph ready.")
-    return ServiceContainer(
-        image_index_service=image_index_service,
-        album_service=album_service,
-        person_service=person_service,
-        face_index_service=face_index_service,
-        face_review_service=face_review_service,
-        metadata_sync_service=metadata_sync_service,
-        tag_service=tag_service,
-        settings_service=settings_service,
-        runtime_settings=runtime_settings,
-        thumbnail_tile_store=thumbnail_tile_store,
-        identity_cluster_service=identity_cluster_service,
-        identity_maintenance_jobs=identity_maintenance_jobs,
+
+class _FaceMlInitWorkerSignals(QObject):
+    """Signals for `_FaceMlInitWorker`."""
+
+    ready = Signal(object)  # FaceIndexService | None
+
+
+class _FaceMlInitWorker(QRunnable):
+    """Run `_init_face_ml_stack` on a thread-pool worker.
+
+    Keeps the multi-second InsightFace model load off the path that gates
+    `window.show()`: the window opens immediately and face indexing becomes
+    available a few seconds later via `MainWindow.set_face_index_service`,
+    instead of the whole app appearing to hang before showing anything.
+    """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        *,
+        runtime_settings: RuntimeSettings,
+        image_repo: ImageRepository,
+        face_repo: FaceRepository,
+        person_repo: PersonRepository,
+        query_cache_service: AlbumQueryCacheService,
+        identity_cluster_service: TemporalIdentityClusterService,
+        identity_maintenance_jobs: IdentityMaintenanceJobs,
+    ) -> None:
+        super().__init__()
+        self._runtime_settings = runtime_settings
+        self._image_repo = image_repo
+        self._face_repo = face_repo
+        self._person_repo = person_repo
+        self._query_cache_service = query_cache_service
+        self._identity_cluster_service = identity_cluster_service
+        self._identity_maintenance_jobs = identity_maintenance_jobs
+        self.signals = _FaceMlInitWorkerSignals()
+
+    @Slot()
+    def run(self) -> None:
+        """Run the worker in a background thread."""
+        face_index_service = _init_face_ml_stack(
+            runtime_settings=self._runtime_settings,
+            image_repo=self._image_repo,
+            face_repo=self._face_repo,
+            person_repo=self._person_repo,
+            query_cache_service=self._query_cache_service,
+            identity_cluster_service=self._identity_cluster_service,
+            identity_maintenance_jobs=self._identity_maintenance_jobs,
+        )
+        self.signals.ready.emit(face_index_service)
+
+
+# Keeps background workers started from this module alive until they finish
+# emitting (mirrors the `self._active_..._worker` pattern used by widgets
+# elsewhere in this app, adapted for the composition root, which has no
+# natural owning widget of its own for a startup-only worker).
+_background_workers: list[QRunnable] = []
+
+
+def _start_face_ml_init_async(services: ServiceContainer, window: MainWindow) -> None:
+    """Kick off face-ML initialization in the background and wire its result to `window`."""
+    worker = _FaceMlInitWorker(
+        runtime_settings=services.runtime_settings,
+        image_repo=services.image_repo,
+        face_repo=services.face_repo,
+        person_repo=services.person_repo,
+        query_cache_service=services.query_cache_service,
+        identity_cluster_service=services.identity_cluster_service,
+        identity_maintenance_jobs=services.identity_maintenance_jobs,
     )
+
+    def _on_ready(face_index_service: FaceIndexService | None) -> None:
+        _background_workers.remove(worker)
+        window.set_face_index_service(face_index_service)
+
+    worker.signals.ready.connect(_on_ready)
+    _background_workers.append(worker)
+    QThreadPool.globalInstance().start(worker)
 
 
 def build_main_window(settings: AppSettings, engine: Engine) -> MainWindow:
@@ -249,11 +376,13 @@ def build_main_window(settings: AppSettings, engine: Engine) -> MainWindow:
             services.settings_service,
             services.runtime_settings,
             services.thumbnail_tile_store,
+            cache_directory=settings.cache_directory,
         )
     except Exception:
         traceback.print_exc()
         raise
     LOGGER.info("Main window created.")
+    _start_face_ml_init_async(services, window)
     return window
 
 

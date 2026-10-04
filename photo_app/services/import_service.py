@@ -1,18 +1,70 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
+from PIL import Image as PILImage
+
 from photo_app.infrastructure.exif_handler import ExifMetadataHandler
+from photo_app.infrastructure.quicktime_handler import read_quicktime_date
+from photo_app.services.import_dedup import FolderDuplicateChecker
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
+
+# ISO base media / QuickTime containers that read_quicktime_date can parse
+QUICKTIME_EXTENSIONS = frozenset({".mov", ".mp4", ".m4v", ".3gp"})
+
+SCREENSHOTS_FOLDER = "Screenshots"
+
+# iOS tags screenshots in XMP with <exif:UserComment>Screenshot</exif:UserComment>
+_XMP_SCREENSHOT_RE = re.compile(
+    r"<exif:UserComment>\s*Screenshot\s*</exif:UserComment>"
+)
+_XMP_DATE_CREATED_RE = re.compile(
+    r"photoshop:DateCreated(?:>|=\")\s*(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?)"
+)
+
+
+@dataclass(frozen=True)
+class XmpInfo:
+    is_screenshot: bool = False
+    # Local wall-clock time as written by the device (no timezone)
+    created: datetime | None = None
+
+
+def read_xmp_info(file_path: Path) -> XmpInfo:
+    """Read the screenshot marker and DateCreated from an image's XMP packet."""
+    if file_path.suffix.lower() in QUICKTIME_EXTENSIONS:
+        return XmpInfo()
+    try:
+        # Image.open only parses headers/metadata chunks, not pixel data
+        with PILImage.open(file_path) as img:
+            raw = img.info.get("XML:com.adobe.xmp") or img.info.get("xmp")
+    except (OSError, ValueError) as exc:
+        LOGGER.debug("Failed to read XMP from %s: %s", file_path, exc)
+        return XmpInfo()
+    if not raw:
+        return XmpInfo()
+    xmp = raw.decode("utf-8", errors="ignore") if isinstance(raw, bytes) else raw
+
+    created = None
+    if match := _XMP_DATE_CREATED_RE.search(xmp):
+        try:
+            created = datetime.fromisoformat(match.group(1))
+        except ValueError:
+            LOGGER.debug("Invalid XMP DateCreated in %s", file_path)
+    return XmpInfo(
+        is_screenshot=_XMP_SCREENSHOT_RE.search(xmp) is not None,
+        created=created,
+    )
 
 
 @dataclass(frozen=True)
@@ -23,6 +75,7 @@ class ImportOptions:
     destination_path: Path
     run_indexing: bool = True
     run_face_detection: bool = False
+    skip_duplicates: bool = True
 
 
 @dataclass(frozen=True)
@@ -31,7 +84,7 @@ class ImportFileResult:
 
     source_path: Path
     dest_path: Path | None
-    status: Literal["copied", "failed"]
+    status: Literal["copied", "failed", "duplicate"]
     no_capture_date: bool = False
     error: str | None = None
 
@@ -47,6 +100,7 @@ class ImportSummary:
     unhandled_paths: list[Path]
     destination_path: Path
     file_results: list[ImportFileResult]
+    skipped_duplicates: int = 0
 
 
 class ImportService:
@@ -88,16 +142,20 @@ class ImportService:
         file_results: list[ImportFileResult] = []
         copied_count = 0
         failed_count = 0
+        duplicate_count = 0
         no_capture_date_count = 0
+        checker = FolderDuplicateChecker() if options.skip_duplicates else None
 
         # Process each file
         for current, source_file in enumerate(files_to_import, 1):
-            result = self._process_file(source_file, options)
+            result = self._process_file(source_file, options, checker)
             file_results.append(result)
 
             # Update counts
             if result.status == "copied":
                 copied_count += 1
+            elif result.status == "duplicate":
+                duplicate_count += 1
             else:
                 failed_count += 1
             if result.no_capture_date:
@@ -124,22 +182,28 @@ class ImportService:
             unhandled_paths=unhandled_paths,
             destination_path=options.destination_path,
             file_results=file_results,
+            skipped_duplicates=duplicate_count,
         )
 
         LOGGER.info(
-            "Import completed: %d copied, %d failed, %d without capture date",
+            "Import completed: %d copied, %d failed, %d duplicates skipped, "
+            "%d without capture date",
             copied_count,
             failed_count,
+            duplicate_count,
             no_capture_date_count,
         )
 
         return summary
 
-    def _resolve_capture_date(self, file_path: Path) -> date | None:
-        """Read capture date from EXIF, falling back to file modification date.
+    def _resolve_capture_date(
+        self, file_path: Path, xmp_date: date | None = None
+    ) -> date | None:
+        """Read capture date from EXIF, QuickTime metadata (videos), then XMP.
 
-        Falls back to the file's mtime if EXIF is unavailable or unreadable.
-        This applies to all file types including video.
+        Returns None when none of those yields a date. The file's mtime is
+        deliberately not used: unzipping or copying resets it to "now", which
+        dumped undated files into the import day's folder.
         """
         try:
             exif_data = ExifMetadataHandler.read_exif(str(file_path))
@@ -151,14 +215,18 @@ class ImportService:
         except (ValueError, AttributeError, OSError) as exc:
             LOGGER.debug("Failed to read EXIF from %s: %s", file_path, exc)
 
-        # Fall back to file modification date (reliable for video files)
-        try:
-            mtime = file_path.stat().st_mtime
-            return datetime.fromtimestamp(mtime, tz=UTC).date()
-        except OSError as exc:
-            LOGGER.debug("Failed to read mtime from %s: %s", file_path, exc)
+        # Videos carry their "Media Created" date in the QuickTime container
+        if file_path.suffix.lower() in QUICKTIME_EXTENSIONS:
+            try:
+                qt_dt = read_quicktime_date(file_path)
+                if qt_dt is not None:
+                    return qt_dt.date()
+            except (ValueError, OSError) as exc:
+                LOGGER.debug(
+                    "Failed to read QuickTime date from %s: %s", file_path, exc
+                )
 
-        return None
+        return xmp_date
 
     def _resolve_dest_path(self, dest_folder: Path, filename: str) -> Path:
         """Return a collision-free destination path, appending _2, _3 etc. if needed."""
@@ -196,31 +264,54 @@ class ImportService:
         return files_to_import
 
     def _process_file(
-        self, source_file: Path, options: ImportOptions
+        self,
+        source_file: Path,
+        options: ImportOptions,
+        checker: FolderDuplicateChecker | None = None,
     ) -> ImportFileResult:
         """Process a single file for import."""
         try:
-            # Extract capture date from EXIF
-            capture_date = self._resolve_capture_date(source_file)
+            xmp = read_xmp_info(source_file)
+            capture_date = self._resolve_capture_date(
+                source_file, xmp.created.date() if xmp.created else None
+            )
+
+            # Screenshots get their own dated tree, apart from photos
+            root = options.destination_path
+            if xmp.is_screenshot:
+                root /= SCREENSHOTS_FOLDER
 
             # Determine destination folder
             if capture_date is not None:
                 dest_folder = (
-                    options.destination_path
+                    root
                     / f"{capture_date.year}"
                     / f"{capture_date.year}-{capture_date.month:02d}-{capture_date.day:02d}"
                 )
             else:
-                dest_folder = options.destination_path / "undated"
+                dest_folder = root / "undated"
 
             # Create destination folder
             dest_folder.mkdir(parents=True, exist_ok=True)
+
+            # Skip files whose content already exists in the destination folder
+            if checker is not None:
+                existing = checker.find_duplicate(source_file, dest_folder)
+                if existing is not None:
+                    LOGGER.debug("Skipping %s — duplicate of %s", source_file, existing)
+                    return ImportFileResult(
+                        source_path=source_file,
+                        dest_path=existing,
+                        status="duplicate",
+                    )
 
             # Resolve filename collision
             dest_path = self._resolve_dest_path(dest_folder, source_file.name)
 
             # Copy file
             shutil.copy2(source_file, dest_path)
+            if checker is not None:
+                checker.register(dest_path)
 
         except (OSError, PermissionError) as exc:
             # File operation failed

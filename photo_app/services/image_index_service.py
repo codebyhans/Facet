@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from blake3 import blake3
@@ -12,10 +13,10 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from photo_app.domain.models import Image as ImageEntity
 from photo_app.domain.services import now_utc
 from photo_app.infrastructure.exif_handler import ExifMetadataHandler
+from photo_app.services.import_service import read_xmp_info
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from photo_app.domain.repositories import ImageRepository
     from photo_app.infrastructure.file_scanner import FileScanner, ScannedFile
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     from photo_app.services.album_query_cache_service import AlbumQueryCacheService
 
 LOGGER = logging.getLogger(__name__)
+
+_VIDEO_SUFFIXES = frozenset({".mov", ".mp4", ".avi", ".mts", ".m2ts", ".3gp"})
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,14 @@ class ImageIndexResult:
     scanned: int
     inserted: int
     skipped: int
+
+
+@dataclass(frozen=True)
+class DeleteImagesResult:
+    """Result summary for permanent image deletion."""
+
+    deleted: int
+    failed: int
 
 
 class ImageIndexService:
@@ -215,6 +226,116 @@ class ImageIndexService:
             skipped=skipped,
         )
 
+    def backfill_missing_timestamps(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> int:
+        """Set capture_date from EXIF/XMP for images that have none.
+
+        Images without any embedded date stay undated (NULL) on purpose; the
+        file mtime is not a capture date.
+
+        Returns the number of images updated.
+        """
+        images = self._image_repository.list_without_real_timestamp()
+        total = len(images)
+        updated = 0
+        for idx, image in enumerate(images):
+            if on_progress and idx % 25 == 0:
+                on_progress(idx, total)
+            path = Path(image.file_path)
+            capture_date: datetime | None = None
+            # Prefer EXIF DateTimeOriginal so HEIC files get the real shot time
+            if path.suffix.lower() in {
+                ".heic",
+                ".heif",
+                ".jpg",
+                ".jpeg",
+                ".tiff",
+                ".tif",
+            }:
+                try:
+                    with Image.open(path) as img:
+                        exif = img.getexif()
+                        raw = exif.get_ifd(34665).get(36867) or exif.get(36867)
+                        if isinstance(raw, (str, bytes)):
+                            s = raw.decode() if isinstance(raw, bytes) else raw
+                            capture_date = datetime.strptime(
+                                s, "%Y:%m:%d %H:%M:%S"
+                            ).replace(tzinfo=UTC)
+                except Exception:  # noqa: BLE001, S110
+                    pass
+            if capture_date is None:
+                capture_date = read_xmp_info(path).created
+            if capture_date is None:
+                continue
+            self._image_repository.update_capture_date(image.id, capture_date)  # type: ignore[arg-type]
+            updated += 1
+        if on_progress:
+            on_progress(total, total)
+        if self._query_cache_service is not None and updated:
+            self._query_cache_service.invalidate_all()
+        return updated
+
+    def prune_missing_files(
+        self,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> int:
+        """Remove DB records whose files no longer exist on disk.
+
+        Returns the number of images deleted.
+        """
+        all_paths = self._image_repository.list_all_paths()
+        total = len(all_paths)
+        missing: list[str] = []
+        for idx, path in enumerate(all_paths):
+            if on_progress and idx % 100 == 0:
+                on_progress(idx, total)
+            if not Path(path).exists():
+                missing.append(path)
+        if on_progress:
+            on_progress(total, total)
+        if not missing:
+            LOGGER.info("Prune: no missing files found (%s checked)", total)
+            return 0
+        deleted = self._image_repository.delete_by_paths(missing)
+        LOGGER.info("Prune: deleted %s stale records (checked %s)", deleted, total)
+        if self._query_cache_service is not None and deleted:
+            self._query_cache_service.invalidate_all()
+        return deleted
+
+    def delete_images(self, image_ids: list[int]) -> DeleteImagesResult:
+        """Permanently delete images from disk and remove their library records.
+
+        Files that fail to delete (e.g. permission errors) are left on disk
+        and their database records are kept so the operation can be retried.
+        """
+        if not image_ids:
+            return DeleteImagesResult(deleted=0, failed=0)
+
+        images = self._image_repository.list_by_ids(image_ids)
+        deleted_paths: list[str] = []
+        failed = 0
+        for image in images:
+            path = Path(image.file_path)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                LOGGER.exception("Could not delete %s", path)
+                failed += 1
+                continue
+            deleted_paths.append(image.file_path)
+
+        deleted = (
+            self._image_repository.delete_by_paths(deleted_paths)
+            if deleted_paths
+            else 0
+        )
+        if self._query_cache_service is not None and deleted:
+            self._query_cache_service.invalidate_all()
+        LOGGER.info("Deleted %s image(s) permanently, %s failure(s)", deleted, failed)
+        return DeleteImagesResult(deleted=deleted, failed=failed)
+
     def set_thumbnail_max_size(self, max_size: int) -> None:
         """Apply runtime thumbnail size for future generations."""
         self._thumbnail_store.set_max_size(max_size)
@@ -241,14 +362,20 @@ class ImageIndexService:
         file_path: Path,
         fallback_date: date | None,
     ) -> tuple[datetime | None, int, int]:
+        if file_path.suffix.lower() in _VIDEO_SUFFIXES:
+            msg = f"Video file skipped: {file_path}"
+            raise UnidentifiedImageError(msg)
         with Image.open(file_path) as img:
+            # Read EXIF before exif_transpose (which strips it from the copy).
+            # DateTimeOriginal (36867) sits in the Exif sub-IFD (34665), not IFD0,
+            # so we must look there — getexif().get(36867) returns None for HEIC.
+            exif = img.getexif()
+            capture: str | None = exif.get_ifd(34665).get(36867) or exif.get(36867)
             oriented = ImageOps.exif_transpose(img)
             width, height = oriented.size
-            exif = oriented.getexif()
-            capture = exif.get(36867)
             capture_date: datetime | None = None
-            if isinstance(capture, str):
-                raw_value = str(capture)
+            if isinstance(capture, (str, bytes)):
+                raw_value = capture.decode() if isinstance(capture, bytes) else capture
                 try:
                     capture_date = datetime.strptime(
                         raw_value, "%Y:%m:%d %H:%M:%S"
@@ -259,7 +386,10 @@ class ImageIndexService:
                 exif_data = ExifMetadataHandler.read_exif(str(file_path))
                 capture_date = exif_data.get("datetime_original")
             if capture_date is None:
+                capture_date = read_xmp_info(file_path).created
+            if capture_date is None:
                 capture_date = self._fallback_datetime(fallback_date)
+            # No embedded or folder date: leave undated rather than using mtime
             return capture_date, width, height
 
     @staticmethod

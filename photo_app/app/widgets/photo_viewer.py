@@ -6,6 +6,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent, QPixmap, QWheelEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from photo_app.app.image_loading import load_oriented_pixmap
+
 
 class PhotoViewerWidget(QWidget):
     """Simple full image viewer with keyboard navigation and zoom."""
@@ -61,7 +63,7 @@ class PhotoViewerWidget(QWidget):
             self._label.setText("No image")
             return
         _image_id, file_path = self._items[self._row]
-        pixmap = QPixmap(str(Path(file_path)))
+        pixmap = load_oriented_pixmap(Path(file_path))
         if pixmap.isNull():
             self._label.setText("Could not load image")
             return
