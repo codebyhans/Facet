@@ -24,6 +24,7 @@ class AlbumTreeNode:
     album_id: int | None = None
     parent_id: str | None = None
     query_definition: dict[str, object] | None = None
+    image_count: int | None = None
     children: list[AlbumTreeNode] = field(default_factory=list)
 
 
@@ -33,6 +34,7 @@ class AlbumTreeModel(QAbstractItemModel):
     NodeIdRole = Qt.ItemDataRole.UserRole + 1
     KindRole = Qt.ItemDataRole.UserRole + 2
     AlbumIdRole = Qt.ItemDataRole.UserRole + 3
+    ImageCountRole = Qt.ItemDataRole.UserRole + 4
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -107,6 +109,7 @@ class AlbumTreeModel(QAbstractItemModel):
             self.NodeIdRole: node.node_id,
             self.KindRole: node.kind,
             self.AlbumIdRole: node.album_id,
+            self.ImageCountRole: node.image_count,
         }
         if role in role_values:
             return role_values[role]
@@ -214,6 +217,52 @@ class AlbumTreeModel(QAbstractItemModel):
         self.endInsertRows()
         return True
 
+    def move_nodes(
+        self,
+        node_ids: list[str],
+        new_parent_id: str | None,
+        position: int | None = None,
+    ) -> list[str]:
+        """Move several nodes together, keeping their tree order.
+
+        Nodes whose ancestor is also being moved travel with that ancestor.
+        Returns the ids that were actually moved.
+        """
+        wanted = set(node_ids)
+        ordered = [
+            node
+            for node in self._preorder()
+            if node.node_id in wanted and not self._has_ancestor_in(node, wanted)
+        ]
+        target_parent = (
+            self._root
+            if new_parent_id is None or new_parent_id == "root"
+            else self._find_node(new_parent_id)
+        )
+        if target_parent is None:
+            return []
+
+        # Insert before a fixed anchor sibling (one that is not moving) so the
+        # target row stays correct as nodes are pulled out of the same parent.
+        moving = {node.node_id for node in ordered}
+        anchor: AlbumTreeNode | None = None
+        if position is not None:
+            anchor = next(
+                (
+                    child
+                    for child in target_parent.children[position:]
+                    if child.node_id not in moving
+                ),
+                None,
+            )
+
+        moved: list[str] = []
+        for node in ordered:
+            row = None if anchor is None else target_parent.children.index(anchor)
+            if self.move_node(node.node_id, new_parent_id, row):
+                moved.append(node.node_id)
+        return moved
+
     def node_position(self, node_id: str) -> tuple[str | None, int] | None:
         """Return (parent_id, row) for one node; parent_id is None at root level."""
         node = self._find_node(node_id)
@@ -266,6 +315,15 @@ class AlbumTreeModel(QAbstractItemModel):
         self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
         return True
 
+    def set_image_count(self, node_id: str, count: int | None) -> None:
+        """Update the image count badge for one node."""
+        node = self._find_node(node_id)
+        if node is None or node.kind == "root":
+            return
+        node.image_count = count
+        index = self.index_from_node_id(node_id)
+        self.dataChanged.emit(index, index, [self.ImageCountRole])
+
     def all_nodes(self) -> list[AlbumTreeNode]:
         """Return root child list for serialization."""
         return self._root.children
@@ -290,6 +348,23 @@ class AlbumTreeModel(QAbstractItemModel):
                 return node
             stack.extend(node.children)
         return None
+
+    def _preorder(self) -> list[AlbumTreeNode]:
+        result: list[AlbumTreeNode] = []
+        stack = list(reversed(self._root.children))
+        while stack:
+            node = stack.pop()
+            result.append(node)
+            stack.extend(reversed(node.children))
+        return result
+
+    def _has_ancestor_in(self, node: AlbumTreeNode, node_ids: set[str]) -> bool:
+        parent = self._find_parent(node.node_id)
+        while parent is not None and parent.node_id != "root":
+            if parent.node_id in node_ids:
+                return True
+            parent = self._find_parent(parent.node_id)
+        return False
 
     def _find_parent(self, child_id: str) -> AlbumTreeNode | None:
         stack = [self._root]

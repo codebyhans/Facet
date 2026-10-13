@@ -44,6 +44,7 @@ class AlbumQueryCacheService:
 
             image_ids = self._image_repository.list_ids_by_filters(
                 person_ids=album.query_definition.person_ids,
+                person_logic=album.query_definition.person_logic,
                 cluster_ids=album.query_definition.cluster_ids,
                 date_from=album.query_definition.date_from,
                 date_to=album.query_definition.date_to,
@@ -71,6 +72,7 @@ class AlbumQueryCacheService:
             if not cache_valid:
                 image_ids = self._image_repository.list_ids_by_filters(
                     person_ids=album.query_definition.person_ids,
+                    person_logic=album.query_definition.person_logic,
                     cluster_ids=album.query_definition.cluster_ids,
                     date_from=album.query_definition.date_from,
                     date_to=album.query_definition.date_to,

@@ -30,6 +30,11 @@ def now_utc() -> datetime:
 def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
     """Parse and validate an album query payload."""
     person_ids = _extract_int_tuple(definition.get("person_ids"))
+    # Only meaningful with people selected; normalised so an empty query
+    # still compares equal to AlbumQuery().
+    person_logic = (
+        "AND" if person_ids and definition.get("person_logic") == "AND" else "OR"
+    )
     cluster_ids = _extract_int_tuple(definition.get("cluster_ids"))
     date_from = _parse_date_field(definition.get("date_from"))
     date_to = _parse_date_field(definition.get("date_to"))
@@ -45,6 +50,7 @@ def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
 
     return AlbumQuery(
         person_ids=person_ids,
+        person_logic=person_logic,
         cluster_ids=cluster_ids,
         date_from=date_from,
         date_to=date_to,

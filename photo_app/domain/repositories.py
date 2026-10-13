@@ -53,6 +53,7 @@ class ImageRepository(Protocol):
         date_from: date | None,
         date_to: date | None,
         cluster_ids: Sequence[int] = (),
+        person_logic: str = "OR",
         tag_names: Sequence[str] = (),
         rating_min: int | None = None,
         quality_min: float | None = None,
@@ -70,6 +71,7 @@ class ImageRepository(Protocol):
         date_from: date | None,
         date_to: date | None,
         cluster_ids: Sequence[int] = (),
+        person_logic: str = "OR",
         tag_names: Sequence[str] = (),
         rating_min: int | None = None,
         quality_min: float | None = None,
@@ -81,6 +83,22 @@ class ImageRepository(Protocol):
         has_date: True = only images with a capture date, False = only undated
         images, None = both.
         """
+
+    def count_by_filters(  # noqa: PLR0913
+        self,
+        *,
+        person_ids: Sequence[int],
+        date_from: date | None,
+        date_to: date | None,
+        cluster_ids: Sequence[int] = (),
+        person_logic: str = "OR",
+        tag_names: Sequence[str] = (),
+        rating_min: int | None = None,
+        quality_min: float | None = None,
+        camera_models: Sequence[str] = (),
+        has_date: bool | None = None,
+    ) -> int:
+        """Count images matching the same criteria as list_ids_by_filters."""
 
     def list_by_ids(self, image_ids: Sequence[int]) -> list[Image]:
         """Load images by explicit ID order."""

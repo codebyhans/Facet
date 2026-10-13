@@ -71,6 +71,10 @@ class AlbumViewModel(QObject):
                 )
             )
 
+        for node in self._flatten(nodes):
+            if node.album_id is not None:
+                node.image_count = self.count_album_images(node.album_id)
+
         self.tree_ready.emit(nodes)
         self._persist_tree(nodes)
         return nodes
@@ -104,6 +108,7 @@ class AlbumViewModel(QObject):
             album_id=album_id,
             parent_id=parent_id,
             query_definition=query_definition,
+            image_count=self.count_album_images(album_id),
         )
 
     def rename_node(self, node: AlbumTreeNode, new_name: str) -> str:
@@ -165,6 +170,14 @@ class AlbumViewModel(QObject):
         return self._album_service.list_library_images(
             offset=offset, limit=limit, query_definition=query_definition
         )
+
+    def count_album_images(self, album_id: int) -> int | None:
+        """Return the album's image count, or None if it could not be computed."""
+        try:
+            return self._album_service.count_album_images(album_id)
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(str(exc))
+            return None
 
     def is_unfiltered_album(self, album_id: int) -> bool:
         """Return True when the album shows the whole library (no criteria)."""
@@ -379,6 +392,7 @@ class AlbumViewModel(QObject):
 
         return {
             "person_ids": person_ids,
+            "person_logic": _get("person_logic", "OR"),
             "cluster_ids": cluster_ids,
             "tag_names": tag_names,
             "flags": list(flags),

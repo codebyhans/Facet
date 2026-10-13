@@ -35,6 +35,7 @@ from photo_app.infrastructure.sqlalchemy_models import (
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
+    from sqlalchemy import Select
     from sqlalchemy.engine import Engine
 
 
@@ -121,6 +122,9 @@ def _to_album(entity: AlbumModel) -> Album:
 
     query = AlbumQuery(
         person_ids=tuple(int(i) for i in entity.query_definition.get("person_ids", [])),
+        person_logic=(
+            "AND" if entity.query_definition.get("person_logic") == "AND" else "OR"
+        ),
         cluster_ids=tuple(
             int(i) for i in entity.query_definition.get("cluster_ids", [])
         ),
@@ -295,6 +299,7 @@ class SqlAlchemyImageRepository:
         date_from: date | None,
         date_to: date | None,
         cluster_ids: Sequence[int] = (),
+        person_logic: str = "OR",
         tag_names: Sequence[str] = (),
         rating_min: int | None = None,
         quality_min: float | None = None,
@@ -306,6 +311,7 @@ class SqlAlchemyImageRepository:
     ) -> list[Image]:
         ordered_ids = self.list_ids_by_filters(
             person_ids=person_ids,
+            person_logic=person_logic,
             cluster_ids=cluster_ids,
             date_from=date_from,
             date_to=date_to,
@@ -319,13 +325,14 @@ class SqlAlchemyImageRepository:
         page_ids = ordered_ids[offset : offset + limit]
         return self.list_by_ids(page_ids)
 
-    def list_ids_by_filters(  # noqa: C901, PLR0913
+    def list_ids_by_filters(  # noqa: PLR0913
         self,
         *,
         person_ids: Sequence[int],
         date_from: date | None,
         date_to: date | None,
         cluster_ids: Sequence[int] = (),
+        person_logic: str = "OR",
         tag_names: Sequence[str] = (),
         rating_min: int | None = None,
         quality_min: float | None = None,
@@ -333,87 +340,159 @@ class SqlAlchemyImageRepository:
         flags: Sequence[str] = (),
         has_date: bool | None = None,
     ) -> list[int]:
+        stmt = self._filtered_ids_stmt(
+            person_ids=person_ids,
+            person_logic=person_logic,
+            cluster_ids=cluster_ids,
+            date_from=date_from,
+            date_to=date_to,
+            tag_names=tag_names,
+            rating_min=rating_min,
+            quality_min=quality_min,
+            camera_models=camera_models,
+            flags=flags,
+            has_date=has_date,
+        ).order_by(
+            nulls_last(ImageModel.capture_date.asc()),
+            ImageModel.id.asc(),
+        )
         with Session(self._engine) as session:
-            stmt = select(ImageModel.id)
+            rows = session.scalars(stmt).unique().all()
+            return [int(row) for row in rows]
 
-            # Dated / undated split (undated images never match a date range)
-            if has_date is True:
-                stmt = stmt.where(ImageModel.capture_date.is_not(None))
-            elif has_date is False:
-                stmt = stmt.where(ImageModel.capture_date.is_(None))
+    def count_by_filters(  # noqa: PLR0913
+        self,
+        *,
+        person_ids: Sequence[int],
+        date_from: date | None,
+        date_to: date | None,
+        cluster_ids: Sequence[int] = (),
+        person_logic: str = "OR",
+        tag_names: Sequence[str] = (),
+        rating_min: int | None = None,
+        quality_min: float | None = None,
+        camera_models: Sequence[str] = (),
+        flags: Sequence[str] = (),
+        has_date: bool | None = None,
+    ) -> int:
+        ids = self._filtered_ids_stmt(
+            person_ids=person_ids,
+            person_logic=person_logic,
+            cluster_ids=cluster_ids,
+            date_from=date_from,
+            date_to=date_to,
+            tag_names=tag_names,
+            rating_min=rating_min,
+            quality_min=quality_min,
+            camera_models=camera_models,
+            flags=flags,
+            has_date=has_date,
+        ).subquery()
+        with Session(self._engine) as session:
+            return int(session.scalar(select(func.count()).select_from(ids)) or 0)
 
-            # People/cluster/tag filters use uncorrelated IN subqueries: SQLite
-            # evaluates them once. A correlated EXISTS made it rescan every face
-            # of the person for each image (~minutes for a large library).
+    def _filtered_ids_stmt(  # noqa: C901, PLR0912, PLR0913
+        self,
+        *,
+        person_ids: Sequence[int],
+        date_from: date | None,
+        date_to: date | None,
+        cluster_ids: Sequence[int],
+        person_logic: str,
+        tag_names: Sequence[str],
+        rating_min: int | None,
+        quality_min: float | None,
+        camera_models: Sequence[str],
+        flags: Sequence[str],
+        has_date: bool | None,
+    ) -> Select[tuple[int]]:
+        """Build the unordered image-id query shared by listing and counting."""
+        stmt = select(ImageModel.id)
 
-            # Filter by people
-            if person_ids:
+        # Dated / undated split (undated images never match a date range)
+        if has_date is True:
+            stmt = stmt.where(ImageModel.capture_date.is_not(None))
+        elif has_date is False:
+            stmt = stmt.where(ImageModel.capture_date.is_(None))
+
+        # People/cluster/tag filters use uncorrelated IN subqueries: SQLite
+        # evaluates them once. A correlated EXISTS made it rescan every face
+        # of the person for each image (~minutes for a large library).
+
+        # Filter by people: "AND" intersects one subquery per person so the
+        # image must contain every one of them, "OR" matches any.
+        if person_ids and person_logic == "AND":
+            for person_id in dict.fromkeys(person_ids):
                 stmt = stmt.where(
                     ImageModel.id.in_(
                         select(FaceModel.image_id).where(
                             FaceModel.excluded.is_(False),
-                            FaceModel.person_id.in_(person_ids),
+                            FaceModel.person_id == person_id,
                         )
                     )
                 )
-
-            # Filter by clusters
-            if cluster_ids:
-                stmt = stmt.where(
-                    ImageModel.id.in_(
-                        select(FaceModel.image_id)
-                        .join(
-                            FaceClusterMembershipModel,
-                            FaceClusterMembershipModel.face_id == FaceModel.id,
-                        )
-                        .where(
-                            FaceModel.excluded.is_(False),
-                            FaceClusterMembershipModel.cluster_id.in_(cluster_ids),
-                        )
+        elif person_ids:
+            stmt = stmt.where(
+                ImageModel.id.in_(
+                    select(FaceModel.image_id).where(
+                        FaceModel.excluded.is_(False),
+                        FaceModel.person_id.in_(person_ids),
                     )
                 )
-
-            # Filter by tags
-            if tag_names:
-                stmt = stmt.where(
-                    ImageModel.id.in_(
-                        select(ImageTagModel.image_id).where(
-                            ImageTagModel.tag_name.in_(tag_names)
-                        )
-                    )
-                )
-
-            # Filter by rating
-            if rating_min is not None:
-                stmt = stmt.where(ImageModel.rating >= rating_min)
-
-            # Filter by quality score
-            if quality_min is not None:
-                stmt = stmt.where(ImageModel.quality_score >= quality_min)
-
-            # Filter by camera model
-            if camera_models:
-                stmt = stmt.where(ImageModel.camera_model.in_(camera_models))
-
-            # Filter by date range
-            clauses = []
-            if date_from is not None:
-                clauses.append(func.date(ImageModel.capture_date) >= date_from)
-            if date_to is not None:
-                clauses.append(func.date(ImageModel.capture_date) <= date_to)
-            if clauses:
-                stmt = stmt.where(and_(*clauses))
-
-            # Filter by flags
-            if flags:
-                stmt = stmt.where(ImageModel.flag.in_(flags))
-
-            stmt = stmt.order_by(
-                nulls_last(ImageModel.capture_date.asc()),
-                ImageModel.id.asc(),
             )
-            rows = session.scalars(stmt).unique().all()
-            return [int(row) for row in rows]
+
+        # Filter by clusters
+        if cluster_ids:
+            stmt = stmt.where(
+                ImageModel.id.in_(
+                    select(FaceModel.image_id)
+                    .join(
+                        FaceClusterMembershipModel,
+                        FaceClusterMembershipModel.face_id == FaceModel.id,
+                    )
+                    .where(
+                        FaceModel.excluded.is_(False),
+                        FaceClusterMembershipModel.cluster_id.in_(cluster_ids),
+                    )
+                )
+            )
+
+        # Filter by tags
+        if tag_names:
+            stmt = stmt.where(
+                ImageModel.id.in_(
+                    select(ImageTagModel.image_id).where(
+                        ImageTagModel.tag_name.in_(tag_names)
+                    )
+                )
+            )
+
+        # Filter by rating
+        if rating_min is not None:
+            stmt = stmt.where(ImageModel.rating >= rating_min)
+
+        # Filter by quality score
+        if quality_min is not None:
+            stmt = stmt.where(ImageModel.quality_score >= quality_min)
+
+        # Filter by camera model
+        if camera_models:
+            stmt = stmt.where(ImageModel.camera_model.in_(camera_models))
+
+        # Filter by date range
+        clauses = []
+        if date_from is not None:
+            clauses.append(func.date(ImageModel.capture_date) >= date_from)
+        if date_to is not None:
+            clauses.append(func.date(ImageModel.capture_date) <= date_to)
+        if clauses:
+            stmt = stmt.where(and_(*clauses))
+
+        # Filter by flags
+        if flags:
+            stmt = stmt.where(ImageModel.flag.in_(flags))
+
+        return stmt
 
     def list_by_ids(self, image_ids: Sequence[int]) -> list[Image]:
         with Session(self._engine) as session:
@@ -852,6 +931,7 @@ class SqlAlchemyAlbumRepository:
         with Session(self._engine) as session:
             query_payload: dict[str, object] = {
                 "person_ids": list(album.query_definition.person_ids),
+                "person_logic": album.query_definition.person_logic,
                 "cluster_ids": list(album.query_definition.cluster_ids),
                 "date_from": (
                     album.query_definition.date_from.isoformat()
@@ -918,6 +998,7 @@ class SqlAlchemyAlbumRepository:
                 return None
             row.query_definition = {
                 "person_ids": list(query.person_ids),
+                "person_logic": query.person_logic,
                 "cluster_ids": list(query.cluster_ids),
                 "date_from": query.date_from.isoformat() if query.date_from else None,
                 "date_to": query.date_to.isoformat() if query.date_to else None,

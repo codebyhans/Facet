@@ -118,6 +118,12 @@ class AlbumService:
                 combined_person_ids = (
                     filter_query.person_ids or album.query_definition.person_ids
                 )
+                # AND/OR travels with whichever side supplied the people
+                combined_person_logic = (
+                    filter_query.person_logic
+                    if filter_query.person_ids
+                    else album.query_definition.person_logic
+                )
                 combined_cluster_ids = (
                     filter_query.cluster_ids or album.query_definition.cluster_ids
                 )
@@ -151,6 +157,7 @@ class AlbumService:
             else:
                 # Use album query only
                 combined_person_ids = album.query_definition.person_ids
+                combined_person_logic = album.query_definition.person_logic
                 combined_cluster_ids = album.query_definition.cluster_ids
                 combined_date_from = album.query_definition.date_from
                 combined_date_to = album.query_definition.date_to
@@ -163,6 +170,7 @@ class AlbumService:
             if self._query_cache_service is None:
                 images = self._image_repository.list_by_filters(
                     person_ids=combined_person_ids,
+                    person_logic=combined_person_logic,
                     cluster_ids=combined_cluster_ids,
                     date_from=combined_date_from,
                     date_to=combined_date_to,
@@ -181,6 +189,7 @@ class AlbumService:
             if query_definition:
                 images = self._image_repository.list_by_filters(
                     person_ids=combined_person_ids,
+                    person_logic=combined_person_logic,
                     cluster_ids=combined_cluster_ids,
                     date_from=combined_date_from,
                     date_to=combined_date_to,
@@ -203,6 +212,25 @@ class AlbumService:
         except Exception:
             logger.exception("Failed to list album images for album %s", album_id)
             return AlbumPage(items=[], offset=offset, limit=limit)
+
+    def count_album_images(self, album_id: int) -> int:
+        """Return how many images match one album's saved query."""
+        album = self._album_repository.get(album_id)
+        if album is None:
+            return 0
+        query = album.query_definition
+        return self._image_repository.count_by_filters(
+            person_ids=query.person_ids,
+            person_logic=query.person_logic,
+            cluster_ids=query.cluster_ids,
+            date_from=query.date_from,
+            date_to=query.date_to,
+            tag_names=query.tag_names,
+            rating_min=query.rating_min,
+            quality_min=query.quality_min,
+            camera_models=query.camera_models,
+            has_date=query.has_date,
+        )
 
     def is_unfiltered_album(self, album_id: int) -> bool:
         """True when the album has no criteria, i.e. it shows the whole library."""
@@ -231,6 +259,7 @@ class AlbumService:
             filter_query = parse_album_query(query_definition)
             images = self._image_repository.list_by_filters(
                 person_ids=filter_query.person_ids,
+                person_logic=filter_query.person_logic,
                 cluster_ids=filter_query.cluster_ids,
                 date_from=filter_query.date_from,
                 date_to=filter_query.date_to,

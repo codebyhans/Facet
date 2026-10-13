@@ -62,6 +62,9 @@ class AdvancedFilterEditorDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, display_id)
             self._person_list.addItem(item)
         people_layout.addWidget(self._person_list)
+        self._match_all_check = QCheckBox("Only photos containing all selected people")
+        self._match_all_check.setChecked(True)
+        people_layout.addWidget(self._match_all_check)
         people_group.setLayout(people_layout)
         layout.addWidget(people_group)
 
@@ -127,7 +130,7 @@ class AdvancedFilterEditorDialog(QDialog):
 
         layout.addLayout(button_layout)
 
-    def _load_query(self) -> None:  # noqa: C901, PLR0912
+    def _load_query(self) -> None:  # noqa: C901
         """Load current query into UI if provided."""
         if self._current_query is None:
             return
@@ -145,8 +148,9 @@ class AdvancedFilterEditorDialog(QDialog):
             for i in range(self._person_list.count()):
                 item = self._person_list.item(i)
                 item_id = item.data(Qt.ItemDataRole.UserRole)
-                if isinstance(item_id, int) and item_id in person_id_set:
-                    self._person_list.setCurrentItem(item)
+                # setCurrentItem would clear the previous selection each time
+                item.setSelected(isinstance(item_id, int) and item_id in person_id_set)
+            self._match_all_check.setChecked(get_value("person_logic") == "AND")
 
         # Load date range
         date_from = get_value("date_from")
@@ -216,6 +220,7 @@ class AdvancedFilterEditorDialog(QDialog):
 
         return {
             "person_ids": person_ids,
+            "person_logic": "AND" if self._match_all_check.isChecked() else "OR",
             "cluster_ids": [],
             "tag_names": [],
             "rating_min": None,

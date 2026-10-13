@@ -9,7 +9,15 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Q_ARG, QMetaObject, QModelIndex, QSize, Qt, QThreadPool
+from PySide6.QtCore import (
+    Q_ARG,
+    QItemSelectionModel,
+    QMetaObject,
+    QModelIndex,
+    QSize,
+    Qt,
+    QThreadPool,
+)
 from PySide6.QtGui import QCloseEvent, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
@@ -136,6 +144,7 @@ class MainWindow(QMainWindow):
         # Worker references to prevent GC
         self._active_face_index_worker: IndexWorker | None = None
         self._active_image_index_worker: IndexWorker | None = None
+        self._active_delete_workers: set[IndexWorker] = set()
         self._active_people_worker: PeopleListWorker | None = None
         self._people_epoch: int = 0
         self._thumbnail_tile_store = thumbnail_tile_store
@@ -400,7 +409,6 @@ class MainWindow(QMainWindow):
             )
         )
         self._album_tree.albumSelected.connect(self._on_album_selected)
-        self._album_tree.albumMoved.connect(self._on_album_moved)
         self._album_tree.createFolderRequested.connect(self._on_create_folder)
         self._album_tree.createVirtualAlbumRequested.connect(
             self._on_create_virtual_album
@@ -637,6 +645,20 @@ class MainWindow(QMainWindow):
         self._load_tree()
         self.statusBar().showMessage("Album tree reloaded. Displaying photos...")
 
+    def _refresh_album_counts(self) -> None:
+        """Recompute image count badges in place, keeping selection/expansion."""
+        for node in self._flatten(self._album_tree_model.all_nodes()):
+            if node.album_id is None:
+                continue
+            count = self._album_vm.count_album_images(node.album_id)
+            if count != node.image_count:
+                self._album_tree_model.set_image_count(node.node_id, count)
+
+    def _refresh_after_library_change(self) -> None:
+        """Sync album counts and the open view after images were added/removed."""
+        self._refresh_album_counts()
+        self._album_gallery_vm.refresh_current()
+
     def _on_create_folder(self, parent_id: object) -> None:
         dialog = CreateFolderDialog(parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -746,6 +768,10 @@ class MainWindow(QMainWindow):
                 node,
                 query_definition,
             )
+            if node.album_id is not None:
+                self._album_tree_model.set_image_count(
+                    node.node_id, self._album_vm.count_album_images(node.album_id)
+                )
             self._persist_tree()
             # Immediately reload the grid if this album is currently displayed
             if (
@@ -760,27 +786,34 @@ class MainWindow(QMainWindow):
             self._show_error(str(exc))
 
     def _on_move_node(
-        self, node_id: str, new_parent: object, position: object = None
+        self, node_ids: list[str], new_parent: object, position: object = None
     ) -> None:
         new_parent_id = new_parent if isinstance(new_parent, str) else None
         new_position = position if isinstance(position, int) else None
-        index = self._album_tree_model.index_from_node_id(node_id)
-        node = self._album_tree_model.node_from_index(index)
-        if node is None:
-            return
-        if not self._album_tree_model.can_move(node_id, new_parent_id):
+        moved = self._album_tree_model.move_nodes(node_ids, new_parent_id, new_position)
+        if not moved:
             self._show_error("Cannot move album into its own subtree.")
             return
-        moved = self._album_tree_model.move_node(node_id, new_parent_id, new_position)
-        if not moved:
-            return
-        self._album_vm.move_album(node_id, new_parent_id)
+        for node_id in moved:
+            self._album_vm.move_album(node_id, new_parent_id)
         self._persist_tree()
-        if node.album_id is not None:
-            self._album_tree.albumMoved.emit(node.album_id, new_parent_id)
+        self._reselect_nodes(moved)
+        self.statusBar().showMessage(
+            "Album moved" if len(moved) == 1 else f"{len(moved)} albums moved"
+        )
 
-    def _on_album_moved(self, _album_id: int, _new_parent: object) -> None:
-        self.statusBar().showMessage("Album moved")
+    def _reselect_nodes(self, node_ids: list[str]) -> None:
+        """Keep moved rows selected so they can be moved again."""
+        selection = self._album_tree.selectionModel()
+        selection.clearSelection()
+        for node_id in node_ids:
+            index = self._album_tree_model.index_from_node_id(node_id)
+            if index.isValid():
+                selection.select(
+                    index,
+                    QItemSelectionModel.SelectionFlag.Select
+                    | QItemSelectionModel.SelectionFlag.Rows,
+                )
 
     def _on_date_tab_changed(self, index: int) -> None:
         self._album_gallery_vm.set_date_tab(has_date=index == 0)
@@ -1426,7 +1459,7 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
         # Refresh gallery — duplicates that were trashed are now missing from the index
-        self._album_gallery_vm.select_library()
+        self._refresh_after_library_change()
         # Trashing duplicates cascades to their faces, which can change or
         # remove person clusters — keep the People tab in sync too.
         self._refresh_people_list()
@@ -1712,7 +1745,7 @@ class MainWindow(QMainWindow):
         dialog.set_thread_pool(self._thread_pool)
         dialog.exec()
         if dialog.files_copied() > 0:
-            self._album_gallery_vm.select_library()
+            self._refresh_after_library_change()
 
     def _on_cast_to_tv(self) -> None:
         """Open Chromecast slideshow dialog for the current album."""
@@ -1746,7 +1779,7 @@ class MainWindow(QMainWindow):
         dialog.set_thread_pool(self._thread_pool)
         dialog.exec()
         if dialog.files_copied() > 0:
-            self._album_gallery_vm.select_library()
+            self._refresh_after_library_change()
 
     # Keyboard shortcut handlers
     def _on_shortcut_rating_0(self) -> None:
@@ -1930,7 +1963,8 @@ class MainWindow(QMainWindow):
                 # Belt-and-suspenders: force a full reload of the current
                 # view too, so the grid is guaranteed to match the database
                 # immediately rather than only on the next album switch.
-                self._album_gallery_vm.refresh_current()
+                # Also updates the count badges in the album tree.
+                self._refresh_after_library_change()
                 # Deleting images cascades to their faces, which can change
                 # or remove person clusters — refresh so the People tab
                 # doesn't keep showing stale cards for deleted photos.
@@ -1948,6 +1982,14 @@ class MainWindow(QMainWindow):
 
         worker.signals.result_ready.connect(on_done)
         worker.signals.error.connect(on_err)
+        # Keep alive until finished: without a reference the worker (and its
+        # signals object) can be collected as soon as run() returns, dropping
+        # the queued result before on_done runs — most likely on a quick,
+        # single-photo delete.
+        self._active_delete_workers.add(worker)
+        worker.signals.finished.connect(
+            lambda: self._active_delete_workers.discard(worker)
+        )
         self._thread_pool.start(worker)
 
     def _on_filter_changed(self) -> None:

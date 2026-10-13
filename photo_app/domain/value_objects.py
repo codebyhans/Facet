@@ -91,6 +91,8 @@ class AlbumQuery:
     """Typed virtual album query."""
 
     person_ids: tuple[int, ...] = ()
+    # "OR" = images with any of person_ids, "AND" = images with all of them
+    person_logic: str = "OR"
     cluster_ids: tuple[int, ...] = ()
     date_from: date | None = None
     date_to: date | None = None

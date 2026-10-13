@@ -172,3 +172,63 @@ def test_undated_images_split_and_excluded_from_date_filters() -> None:
     library_album = album(AlbumQuery())
     assert service.is_unfiltered_album(library_album)
     assert not service.is_unfiltered_album(face_album)
+
+
+def test_person_logic_and_requires_every_selected_person() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    image_repo = SqlAlchemyImageRepository(engine)
+    face_repo = SqlAlchemyFaceRepository(engine)
+    album_repo = SqlAlchemyAlbumRepository(engine)
+    service = AlbumService(album_repo, image_repo)
+
+    day = datetime(2022, 1, 1, tzinfo=UTC)
+    image_repo.add_many(
+        [
+            _image("C:/both.jpg", day, "h1"),
+            _image("C:/only_one.jpg", day, "h2"),
+            _image("C:/only_two.jpg", day, "h3"),
+            _image("C:/nobody.jpg", day, "h4"),
+        ]
+    )
+    ids = {Path(i.file_path).stem: i.id for i in image_repo.list_all()}
+    people_by_image = {"both": (1, 2), "only_one": (1,), "only_two": (2,)}
+    face_repo.add_many(
+        [
+            Face(
+                id=None,
+                image_id=image_id,
+                bbox=BoundingBox(0, 0, 1, 1),
+                embedding=b"x",
+                person_id=person_id,
+            )
+            for stem, person_ids in people_by_image.items()
+            for person_id in person_ids
+            if (image_id := ids[stem]) is not None
+        ]
+    )
+
+    def names(album_id: int) -> list[str]:
+        return sorted(
+            Path(i.file_path).stem for i in service.list_album_images(album_id).items
+        )
+
+    all_album = service.create_album(
+        "all", {"person_ids": [1, 2], "person_logic": "AND"}
+    )
+    any_album = service.create_album("any", {"person_ids": [1, 2]})
+    assert all_album.id is not None
+    assert any_album.id is not None
+
+    assert names(all_album.id) == ["both"]
+    assert service.count_album_images(all_album.id) == 1
+    assert names(any_album.id) == ["both", "only_one", "only_two"]
+
+    # The mode survives a reload from the database
+    reloaded = album_repo.get(all_album.id)
+    assert reloaded is not None
+    assert reloaded.query_definition.person_logic == "AND"
+
+    # ...and switching it back through an edit takes effect
+    service.update_album_query(all_album.id, {"person_ids": [1, 2]})
+    assert names(all_album.id) == ["both", "only_one", "only_two"]
