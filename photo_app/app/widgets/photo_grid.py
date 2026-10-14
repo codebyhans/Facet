@@ -9,6 +9,8 @@ from photo_app.app.models.photo_grid_model import PhotoGridModel
 from photo_app.app.widgets.photo_grid_delegate import PhotoGridDelegate
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
     from PySide6.QtGui import (
         QContextMenuEvent,
         QKeyEvent,
@@ -17,6 +19,8 @@ if TYPE_CHECKING:
         QShowEvent,
         QWheelEvent,
     )
+
+    from photo_app.domain.models import Collection
 
 # Ctrl+scroll zoom bounds, relative to the model's configured thumbnail size
 _ZOOM_SCALE_MIN = 0.35
@@ -32,6 +36,10 @@ class PhotoGridWidget(QListView):
     photoActivated = Signal(int)  # noqa: N815
     flagChanged = Signal(object, object)  # noqa: N815  # index, flag_value
     deletePhotosRequested = Signal(list)  # noqa: N815  # list[int] of image_ids
+    # collection_id, list[int] of image_ids
+    addToCollectionRequested = Signal(int, list)  # noqa: N815
+    removeFromCollectionRequested = Signal(int, list)  # noqa: N815
+    newCollectionRequested = Signal(list)  # noqa: N815  # list[int] of image_ids
 
     def __init__(self, model: PhotoGridModel, parent: QListView | None = None) -> None:
         super().__init__(parent)
@@ -46,6 +54,10 @@ class PhotoGridWidget(QListView):
         self.setSpacing(10)
         self.setIconSize(QSize(180, 180))
         self._zoom_scale = 1.0
+        self._list_collections: Callable[[], list[Collection]] | None = None
+        self._collections_containing: (
+            Callable[[Sequence[int]], list[Collection]] | None
+        ) = None
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.doubleClicked.connect(self._on_double_click)
 
@@ -206,6 +218,15 @@ class PhotoGridWidget(QListView):
                 ids.append(image_id)
         return ids
 
+    def set_collection_sources(
+        self,
+        list_collections: Callable[[], list[Collection]],
+        collections_containing: Callable[[Sequence[int]], list[Collection]],
+    ) -> None:
+        """Provide the lookups that populate the collection context menus."""
+        self._list_collections = list_collections
+        self._collections_containing = collections_containing
+
     @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
         """Handle keyboard shortcuts for flagging and deleting images."""
@@ -249,7 +270,7 @@ class PhotoGridWidget(QListView):
 
     @override
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
-        """Show a context menu with permanent delete for the selected photo(s)."""
+        """Show collection and permanent-delete actions for the selected photo(s)."""
         index = self.indexAt(event.pos())
         if index.isValid() and not self.selectionModel().isSelected(index):
             self.setCurrentIndex(index)
@@ -267,9 +288,42 @@ class PhotoGridWidget(QListView):
             else f"Delete {len(image_ids)} Photos Permanently…"
         )
         menu = QMenu(self)
+        self._add_collection_actions(menu, image_ids)
         action = menu.addAction(label)
         action.triggered.connect(lambda: self.deletePhotosRequested.emit(image_ids))
         menu.exec(event.globalPos())
+
+    def _add_collection_actions(self, menu: QMenu, image_ids: list[int]) -> None:
+        if self._list_collections is None or self._collections_containing is None:
+            return
+
+        add_menu = menu.addMenu("Add to Collection")
+        for collection in self._list_collections():
+            if collection.id is None:
+                continue
+            add_menu.addAction(collection.name).triggered.connect(
+                lambda _checked=False, cid=collection.id: (
+                    self.addToCollectionRequested.emit(cid, image_ids)
+                )
+            )
+        if not add_menu.isEmpty():
+            add_menu.addSeparator()
+        add_menu.addAction("New Collection…").triggered.connect(
+            lambda: self.newCollectionRequested.emit(image_ids)
+        )
+
+        containing = [
+            c for c in self._collections_containing(image_ids) if c.id is not None
+        ]
+        remove_menu = menu.addMenu("Remove from Collection")
+        remove_menu.setEnabled(bool(containing))
+        for collection in containing:
+            remove_menu.addAction(collection.name).triggered.connect(
+                lambda _checked=False, cid=collection.id: (
+                    self.removeFromCollectionRequested.emit(cid, image_ids)
+                )
+            )
+        menu.addSeparator()
 
     @override
     def mouseMoveEvent(self, event: QMouseEvent) -> None:

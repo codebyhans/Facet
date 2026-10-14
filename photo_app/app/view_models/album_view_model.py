@@ -7,6 +7,7 @@ from uuid import uuid4
 from PySide6.QtCore import QObject, Signal
 
 from photo_app.app.models.album_tree_model import AlbumTreeNode
+from photo_app.domain.services import album_query_to_dict
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -348,59 +349,4 @@ class AlbumViewModel(QObject):
 
     def _album_query_to_dict(self, query: AlbumQuery) -> dict[str, object]:
         """Convert an AlbumQuery to a plain dict, preserving all filter fields."""
-
-        def _get(attr: str, default: object = None) -> object:
-            return getattr(query, attr, default)
-
-        # Dates: convert Python date -> ISO string so JSON serialisation is safe
-        date_from = _get("date_from")
-        date_to = _get("date_to")
-        if date_from is not None and hasattr(date_from, "isoformat"):
-            date_from = date_from.isoformat()
-        if date_to is not None and hasattr(date_to, "isoformat"):
-            date_to = date_to.isoformat()
-
-        # Flags: stored as a tuple on AlbumQuery, dialogs expect a list
-        flags = _get("flags", ())
-        if not isinstance(flags, (list, tuple)):
-            flags = []
-
-        person_ids_raw = _get("person_ids", ())
-        person_ids = (
-            [int(v) for v in person_ids_raw if isinstance(v, int)]
-            if isinstance(person_ids_raw, (list, tuple))
-            else []
-        )
-        cluster_ids_raw = _get("cluster_ids", ())
-        cluster_ids = (
-            [int(v) for v in cluster_ids_raw if isinstance(v, int)]
-            if isinstance(cluster_ids_raw, (list, tuple))
-            else []
-        )
-        tag_names_raw = _get("tag_names", ())
-        tag_names = (
-            [str(v) for v in tag_names_raw if isinstance(v, str)]
-            if isinstance(tag_names_raw, (list, tuple))
-            else []
-        )
-        camera_models_raw = _get("camera_models", ())
-        camera_models = (
-            [str(v) for v in camera_models_raw if isinstance(v, str)]
-            if isinstance(camera_models_raw, (list, tuple))
-            else []
-        )
-
-        return {
-            "person_ids": person_ids,
-            "person_logic": _get("person_logic", "OR"),
-            "cluster_ids": cluster_ids,
-            "tag_names": tag_names,
-            "flags": list(flags),
-            "rating_min": _get("rating_min"),
-            "quality_min": _get("quality_min"),
-            "camera_models": camera_models,
-            "date_from": date_from,
-            "date_to": date_to,
-            "location_name": _get("location_name"),
-            "gps_radius_km": _get("gps_radius_km"),
-        }
+        return album_query_to_dict(query)

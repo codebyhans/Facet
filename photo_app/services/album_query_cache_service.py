@@ -43,15 +43,7 @@ class AlbumQueryCacheService:
                 return self._cached_image_ids(album.id or 0)
 
             image_ids = self._image_repository.list_ids_by_filters(
-                person_ids=album.query_definition.person_ids,
-                person_logic=album.query_definition.person_logic,
-                cluster_ids=album.query_definition.cluster_ids,
-                date_from=album.query_definition.date_from,
-                date_to=album.query_definition.date_to,
-                tag_names=album.query_definition.tag_names,
-                rating_min=album.query_definition.rating_min,
-                quality_min=album.query_definition.quality_min,
-                camera_models=album.query_definition.camera_models,
+                album.query_definition
             )
             self._store_results(album, image_ids)
         except Exception:
@@ -71,15 +63,7 @@ class AlbumQueryCacheService:
             cache_valid = self._cache_is_valid(album)
             if not cache_valid:
                 image_ids = self._image_repository.list_ids_by_filters(
-                    person_ids=album.query_definition.person_ids,
-                    person_logic=album.query_definition.person_logic,
-                    cluster_ids=album.query_definition.cluster_ids,
-                    date_from=album.query_definition.date_from,
-                    date_to=album.query_definition.date_to,
-                    tag_names=album.query_definition.tag_names,
-                    rating_min=album.query_definition.rating_min,
-                    quality_min=album.query_definition.quality_min,
-                    camera_models=album.query_definition.camera_models,
+                    album.query_definition
                 )
                 self._store_results(album, image_ids)
 

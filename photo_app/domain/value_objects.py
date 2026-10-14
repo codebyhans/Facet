@@ -105,3 +105,6 @@ class AlbumQuery:
     flags: tuple[str, ...] = ()
     # True = dated images only, False = undated only, None = both
     has_date: bool | None = None
+    # Images in any of these collections / in none of these collections
+    collection_ids: tuple[int, ...] = ()
+    exclude_collection_ids: tuple[int, ...] = ()

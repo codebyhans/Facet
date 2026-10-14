@@ -169,6 +169,36 @@ class ImageTagModel(Base):
     image: Mapped[ImageModel] = relationship(back_populates="tags")
 
 
+class CollectionModel(Base):
+    """Hand-picked set of images."""
+
+    __tablename__ = "collections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class CollectionImageModel(Base):
+    """Image-to-collection membership."""
+
+    __tablename__ = "collection_images"
+    __table_args__ = (UniqueConstraint("collection_id", "image_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    collection_id: Mapped[int] = mapped_column(
+        ForeignKey("collections.id"),
+        nullable=False,
+        index=True,
+    )
+    image_id: Mapped[int] = mapped_column(
+        ForeignKey("images.id"),
+        nullable=False,
+        index=True,
+    )
+    added_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class AlbumModel(Base):
     """Virtual album query holder."""
 

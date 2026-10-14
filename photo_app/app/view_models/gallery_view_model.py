@@ -94,6 +94,10 @@ class GalleryViewModel(QObject):
         self._date_tabs_active = False
         self._date_tab_has_date = True
 
+        # Set while the library view is scoped to one hand-picked collection
+        self._library_collection_id: int | None = None
+        self._pending_collection_id: int | None = None
+
     def select_album(
         self, album_id: int, query_definition: dict[str, object] | None = None
     ) -> None:
@@ -117,18 +121,42 @@ class GalleryViewModel(QObject):
         fallback after operations like permanent delete.
         """
         if self._library_mode:
-            self.select_library(query_definition=self._current_query_definition)
+            self.select_library(
+                query_definition=self._current_query_definition,
+                collection_id=self._library_collection_id,
+            )
         elif self._current_album_id is not None:
             self.select_album(self._current_album_id, self._current_query_definition)
 
-    def select_library(self, query_definition: dict[str, object] | None = None) -> None:
-        """Load first page for all-library browsing with debouncing."""
+    def select_library(
+        self,
+        query_definition: dict[str, object] | None = None,
+        *,
+        collection_id: int | None = None,
+    ) -> None:
+        """Load first page for all-library browsing with debouncing.
+
+        With `collection_id` the view shows only that collection's images;
+        filters still apply on top.
+        """
         self._cancel_current_operation()
         self._debounce_timer.stop()
         self._pending_album_id = None
         self._pending_library_mode = True
+        self._pending_collection_id = collection_id
         self._current_query_definition = query_definition
         self._debounce_timer.start()
+
+    def select_collection(self, collection_id: int) -> None:
+        """Show one collection, keeping the active filter-bar query."""
+        self.select_library(
+            query_definition=self._filter_query_definition,
+            collection_id=collection_id,
+        )
+
+    def get_current_collection_id(self) -> int | None:
+        """Return the collection currently shown, if the view is scoped to one."""
+        return self._library_collection_id if self._library_mode else None
 
     def update_filter_query(self, query_definition: dict[str, object] | None) -> None:
         """Update the current filter query and reload the current view."""
@@ -138,7 +166,10 @@ class GalleryViewModel(QObject):
             self._current_query_definition, query_definition
         )
         if self._library_mode:
-            self.select_library(query_definition=query_definition)
+            self.select_library(
+                query_definition=query_definition,
+                collection_id=self._library_collection_id,
+            )
         elif self._current_album_id is not None:
             self.select_album(self._current_album_id, combined_query)
 
@@ -151,6 +182,11 @@ class GalleryViewModel(QObject):
             self.refresh_current()
 
     def _effective_query(self) -> dict[str, object] | None:
+        if self._library_mode and self._library_collection_id is not None:
+            return {
+                **(self._current_query_definition or {}),
+                "collection_ids": [self._library_collection_id],
+            }
         if not self._date_tabs_active:
             return self._current_query_definition
         return {
@@ -391,11 +427,17 @@ class GalleryViewModel(QObject):
         elif self._pending_library_mode:
             self._library_mode = True
             self._current_album_id = None
-            self._date_tabs_active = True
+            self._library_collection_id = self._pending_collection_id
+            # A collection is small enough to show dated and undated together
+            self._date_tabs_active = self._library_collection_id is None
             self.date_tabs_available.emit(self._date_tabs_active)
             self._offset = 0
             self._has_more = True
-            self.status.emit("Loading library...")
+            self.status.emit(
+                "Loading library..."
+                if self._library_collection_id is None
+                else "Loading collection..."
+            )
             self.loading_started.emit()
             self._execute_operation(operation_id, "library", None)
             self._pending_library_mode = False

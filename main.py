@@ -23,6 +23,7 @@ from photo_app.infrastructure.db import create_sqlite_engine
 from photo_app.infrastructure.file_scanner import FileScanner
 from photo_app.infrastructure.repositories import (
     SqlAlchemyAlbumRepository,
+    SqlAlchemyCollectionRepository,
     SqlAlchemyFaceRepository,
     SqlAlchemyIdentityClusterRepository,
     SqlAlchemyImageRepository,
@@ -39,6 +40,7 @@ from photo_app.ml.embedding_model import (
 from photo_app.ml.face_detector import InsightFaceDetector
 from photo_app.services.album_query_cache_service import AlbumQueryCacheService
 from photo_app.services.album_service import AlbumService
+from photo_app.services.collection_service import CollectionService
 from photo_app.services.face_index_service import (
     FaceIndexDependencies,
     FaceIndexService,
@@ -81,6 +83,7 @@ class ServiceContainer:
     face_review_service: FaceReviewService
     metadata_sync_service: MetadataSyncService
     tag_service: TagService
+    collection_service: CollectionService
     settings_service: SettingsService
     runtime_settings: RuntimeSettings
     thumbnail_tile_store: ThumbnailTileStore
@@ -185,6 +188,10 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
     # Create metadata and tags services
     metadata_sync_service = MetadataSyncService(engine)
     tag_service = TagService(engine)
+    collection_service = CollectionService(
+        SqlAlchemyCollectionRepository(engine),
+        query_cache_service=query_cache_service,
+    )
     LOGGER.info("Service graph ready.")
     return ServiceContainer(
         image_index_service=image_index_service,
@@ -194,6 +201,7 @@ def build_services(settings: AppSettings, engine: Engine) -> ServiceContainer:
         face_review_service=face_review_service,
         metadata_sync_service=metadata_sync_service,
         tag_service=tag_service,
+        collection_service=collection_service,
         settings_service=settings_service,
         runtime_settings=runtime_settings,
         thumbnail_tile_store=thumbnail_tile_store,
@@ -373,6 +381,7 @@ def build_main_window(settings: AppSettings, engine: Engine) -> MainWindow:
             services.face_review_service,
             services.metadata_sync_service,
             services.tag_service,
+            services.collection_service,
             services.settings_service,
             services.runtime_settings,
             services.thumbnail_tile_store,

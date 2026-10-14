@@ -6,7 +6,7 @@ import numpy as np
 from sqlalchemy import create_engine
 
 from photo_app.domain.models import Face, Image, Person
-from photo_app.domain.value_objects import BoundingBox
+from photo_app.domain.value_objects import AlbumQuery, BoundingBox
 from photo_app.infrastructure.repositories import (
     SqlAlchemyFaceRepository,
     SqlAlchemyIdentityClusterRepository,
@@ -182,10 +182,7 @@ def test_image_filter_by_cluster_ids() -> None:
     assert target_cluster_id is not None
 
     filtered = image_repo.list_ids_by_filters(
-        person_ids=(),
-        date_from=None,
-        date_to=None,
-        cluster_ids=(target_cluster_id,),
+        AlbumQuery(cluster_ids=(target_cluster_id,))
     )
     assert len(filtered) == 1
 

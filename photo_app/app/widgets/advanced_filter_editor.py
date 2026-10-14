@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 if TYPE_CHECKING:
-    from photo_app.domain.models import Person
+    from photo_app.domain.models import Collection, Person
     from photo_app.domain.value_objects import AlbumQuery
 
 
@@ -34,10 +34,12 @@ class AdvancedFilterEditorDialog(QDialog):
         parent: QWidget | None = None,
         available_persons: list[Person] | None = None,
         current_query: AlbumQuery | dict[str, object] | None = None,
+        available_collections: list[Collection] | None = None,
     ) -> None:
         """Initialize advanced filter editor."""
         super().__init__(parent)
         self._available_persons = available_persons or []
+        self._available_collections = available_collections or []
         self._current_query = current_query
 
         self.setWindowTitle("Advanced Filter Editor")
@@ -67,6 +69,23 @@ class AdvancedFilterEditorDialog(QDialog):
         people_layout.addWidget(self._match_all_check)
         people_group.setLayout(people_layout)
         layout.addWidget(people_group)
+
+        # Collection filter
+        collection_group = QGroupBox("Collections")
+        collection_layout = QHBoxLayout()
+        self._collection_list = self._build_collection_list()
+        self._exclude_collection_list = self._build_collection_list()
+        for label, widget in (
+            ("Only photos in any of:", self._collection_list),
+            ("Leave out photos in:", self._exclude_collection_list),
+        ):
+            column = QVBoxLayout()
+            column.addWidget(QLabel(label))
+            column.addWidget(widget)
+            collection_layout.addLayout(column)
+        collection_group.setLayout(collection_layout)
+        collection_group.setVisible(bool(self._available_collections))
+        layout.addWidget(collection_group)
 
         # Date range
         date_group = QGroupBox("Date Range")
@@ -130,6 +149,37 @@ class AdvancedFilterEditorDialog(QDialog):
 
         layout.addLayout(button_layout)
 
+    def _build_collection_list(self) -> QListWidget:
+        widget = QListWidget()
+        widget.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        widget.setMaximumHeight(110)
+        for collection in self._available_collections:
+            if collection.id is None:
+                continue
+            item = QListWidgetItem(collection.name)
+            item.setData(Qt.ItemDataRole.UserRole, collection.id)
+            widget.addItem(item)
+        return widget
+
+    @staticmethod
+    def _select_ids(widget: QListWidget, ids: object) -> None:
+        wanted = (
+            {v for v in ids if isinstance(v, int)}
+            if isinstance(ids, (list, tuple))
+            else set()
+        )
+        for i in range(widget.count()):
+            item = widget.item(i)
+            item.setSelected(item.data(Qt.ItemDataRole.UserRole) in wanted)
+
+    @staticmethod
+    def _selected_ids(widget: QListWidget) -> list[int]:
+        return [
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in widget.selectedItems()
+            if isinstance(item.data(Qt.ItemDataRole.UserRole), int)
+        ]
+
     def _load_query(self) -> None:  # noqa: C901
         """Load current query into UI if provided."""
         if self._current_query is None:
@@ -151,6 +201,12 @@ class AdvancedFilterEditorDialog(QDialog):
                 # setCurrentItem would clear the previous selection each time
                 item.setSelected(isinstance(item_id, int) and item_id in person_id_set)
             self._match_all_check.setChecked(get_value("person_logic") == "AND")
+
+        # Load collections
+        self._select_ids(self._collection_list, get_value("collection_ids", []))
+        self._select_ids(
+            self._exclude_collection_list, get_value("exclude_collection_ids", [])
+        )
 
         # Load date range
         date_from = get_value("date_from")
@@ -239,4 +295,6 @@ class AdvancedFilterEditorDialog(QDialog):
             "location_name": None,
             "gps_radius_km": None,
             "flags": selected_flags,
+            "collection_ids": self._selected_ids(self._collection_list),
+            "exclude_collection_ids": self._selected_ids(self._exclude_collection_list),
         }

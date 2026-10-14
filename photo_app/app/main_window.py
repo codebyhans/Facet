@@ -46,6 +46,7 @@ from photo_app.app.view_models.gallery_view_model import GalleryViewModel
 from photo_app.app.widgets.advanced_filter_editor import AdvancedFilterEditorDialog
 from photo_app.app.widgets.album_tree import AlbumTreeWidget
 from photo_app.app.widgets.chromecast_slideshow_dialog import ChromecastSlideshowDialog
+from photo_app.app.widgets.collection_list import CollectionListWidget
 from photo_app.app.widgets.excluded_faces_dialog import ExcludedFacesDialog
 from photo_app.app.widgets.filter_bar import FilterBarWidget
 from photo_app.app.widgets.image_detail_panel import ImageDetailPanel
@@ -64,10 +65,11 @@ from photo_app.services.face_review_service import PersonStackSummary
 
 if TYPE_CHECKING:
     from photo_app.app.models.photo_grid_model import PhotoGridItem
-    from photo_app.domain.models import Image
+    from photo_app.domain.models import Collection, Image
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
     from photo_app.services.album_service import AlbumService
     from photo_app.services.chromecast_service import ChromecastService
+    from photo_app.services.collection_service import CollectionService
     from photo_app.services.face_index_service import FaceIndexService
     from photo_app.services.face_review_service import FaceReviewService
     from photo_app.services.image_index_service import ImageIndexService
@@ -122,6 +124,7 @@ class MainWindow(QMainWindow):
         face_review_service: FaceReviewService,
         metadata_sync_service: MetadataSyncService,
         tag_service: TagService,
+        collection_service: CollectionService,
         _settings_service: SettingsService,
         runtime_settings: RuntimeSettings,
         thumbnail_tile_store: ThumbnailTileStore,
@@ -137,6 +140,7 @@ class MainWindow(QMainWindow):
         self._settings_service = _settings_service
         self._metadata_sync_service = metadata_sync_service
         self._tag_service = tag_service
+        self._collection_service = collection_service
         self._runtime_settings = runtime_settings
         self._cache_directory = cache_directory
         self._thread_pool = QThreadPool.globalInstance()
@@ -176,6 +180,10 @@ class MainWindow(QMainWindow):
         # Build photo grid
         self._album_photo_model = PhotoGridModel(parent=self, **photo_model_kwargs)
         self._album_photo_grid = PhotoGridWidget(self._album_photo_model)
+        self._album_photo_grid.set_collection_sources(
+            collection_service.list_collections,
+            collection_service.collections_containing,
+        )
 
         # Build image detail panel (for full image viewing)
         self._image_detail_panel = ImageDetailPanel(
@@ -279,9 +287,16 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Left stack now only contains album tree
+        # Albums on top, hand-picked collections below
+        self._collection_list = CollectionListWidget()
+        albums_and_collections = QSplitter(Qt.Orientation.Vertical)
+        albums_and_collections.addWidget(self._album_tree)
+        albums_and_collections.addWidget(self._collection_list)
+        albums_and_collections.setStretchFactor(0, 3)
+        albums_and_collections.setStretchFactor(1, 1)
+
         self._left_stack = QStackedWidget()
-        self._left_stack.addWidget(self._album_tree)  # Index 0 - Albums only
+        self._left_stack.addWidget(albums_and_collections)  # Index 0 - Albums only
         self._left_stack.setCurrentIndex(0)
         left_layout.addWidget(self._left_stack, 1)
 
@@ -353,6 +368,7 @@ class MainWindow(QMainWindow):
         # Initialise album tree and gallery on startup
         self._ensure_library_album()
         self._load_tree()
+        self._refresh_collections()
         self._album_gallery_vm.select_library()
         # Populate the Albums filter bar's person dropdown cheaply, without
         # paying for the full People-tab stack computation (which scans
@@ -417,6 +433,23 @@ class MainWindow(QMainWindow):
         self._album_tree.deleteRequested.connect(self._on_delete_node)
         self._album_tree.editFiltersRequested.connect(self._on_edit_filters)
         self._album_tree.moveRequested.connect(self._on_move_node)
+
+        self._collection_list.collectionSelected.connect(self._on_collection_selected)
+        self._collection_list.createRequested.connect(self._on_create_collection)
+        self._collection_list.renameRequested.connect(self._on_rename_collection)
+        self._collection_list.deleteRequested.connect(self._on_delete_collection)
+        self._collection_list.createAlbumRequested.connect(
+            self._on_create_album_from_collection
+        )
+        self._album_photo_grid.addToCollectionRequested.connect(
+            self._on_add_to_collection
+        )
+        self._album_photo_grid.removeFromCollectionRequested.connect(
+            self._on_remove_from_collection
+        )
+        self._album_photo_grid.newCollectionRequested.connect(
+            self._on_new_collection_from_photos
+        )
 
         self._album_gallery_vm.page_ready.connect(
             lambda items, append: self._on_gallery_page(
@@ -645,10 +678,18 @@ class MainWindow(QMainWindow):
         self._load_tree()
         self.statusBar().showMessage("Album tree reloaded. Displaying photos...")
 
-    def _refresh_album_counts(self) -> None:
-        """Recompute image count badges in place, keeping selection/expansion."""
+    def _refresh_album_counts(self, collection_id: int | None = None) -> None:
+        """Recompute image count badges in place, keeping selection/expansion.
+
+        With `collection_id`, only albums built on that collection are
+        recounted, which keeps adding photos to a collection instant.
+        """
         for node in self._flatten(self._album_tree_model.all_nodes()):
             if node.album_id is None:
+                continue
+            if collection_id is not None and not self._query_uses_collection(
+                node.query_definition, collection_id
+            ):
                 continue
             count = self._album_vm.count_album_images(node.album_id)
             if count != node.image_count:
@@ -671,7 +712,9 @@ class MainWindow(QMainWindow):
         self._album_tree_model.add_node(node, parent_node_id)
         self._persist_tree()
 
-    def _on_create_virtual_album(self, parent_id: object) -> None:
+    def _on_create_virtual_album(
+        self, parent_id: object, initial_query: dict[str, object] | None = None
+    ) -> None:
         # Get available options for the advanced filter dialog
         all_persons = self._album_vm.list_filter_people()
 
@@ -679,6 +722,8 @@ class MainWindow(QMainWindow):
         dialog = AdvancedFilterEditorDialog(
             parent=self,
             available_persons=all_persons,
+            current_query=initial_query,
+            available_collections=self._list_collections(),
         )
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -757,6 +802,7 @@ class MainWindow(QMainWindow):
             parent=self,
             available_persons=all_persons,
             current_query=current_query,
+            available_collections=self._list_collections(),
         )
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -818,10 +864,138 @@ class MainWindow(QMainWindow):
     def _on_date_tab_changed(self, index: int) -> None:
         self._album_gallery_vm.set_date_tab(has_date=index == 0)
 
-    def _on_album_selected(self, album_id: int) -> None:
+    def _on_album_selected(self, _album_id: int) -> None:
         """Handle album selection - no longer updates album label."""
         # Album selection is handled by the GalleryViewModel
         # The current album label has been removed as requested
+        self._collection_list.clear_selection()
+
+    def _list_collections(self) -> list[Collection]:
+        try:
+            return self._collection_service.list_collections()
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Failed to load collections: {exc}")
+            return []
+
+    def _refresh_collections(self) -> None:
+        """Reload the collections panel (names and image counts)."""
+        self._collection_list.set_collections(self._list_collections())
+
+    def _on_collection_selected(self, collection_id: int) -> None:
+        self._album_tree.clearSelection()
+        self._album_gallery_vm.select_collection(collection_id)
+
+    def _prompt_new_collection(self) -> Collection | None:
+        name, ok = QInputDialog.getText(self, "New Collection", "Collection name:")
+        if not ok or not name.strip():
+            return None
+        try:
+            collection = self._collection_service.create_collection(name)
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(str(exc))
+            return None
+        self._refresh_collections()
+        return collection
+
+    def _on_create_collection(self) -> None:
+        self._prompt_new_collection()
+
+    def _on_new_collection_from_photos(self, image_ids: list[int]) -> None:
+        collection = self._prompt_new_collection()
+        if collection is not None and collection.id is not None:
+            self._on_add_to_collection(collection.id, image_ids)
+
+    def _on_add_to_collection(self, collection_id: int, image_ids: list[int]) -> None:
+        try:
+            added = self._collection_service.add_images(collection_id, image_ids)
+            collection = self._collection_service.get_collection(collection_id)
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Failed to add to collection: {exc}")
+            return
+        self._refresh_collections()
+        self._refresh_album_counts(collection_id)
+        name = collection.name if collection is not None else "collection"
+        message = f"Added {added} photo(s) to '{name}'"
+        already = len(image_ids) - added
+        if already:
+            message += f" ({already} already in it)"
+        self.statusBar().showMessage(message, 5000)
+
+    def _on_remove_from_collection(
+        self, collection_id: int, image_ids: list[int]
+    ) -> None:
+        try:
+            removed = self._collection_service.remove_images(collection_id, image_ids)
+            collection = self._collection_service.get_collection(collection_id)
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Failed to remove from collection: {exc}")
+            return
+        self._refresh_collections()
+        self._refresh_album_counts(collection_id)
+        # Removed photos should disappear from a view built on this collection
+        if removed and self._current_view_uses_collection(collection_id):
+            self._album_gallery_vm.refresh_current()
+        name = collection.name if collection is not None else "collection"
+        self.statusBar().showMessage(f"Removed {removed} photo(s) from '{name}'", 5000)
+
+    def _current_view_uses_collection(self, collection_id: int) -> bool:
+        if self._album_gallery_vm.get_current_collection_id() == collection_id:
+            return True
+        album_id = self._album_gallery_vm.get_current_album_id()
+        if album_id is None:
+            return False
+        node = self._album_tree_model.node_from_index(
+            self._find_index_by_album_id(album_id)
+        )
+        return node is not None and self._query_uses_collection(
+            node.query_definition, collection_id
+        )
+
+    @staticmethod
+    def _query_uses_collection(
+        query: dict[str, object] | None, collection_id: int
+    ) -> bool:
+        for key in ("collection_ids", "exclude_collection_ids"):
+            ids = (query or {}).get(key)
+            if isinstance(ids, (list, tuple)) and collection_id in ids:
+                return True
+        return False
+
+    def _on_rename_collection(self, collection_id: int, name: str) -> None:
+        try:
+            self._collection_service.rename_collection(collection_id, name)
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(str(exc))
+            return
+        self._refresh_collections()
+
+    def _on_delete_collection(self, collection_id: int) -> None:
+        collection = self._collection_service.get_collection(collection_id)
+        if collection is None:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Delete Collection",
+            f"Delete collection '{collection.name}'?\n\n"
+            f"Its {collection.image_count} photo(s) stay in the library. "
+            "Albums built on this collection will no longer match them.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        was_open = self._album_gallery_vm.get_current_collection_id() == collection_id
+        try:
+            self._collection_service.delete_collection(collection_id)
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Failed to delete collection: {exc}")
+            return
+        self._refresh_collections()
+        self._refresh_album_counts(collection_id)
+        if was_open:
+            self._album_gallery_vm.select_library()
+
+    def _on_create_album_from_collection(self, collection_id: int) -> None:
+        self._on_create_virtual_album(None, {"collection_ids": [collection_id]})
 
     def _on_gallery_page(
         self,

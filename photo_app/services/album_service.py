@@ -109,95 +109,17 @@ class AlbumService:
                 logger.warning("Album %s not found", album_id)
                 return AlbumPage(items=[], offset=offset, limit=limit)
 
-            # Combine album query with filter query if provided
-            if query_definition:
-                # Parse the filter query
-                filter_query = parse_album_query(query_definition)
-
-                # Combine with album query - filter takes precedence
-                combined_person_ids = (
-                    filter_query.person_ids or album.query_definition.person_ids
-                )
-                # AND/OR travels with whichever side supplied the people
-                combined_person_logic = (
-                    filter_query.person_logic
-                    if filter_query.person_ids
-                    else album.query_definition.person_logic
-                )
-                combined_cluster_ids = (
-                    filter_query.cluster_ids or album.query_definition.cluster_ids
-                )
-                combined_date_from = (
-                    filter_query.date_from or album.query_definition.date_from
-                )
-                combined_date_to = (
-                    filter_query.date_to or album.query_definition.date_to
-                )
-                combined_tag_names = (
-                    filter_query.tag_names or album.query_definition.tag_names
-                )
-                combined_rating_min = (
-                    filter_query.rating_min
-                    if filter_query.rating_min is not None
-                    else album.query_definition.rating_min
-                )
-                combined_quality_min = (
-                    filter_query.quality_min
-                    if filter_query.quality_min is not None
-                    else album.query_definition.quality_min
-                )
-                combined_camera_models = (
-                    filter_query.camera_models or album.query_definition.camera_models
-                )
-                combined_has_date = (
-                    filter_query.has_date
-                    if filter_query.has_date is not None
-                    else album.query_definition.has_date
-                )
-            else:
-                # Use album query only
-                combined_person_ids = album.query_definition.person_ids
-                combined_person_logic = album.query_definition.person_logic
-                combined_cluster_ids = album.query_definition.cluster_ids
-                combined_date_from = album.query_definition.date_from
-                combined_date_to = album.query_definition.date_to
-                combined_tag_names = album.query_definition.tag_names
-                combined_rating_min = album.query_definition.rating_min
-                combined_quality_min = album.query_definition.quality_min
-                combined_camera_models = album.query_definition.camera_models
-                combined_has_date = album.query_definition.has_date
-
-            if self._query_cache_service is None:
+            # A view filter is ANDed onto the album's own query, so it can
+            # only narrow the album, never pull in images from outside it.
+            # The cache holds the unfiltered album only.
+            if query_definition or self._query_cache_service is None:
                 images = self._image_repository.list_by_filters(
-                    person_ids=combined_person_ids,
-                    person_logic=combined_person_logic,
-                    cluster_ids=combined_cluster_ids,
-                    date_from=combined_date_from,
-                    date_to=combined_date_to,
-                    tag_names=combined_tag_names,
-                    rating_min=combined_rating_min,
-                    quality_min=combined_quality_min,
-                    camera_models=combined_camera_models,
-                    has_date=combined_has_date,
-                    offset=offset,
-                    limit=limit,
-                )
-                return AlbumPage(items=images, offset=offset, limit=limit)
-
-            # For cache service, we need to handle the combined query differently
-            # For now, fall back to direct filtering when filters are applied
-            if query_definition:
-                images = self._image_repository.list_by_filters(
-                    person_ids=combined_person_ids,
-                    person_logic=combined_person_logic,
-                    cluster_ids=combined_cluster_ids,
-                    date_from=combined_date_from,
-                    date_to=combined_date_to,
-                    tag_names=combined_tag_names,
-                    rating_min=combined_rating_min,
-                    quality_min=combined_quality_min,
-                    camera_models=combined_camera_models,
-                    has_date=combined_has_date,
+                    album.query_definition,
+                    narrow_by=(
+                        parse_album_query(query_definition)
+                        if query_definition
+                        else None
+                    ),
                     offset=offset,
                     limit=limit,
                 )
@@ -218,19 +140,7 @@ class AlbumService:
         album = self._album_repository.get(album_id)
         if album is None:
             return 0
-        query = album.query_definition
-        return self._image_repository.count_by_filters(
-            person_ids=query.person_ids,
-            person_logic=query.person_logic,
-            cluster_ids=query.cluster_ids,
-            date_from=query.date_from,
-            date_to=query.date_to,
-            tag_names=query.tag_names,
-            rating_min=query.rating_min,
-            quality_min=query.quality_min,
-            camera_models=query.camera_models,
-            has_date=query.has_date,
-        )
+        return self._image_repository.count_by_filters(album.query_definition)
 
     def is_unfiltered_album(self, album_id: int) -> bool:
         """True when the album has no criteria, i.e. it shows the whole library."""
@@ -256,18 +166,8 @@ class AlbumService:
         """Return paginated all-photos library view with optional filtering."""
         # If query_definition is provided, apply filters
         if query_definition:
-            filter_query = parse_album_query(query_definition)
             images = self._image_repository.list_by_filters(
-                person_ids=filter_query.person_ids,
-                person_logic=filter_query.person_logic,
-                cluster_ids=filter_query.cluster_ids,
-                date_from=filter_query.date_from,
-                date_to=filter_query.date_to,
-                tag_names=filter_query.tag_names,
-                rating_min=filter_query.rating_min,
-                quality_min=filter_query.quality_min,
-                camera_models=filter_query.camera_models,
-                has_date=filter_query.has_date,
+                parse_album_query(query_definition),
                 offset=offset,
                 limit=limit,
             )

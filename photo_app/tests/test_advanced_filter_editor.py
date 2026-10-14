@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from PySide6.QtWidgets import QApplication
 
 from photo_app.app.widgets.advanced_filter_editor import AdvancedFilterEditorDialog
-from photo_app.domain.models import Person
+from photo_app.domain.models import Collection, Person
 
 CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -47,3 +47,23 @@ def test_match_all_defaults_on_for_new_albums_only() -> None:
         available_persons=_people(), current_query={"person_ids": [1, 2]}
     )
     assert legacy.get_query_definition()["person_logic"] == "OR"
+
+
+def test_collection_criteria_round_trip() -> None:
+    _app()
+    collections = [
+        Collection(id=7, name="Book 2025", created_at=CREATED_AT),
+        Collection(id=8, name="Calendar", created_at=CREATED_AT),
+    ]
+    dialog = AdvancedFilterEditorDialog(
+        available_persons=_people(),
+        current_query={"collection_ids": [7], "exclude_collection_ids": [8]},
+        available_collections=collections,
+    )
+    query = dialog.get_query_definition()
+    assert query["collection_ids"] == [7]
+    assert query["exclude_collection_ids"] == [8]
+
+    # Without any collections the criteria stay empty
+    plain = AdvancedFilterEditorDialog(available_persons=_people())
+    assert plain.get_query_definition()["collection_ids"] == []

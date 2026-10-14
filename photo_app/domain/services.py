@@ -47,6 +47,10 @@ def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
     flags = _parse_flags(definition.get("flags"))
     raw_has_date = definition.get("has_date")
     has_date = raw_has_date if isinstance(raw_has_date, bool) else None
+    collection_ids = _extract_int_tuple(definition.get("collection_ids"))
+    exclude_collection_ids = _extract_int_tuple(
+        definition.get("exclude_collection_ids")
+    )
 
     return AlbumQuery(
         person_ids=person_ids,
@@ -62,7 +66,33 @@ def parse_album_query(definition: dict[str, object]) -> AlbumQuery:
         gps_radius_km=gps_radius_km,
         flags=flags,
         has_date=has_date,
+        collection_ids=collection_ids,
+        exclude_collection_ids=exclude_collection_ids,
     )
+
+
+def album_query_to_dict(query: AlbumQuery) -> dict[str, object]:
+    """Serialise a query to the JSON-safe payload `parse_album_query` reads.
+
+    `has_date` is left out: it is the library's Dated/Undated tab, a view
+    state that is never saved with an album.
+    """
+    return {
+        "person_ids": list(query.person_ids),
+        "person_logic": query.person_logic,
+        "cluster_ids": list(query.cluster_ids),
+        "date_from": query.date_from.isoformat() if query.date_from else None,
+        "date_to": query.date_to.isoformat() if query.date_to else None,
+        "tag_names": list(query.tag_names),
+        "rating_min": query.rating_min,
+        "quality_min": query.quality_min,
+        "camera_models": list(query.camera_models),
+        "location_name": query.location_name,
+        "gps_radius_km": query.gps_radius_km,
+        "flags": list(query.flags),
+        "collection_ids": list(query.collection_ids),
+        "exclude_collection_ids": list(query.exclude_collection_ids),
+    }
 
 
 def _extract_int_tuple(raw: object) -> tuple[int, ...]:

@@ -108,6 +108,20 @@ class Album:
 
 
 @dataclass(frozen=True)
+class Collection:
+    """A hand-picked set of images (e.g. the picks for one year's photo book).
+
+    Unlike an album, which is a saved query, membership is assigned
+    explicitly. An image may belong to any number of collections.
+    """
+
+    id: int | None
+    name: str
+    created_at: datetime
+    image_count: int = 0
+
+
+@dataclass(frozen=True)
 class IdentityCluster:
     """A machine-formed group of visually similar faces.
 

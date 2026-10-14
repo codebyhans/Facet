@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 
     from photo_app.domain.models import (
         Album,
+        Collection,
         Face,
         FaceClusterMembership,
         FaceStackRow,
@@ -46,57 +47,33 @@ class ImageRepository(Protocol):
     def list_paginated(self, *, offset: int, limit: int) -> list[Image]:
         """Return paginated images to avoid loading all into memory."""
 
-    def list_by_filters(  # noqa: PLR0913
+    def list_by_filters(
         self,
+        query: AlbumQuery,
         *,
-        person_ids: Sequence[int],
-        date_from: date | None,
-        date_to: date | None,
-        cluster_ids: Sequence[int] = (),
-        person_logic: str = "OR",
-        tag_names: Sequence[str] = (),
-        rating_min: int | None = None,
-        quality_min: float | None = None,
-        camera_models: Sequence[str] = (),
-        has_date: bool | None = None,
+        narrow_by: AlbumQuery | None = None,
         offset: int,
         limit: int,
     ) -> list[Image]:
-        """Query images by filter criteria."""
+        """Query one page of images matching `query` (see list_ids_by_filters)."""
 
-    def list_ids_by_filters(  # noqa: PLR0913
+    def list_ids_by_filters(
         self,
+        query: AlbumQuery,
         *,
-        person_ids: Sequence[int],
-        date_from: date | None,
-        date_to: date | None,
-        cluster_ids: Sequence[int] = (),
-        person_logic: str = "OR",
-        tag_names: Sequence[str] = (),
-        rating_min: int | None = None,
-        quality_min: float | None = None,
-        camera_models: Sequence[str] = (),
-        has_date: bool | None = None,
+        narrow_by: AlbumQuery | None = None,
     ) -> list[int]:
         """Query image IDs by filter criteria with stable ordering.
 
-        has_date: True = only images with a capture date, False = only undated
-        images, None = both.
+        `narrow_by` is a second query that must also match, so a view filter
+        can only ever shrink what `query` selects.
         """
 
-    def count_by_filters(  # noqa: PLR0913
+    def count_by_filters(
         self,
+        query: AlbumQuery,
         *,
-        person_ids: Sequence[int],
-        date_from: date | None,
-        date_to: date | None,
-        cluster_ids: Sequence[int] = (),
-        person_logic: str = "OR",
-        tag_names: Sequence[str] = (),
-        rating_min: int | None = None,
-        quality_min: float | None = None,
-        camera_models: Sequence[str] = (),
-        has_date: bool | None = None,
+        narrow_by: AlbumQuery | None = None,
     ) -> int:
         """Count images matching the same criteria as list_ids_by_filters."""
 
@@ -309,6 +286,39 @@ class AlbumRepository(Protocol):
 
     def delete(self, album_id: int) -> bool:
         """Delete one album by id."""
+
+
+class CollectionRepository(Protocol):
+    """Persistence port for hand-picked image collections."""
+
+    def create(self, name: str, *, created_at: datetime) -> Collection:
+        """Insert a collection."""
+
+    def get(self, collection_id: int) -> Collection | None:
+        """Fetch one collection, with its image count."""
+
+    def get_by_name(self, name: str) -> Collection | None:
+        """Fetch one collection by name (case-insensitive)."""
+
+    def list_all(self) -> list[Collection]:
+        """Fetch all collections with their image counts, ordered by name."""
+
+    def update_name(self, collection_id: int, name: str) -> Collection | None:
+        """Rename one collection and return the updated model."""
+
+    def delete(self, collection_id: int) -> bool:
+        """Delete one collection and its memberships (images are untouched)."""
+
+    def add_images(
+        self, collection_id: int, image_ids: Sequence[int], *, added_at: datetime
+    ) -> int:
+        """Add images to a collection; returns how many were newly added."""
+
+    def remove_images(self, collection_id: int, image_ids: Sequence[int]) -> int:
+        """Remove images from a collection; returns how many were removed."""
+
+    def list_containing(self, image_ids: Sequence[int]) -> list[Collection]:
+        """Return the collections that hold at least one of the given images."""
 
 
 class AlbumQueryParser(Protocol):
