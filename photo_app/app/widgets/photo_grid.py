@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, override
 
-from PySide6.QtCore import QEvent, QModelIndex, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QModelIndex, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QListView, QMenu
 
 from photo_app.app.models.photo_grid_model import PhotoGridModel
@@ -34,12 +38,16 @@ class PhotoGridWidget(QListView):
     """Icon-mode photo list optimized for lazy loading + pagination."""
 
     photoActivated = Signal(int)  # noqa: N815
+    # Current photo moved (single click, arrow keys); image_id
+    currentPhotoChanged = Signal(int)  # noqa: N815
     flagChanged = Signal(object, object)  # noqa: N815  # index, flag_value
     deletePhotosRequested = Signal(list)  # noqa: N815  # list[int] of image_ids
     # collection_id, list[int] of image_ids
     addToCollectionRequested = Signal(int, list)  # noqa: N815
     removeFromCollectionRequested = Signal(int, list)  # noqa: N815
     newCollectionRequested = Signal(list)  # noqa: N815  # list[int] of image_ids
+    # Row the view wants to show but which isn't loaded yet
+    loadThroughRequested = Signal(int)  # noqa: N815
 
     def __init__(self, model: PhotoGridModel, parent: QListView | None = None) -> None:
         super().__init__(parent)
@@ -60,6 +68,7 @@ class PhotoGridWidget(QListView):
         ) = None
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.doubleClicked.connect(self._on_double_click)
+        self.selectionModel().currentChanged.connect(self._on_current_changed)
 
         # Set custom delegate for flag badges and hover buttons
         self.setItemDelegate(PhotoGridDelegate(self))
@@ -71,9 +80,12 @@ class PhotoGridWidget(QListView):
         self._tile_request_timer.timeout.connect(self._notify_visible_items)
 
         self._first_show = True
+        self._pending_scroll_row: int | None = None
 
         # Connect model signals to trigger tile loading when data changes
         model.rowsInserted.connect(self._on_model_structure_changed)
+        model.rowsInserted.connect(self._apply_pending_scroll)
+        model.modelReset.connect(self._clear_pending_scroll)
 
         # Connect flag change signal from delegate
         delegate = self.itemDelegate()
@@ -147,6 +159,38 @@ class PhotoGridWidget(QListView):
             # doesn't invalidate that cache, so force a relayout to pick it up.
             self.doItemsLayout()
 
+    def column_count(self) -> int:
+        """Thumbnails per grid line."""
+        cell_w = self.gridSize().width()
+        if cell_w <= 0:
+            return 1
+        return max(1, self.viewport().width() // cell_w)
+
+    def row_height(self) -> int:
+        """Height of one grid line in scroll-bar pixels."""
+        return self.gridSize().height()
+
+    def scroll_to_row(self, row: int) -> None:
+        """Put `row`'s grid line at the top, loading pages up to it if needed."""
+        model = self.model()
+        if row >= model.rowCount():
+            self._pending_scroll_row = row
+            self.loadThroughRequested.emit(row)
+            return
+        self._pending_scroll_row = None
+        # Freshly inserted rows may not be laid out yet (scroll range too short)
+        self.executeDelayedItemsLayout()
+        line = row // self.column_count()
+        self.verticalScrollBar().setValue(line * self.row_height())
+
+    def _apply_pending_scroll(self) -> None:
+        row = self._pending_scroll_row
+        if row is not None and row < self.model().rowCount():
+            self.scroll_to_row(row)
+
+    def _clear_pending_scroll(self) -> None:
+        self._pending_scroll_row = None
+
     @override
     def showEvent(self, event: QShowEvent) -> None:
         """Handle widget becoming visible - request tiles if this is first show."""
@@ -199,6 +243,11 @@ class PhotoGridWidget(QListView):
         image_id = model.data(index, PhotoGridModel.ImageIdRole)
         if isinstance(image_id, int):
             self.photoActivated.emit(image_id)
+
+    def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
+        image_id = self.model().data(current, PhotoGridModel.ImageIdRole)
+        if isinstance(image_id, int):
+            self.currentPhotoChanged.emit(image_id)
 
     def _on_flag_changed(self, index: QModelIndex, flag_value: str | None) -> None:
         """Handle flag change from delegate."""
@@ -288,6 +337,13 @@ class PhotoGridWidget(QListView):
             else f"Delete {len(image_ids)} Photos Permanently…"
         )
         menu = QMenu(self)
+        target = index if index.isValid() else self.currentIndex()
+        file_path = self.model().data(target, PhotoGridModel.FilePathRole)
+        if isinstance(file_path, str):
+            reveal = menu.addAction("Show in Explorer")
+            reveal.setEnabled(Path(file_path).exists())
+            reveal.triggered.connect(lambda: _reveal_in_file_manager(file_path))
+            menu.addSeparator()
         self._add_collection_actions(menu, image_ids)
         action = menu.addAction(label)
         action.triggered.connect(lambda: self.deletePhotosRequested.emit(image_ids))
@@ -351,3 +407,12 @@ class PhotoGridWidget(QListView):
             if old and old.isValid():
                 self.viewport().update(self.visualRect(old))
         super().leaveEvent(event)
+
+
+def _reveal_in_file_manager(file_path: str) -> None:
+    """Open the file's folder with the file selected (Windows) or just the folder."""
+    if sys.platform == "win32":
+        # explorer wants /select,"path" as one token; a list arg gets misquoted
+        subprocess.Popen(f'explorer /select,"{Path(file_path)}"')  # noqa: S603
+        return
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(file_path).parent)))

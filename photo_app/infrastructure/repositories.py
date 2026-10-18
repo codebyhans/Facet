@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, TypeVar
 
-from sqlalchemy import and_, exists, func, nulls_last, select
+from sqlalchemy import and_, exists, func, nulls_last, or_, select
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
@@ -41,6 +41,27 @@ if TYPE_CHECKING:
 
     from sqlalchemy import ColumnElement, Select
     from sqlalchemy.engine import Engine
+
+# Camera RAW formats; all have 3-letter extensions (see _paired_raw_ids)
+RAW_SUFFIXES = (".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2")
+_JPEG_SUFFIXES = (".jpg", ".JPG", ".jpeg", ".JPEG")
+
+
+def _paired_raw_ids() -> Select[tuple[int]]:
+    """IDs of RAW files that have a same-stem JPEG next to them.
+
+    The browsing views hide these: the JPEG stands in for the shot and
+    carries a "RAW" badge instead. Lone RAWs stay visible. The JPEG lookup
+    compares exact paths so it can use the unique file_path index.
+    """
+    raw = ImageModel.__table__.alias("raw")
+    jpeg = ImageModel.__table__.alias("jpeg")
+    stem = func.substr(raw.c.file_path, 1, func.length(raw.c.file_path) - 4)
+    return (
+        select(raw.c.id)
+        .join(jpeg, jpeg.c.file_path.in_([stem + suffix for suffix in _JPEG_SUFFIXES]))
+        .where(or_(*(raw.c.file_path.ilike(f"%{suffix}") for suffix in RAW_SUFFIXES)))
+    )
 
 
 def _to_image(entity: ImageModel) -> Image:
@@ -229,8 +250,11 @@ class SqlAlchemyImageRepository:
         with Session(self._engine) as session:
             stmt = (
                 select(ImageModel)
+                .where(ImageModel.id.not_in(_paired_raw_ids()))
                 .order_by(
-                    nulls_last(ImageModel.capture_date.asc()), ImageModel.id.asc()
+                    nulls_last(ImageModel.capture_date.asc()),
+                    ImageModel.file_path.asc(),
+                    ImageModel.id.asc(),
                 )
                 .offset(offset)
                 .limit(limit)
@@ -257,11 +281,32 @@ class SqlAlchemyImageRepository:
     ) -> list[int]:
         stmt = self._filtered_ids_stmt(query, narrow_by).order_by(
             nulls_last(ImageModel.capture_date.asc()),
+            # Same-time shots (e.g. folder-dated) fall back to filename order
+            ImageModel.file_path.asc(),
             ImageModel.id.asc(),
         )
         with Session(self._engine) as session:
             rows = session.scalars(stmt).unique().all()
             return [int(row) for row in rows]
+
+    def list_capture_dates_by_filters(
+        self,
+        query: AlbumQuery,
+        *,
+        narrow_by: AlbumQuery | None = None,
+    ) -> list[datetime | None]:
+        ids = self._filtered_ids_stmt(query, narrow_by).subquery()
+        stmt = (
+            select(ImageModel.capture_date)
+            .where(ImageModel.id.in_(select(ids.c.id)))
+            .order_by(
+                nulls_last(ImageModel.capture_date.asc()),
+                ImageModel.file_path.asc(),
+                ImageModel.id.asc(),
+            )
+        )
+        with Session(self._engine) as session:
+            return list(session.scalars(stmt))
 
     def count_by_filters(
         self,
@@ -277,7 +322,8 @@ class SqlAlchemyImageRepository:
         self, query: AlbumQuery, narrow_by: AlbumQuery | None
     ) -> Select[tuple[int]]:
         """Build the unordered image-id query shared by listing and counting."""
-        stmt = self._apply_query(select(ImageModel.id), query)
+        stmt = select(ImageModel.id).where(ImageModel.id.not_in(_paired_raw_ids()))
+        stmt = self._apply_query(stmt, query)
         if narrow_by is not None:
             stmt = self._apply_query(stmt, narrow_by)
         return stmt
@@ -1001,6 +1047,23 @@ class SqlAlchemyCollectionRepository:
             if not collection_ids:
                 return []
             return self._list(session, CollectionModel.id.in_(collection_ids))
+
+    def names_by_image(self, image_ids: Sequence[int]) -> dict[int, list[str]]:
+        result: dict[int, list[str]] = {}
+        with Session(self._engine) as session:
+            for chunk in _chunked(list(image_ids)):
+                stmt = (
+                    select(CollectionImageModel.image_id, CollectionModel.name)
+                    .join(
+                        CollectionModel,
+                        CollectionModel.id == CollectionImageModel.collection_id,
+                    )
+                    .where(CollectionImageModel.image_id.in_(chunk))
+                    .order_by(func.lower(CollectionModel.name))
+                )
+                for image_id, name in session.execute(stmt):
+                    result.setdefault(image_id, []).append(name)
+        return result
 
     def _member_count(self, session: Session, collection_id: int) -> int:
         stmt = select(func.count(CollectionImageModel.id)).where(

@@ -14,6 +14,7 @@ LOGGER = logging.getLogger(__name__)
 class _ChromecastDiscoverySignals(QObject):
     found = Signal(list)
     error = Signal(str)
+    finished = Signal()  # always emitted when run() exits
 
 
 class ChromecastDiscoveryWorker(QRunnable):
@@ -33,3 +34,5 @@ class ChromecastDiscoveryWorker(QRunnable):
         except Exception as exc:
             LOGGER.exception("Chromecast discovery failed")
             self.signals.error.emit(str(exc))
+        finally:
+            self.signals.finished.emit()

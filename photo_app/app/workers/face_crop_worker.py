@@ -18,6 +18,7 @@ class FaceCropWorkerSignals(QObject):
     """Signals for the FaceCropWorker."""
 
     result_ready = Signal(object)  # png_bytes | None
+    finished = Signal()  # always emitted when run() exits
 
 
 class FaceCropWorker(QRunnable):
@@ -38,6 +39,9 @@ class FaceCropWorker(QRunnable):
     @Slot()
     def run(self) -> None:
         """Run the worker in a background thread."""
-        self.signals.result_ready.emit(
-            render_face_crop_png(self._image_path, self._bbox)
-        )
+        try:
+            self.signals.result_ready.emit(
+                render_face_crop_png(self._image_path, self._bbox)
+            )
+        finally:
+            self.signals.finished.emit()

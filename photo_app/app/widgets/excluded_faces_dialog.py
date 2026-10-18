@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_app.app.workers.excluded_faces_worker import ExcludedFacesWorker
+from photo_app.app.workers.runner import start_worker
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -136,7 +137,7 @@ class ExcludedFacesDialog(QDialog):
         )
         worker.signals.result_ready.connect(self._on_list_ready)
         worker.signals.error.connect(self._on_list_error)
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _on_list_ready(
         self,

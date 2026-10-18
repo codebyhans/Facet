@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from photo_app.services.import_dedup import hash_file
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from photo_app.domain.models import Image
     from photo_app.domain.repositories import ImageRepository
@@ -23,13 +23,20 @@ class DuplicateGroup:
     images: list[Image]
     suggested_keeper_id: int
     file_size: int = field(default=0)
+    # image_id -> names of the collections it belongs to (members only)
+    collections: dict[int, list[str]] = field(default_factory=dict)
 
 
 class DuplicateDetectionService:
     """Finds and removes exact duplicate image files by content hash."""
 
-    def __init__(self, image_repository: ImageRepository) -> None:
+    def __init__(
+        self,
+        image_repository: ImageRepository,
+        collection_names: Callable[[Sequence[int]], dict[int, list[str]]] | None = None,
+    ) -> None:
         self._repo = image_repository
+        self._collection_names = collection_names
 
     def find_exact_duplicates(
         self,
@@ -55,11 +62,23 @@ class DuplicateDetectionService:
         if on_progress:
             on_progress(total, total)
 
+        duplicate_sets = {
+            h: imgs
+            for h, imgs in hash_groups.items()
+            if len(imgs) >= 2  # noqa: PLR2004
+        }
+        collections = self._lookup_collections(
+            [
+                img.id
+                for imgs in duplicate_sets.values()
+                for img in imgs
+                if img.id is not None
+            ]
+        )
+
         groups: list[DuplicateGroup] = []
-        for h, imgs in hash_groups.items():
-            if len(imgs) < 2:  # noqa: PLR2004
-                continue
-            keeper_id = self._suggest_keeper(imgs)
+        for h, imgs in duplicate_sets.items():
+            keeper_id = self._suggest_keeper(imgs, collections)
             try:
                 file_size = Path(imgs[0].file_path).stat().st_size
             except OSError:
@@ -70,6 +89,11 @@ class DuplicateDetectionService:
                     images=imgs,
                     suggested_keeper_id=keeper_id,
                     file_size=file_size,
+                    collections={
+                        img.id: collections[img.id]
+                        for img in imgs
+                        if img.id in collections
+                    },
                 )
             )
 
@@ -108,10 +132,21 @@ class DuplicateDetectionService:
     def _hash_file(path: Path) -> str:
         return hash_file(path)
 
+    def _lookup_collections(self, image_ids: list[int]) -> dict[int, list[str]]:
+        if self._collection_names is None or not image_ids:
+            return {}
+        return self._collection_names(image_ids)
+
     @staticmethod
-    def _suggest_keeper(images: list[Image]) -> int:
-        def score(img: Image) -> tuple[int, int, float]:
+    def _suggest_keeper(
+        images: list[Image], collections: dict[int, list[str]] | None = None
+    ) -> int:
+        in_collection = collections or {}
+
+        def score(img: Image) -> tuple[int, int, int, float]:
             return (
+                # Trashing a collection member would drop it from the collection
+                1 if img.id in in_collection else 0,
                 1 if img.is_favorite else 0,
                 img.rating or 0,
                 -(img.indexed_at.timestamp() if img.indexed_at else 0),

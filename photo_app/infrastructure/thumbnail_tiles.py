@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from photo_app.infrastructure.sqlalchemy_models import ImageModel, ThumbnailTileModel
 
 _VIDEO_SUFFIXES = frozenset({".mov", ".mp4", ".avi", ".mts", ".m2ts", ".3gp"})
+_ID_CHUNK_SIZE = 500  # IN-list size per query, below SQLite's variable limit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -293,18 +294,27 @@ class ThumbnailTileStore:
             )
 
     def get_image_tiles_batch(self, image_ids: list[int]) -> dict[int, ImageTileLookup]:
-        """Return tile lookups for multiple image IDs in a single DB query."""
+        """Return tile lookups for multiple image IDs, one DB query per chunk."""
         if not image_ids:
             return {}
         with Session(self._engine) as session:
-            stmt = (
-                select(ThumbnailTileModel, ImageModel.width, ImageModel.height)
-                .join(ImageModel, ImageModel.id == ThumbnailTileModel.image_id)
-                .where(ThumbnailTileModel.image_id.in_(image_ids))
-            )
             grid_width = max(1, self._tile_size[0] // self._thumbnail_size[0])
             result: dict[int, ImageTileLookup] = {}
-            for row, image_width, image_height in session.execute(stmt):
+            # Chunked to stay under SQLite's bound-variable limit on big pages
+            rows = (
+                row
+                for start in range(0, len(image_ids), _ID_CHUNK_SIZE)
+                for row in session.execute(
+                    select(ThumbnailTileModel, ImageModel.width, ImageModel.height)
+                    .join(ImageModel, ImageModel.id == ThumbnailTileModel.image_id)
+                    .where(
+                        ThumbnailTileModel.image_id.in_(
+                            image_ids[start : start + _ID_CHUNK_SIZE]
+                        )
+                    )
+                )
+            )
+            for row, image_width, image_height in rows:
                 col = row.position_in_tile % grid_width
                 line = row.position_in_tile // grid_width
                 result[row.image_id] = ImageTileLookup(

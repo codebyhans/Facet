@@ -56,8 +56,10 @@ from photo_app.app.widgets.metadata_editor import MetadataEditorPanel
 from photo_app.app.widgets.people_browser import PeopleBrowser
 from photo_app.app.widgets.photo_grid import PhotoGridWidget
 from photo_app.app.widgets.photo_viewer import PhotoViewerWidget
+from photo_app.app.widgets.timeline_ruler import TimelineRuler
 from photo_app.app.workers.indexing_worker import IndexWorker
 from photo_app.app.workers.people_list_worker import PeopleListWorker
+from photo_app.app.workers.runner import start_worker
 from photo_app.config.constants import DEFAULT_PAGE_SIZE
 from photo_app.config.keyboard_shortcuts import get_shortcuts
 from photo_app.services.face_index_service import FaceIndexResult
@@ -145,10 +147,7 @@ class MainWindow(QMainWindow):
         self._cache_directory = cache_directory
         self._thread_pool = QThreadPool.globalInstance()
 
-        # Worker references to prevent GC
-        self._active_face_index_worker: IndexWorker | None = None
-        self._active_image_index_worker: IndexWorker | None = None
-        self._active_delete_workers: set[IndexWorker] = set()
+        # In-flight people worker, so a refresh can drop its stale result
         self._active_people_worker: PeopleListWorker | None = None
         self._people_epoch: int = 0
         self._thumbnail_tile_store = thumbnail_tile_store
@@ -184,6 +183,7 @@ class MainWindow(QMainWindow):
             collection_service.list_collections,
             collection_service.collections_containing,
         )
+        self._timeline_ruler = TimelineRuler(self._album_photo_grid)
 
         # Build image detail panel (for full image viewing)
         self._image_detail_panel = ImageDetailPanel(
@@ -306,7 +306,13 @@ class MainWindow(QMainWindow):
 
         # Create stacked widget for center panel (gallery or detail view)
         center_stack = QStackedWidget()
-        center_stack.addWidget(self._album_photo_grid)  # Index 0
+        grid_page = QWidget()
+        grid_layout = QHBoxLayout(grid_page)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(0)
+        grid_layout.addWidget(self._album_photo_grid, 1)
+        grid_layout.addWidget(self._timeline_ruler)
+        center_stack.addWidget(grid_page)  # Index 0
         center_stack.addWidget(self._image_detail_panel)  # Index 1
         center_stack.setCurrentIndex(0)  # Start with gallery
         self._center_stack = center_stack
@@ -355,6 +361,8 @@ class MainWindow(QMainWindow):
 
         self._current_viewer: PhotoViewerWidget | None = None
         self._wire_signals()
+        self._wire_timeline()
+        self._wire_grid_selection()
         self._build_menu()
         self._setup_keyboard_shortcuts()
 
@@ -410,6 +418,19 @@ class MainWindow(QMainWindow):
         if self._chromecast_service is not None:
             self._chromecast_service.shutdown()
         super().closeEvent(event)
+
+    def _wire_grid_selection(self) -> None:
+        """Keep the info panel on the grid's current photo (click, arrow keys)."""
+        self._album_photo_grid.currentPhotoChanged.connect(
+            self._on_detail_image_selected
+        )
+
+    def _wire_timeline(self) -> None:
+        """Date ruler beside the grid: dates per view, jumps into unloaded rows."""
+        self._album_gallery_vm.timeline_ready.connect(self._timeline_ruler.set_dates)
+        self._album_photo_grid.loadThroughRequested.connect(
+            self._album_gallery_vm.load_through
+        )
 
     def _wire_signals(self) -> None:
         self._album_vm.error.connect(self._show_error)
@@ -1387,7 +1408,7 @@ class MainWindow(QMainWindow):
             lambda msg: self._show_error(f"Failed to load people: {msg}")
         )
         self._active_people_worker = worker
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _on_people_list_ready(
         self,
@@ -1453,7 +1474,7 @@ class MainWindow(QMainWindow):
         self._current_viewer = PhotoViewerWidget(pairs, start_row, self)
         self._current_viewer.show()
 
-    def _run_image_index(self) -> None:  # noqa: C901
+    def _run_image_index(self) -> None:
         root = Path(str(getattr(self._runtime_settings, "photo_root_dir", ".")))
 
         # Validate path before indexing
@@ -1521,13 +1542,7 @@ class MainWindow(QMainWindow):
             self._show_error(f"Indexing failed: {err}")
 
         worker.signals.error.connect(on_index_error)
-
-        def on_image_index_finished() -> None:
-            self._active_image_index_worker = None
-
-        worker.signals.finished.connect(on_image_index_finished)
-        self._active_image_index_worker = worker  # keep alive until finished
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _run_backfill_timestamps(self) -> None:
         """Fix images that have no capture_date, reading EXIF then falling back to mtime."""
@@ -1565,7 +1580,7 @@ class MainWindow(QMainWindow):
 
         worker.signals.result_ready.connect(on_done)
         worker.signals.error.connect(on_err)
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _run_prune_missing_files(self) -> None:
         """Remove DB records for files that no longer exist on disk."""
@@ -1603,7 +1618,7 @@ class MainWindow(QMainWindow):
 
         worker.signals.result_ready.connect(on_done)
         worker.signals.error.connect(on_err)
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _open_duplicate_dialog(self) -> None:
         """Open the Find Duplicates dialog."""
@@ -1619,7 +1634,10 @@ class MainWindow(QMainWindow):
             self._show_error("Image repository not available.")
             return
 
-        service = DuplicateDetectionService(image_repo)
+        service = DuplicateDetectionService(
+            image_repo,
+            collection_names=self._collection_service.collection_names_by_image,
+        )
         photo_root = Path(
             str(getattr(self._runtime_settings, "photo_root_dir", Path.home()))
         )
@@ -1638,7 +1656,7 @@ class MainWindow(QMainWindow):
         # remove person clusters — keep the People tab in sync too.
         self._refresh_people_list()
 
-    def _run_face_index(self) -> None:  # noqa: C901, PLR0915
+    def _run_face_index(self) -> None:  # noqa: C901
         if self._face_index_service is None:
             self._show_error("Face indexing unavailable")
             return
@@ -1735,13 +1753,7 @@ class MainWindow(QMainWindow):
             self._show_error(err)
 
         worker.signals.error.connect(on_face_index_error)
-
-        def on_face_index_finished() -> None:
-            self._active_face_index_worker = None
-
-        worker.signals.finished.connect(on_face_index_finished)
-        self._active_face_index_worker = worker
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _restore_geometry(self) -> None:
         size = self._ui_state.get("window_size")
@@ -2116,11 +2128,18 @@ class MainWindow(QMainWindow):
 
         count = len(image_ids)
         noun = "photo" if count == 1 else "photos"
+        raws, movs = self._image_index_service.count_companion_files(image_ids)
+        extras = [
+            f"{n} {label}{'' if n == 1 else 's'}"
+            for n, label in ((raws, "RAW file"), (movs, "Live Photo video"))
+            if n
+        ]
+        extra_text = f" (plus {' and '.join(extras)})" if extras else ""
         reply = QMessageBox.warning(
             self,
             "Delete Permanently",
-            f"Permanently delete {count} {noun} from disk and the library?\n\n"
-            "This cannot be undone.",
+            f"Permanently delete {count} {noun}{extra_text} from disk and the "
+            "library?\n\nThis cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -2156,15 +2175,7 @@ class MainWindow(QMainWindow):
 
         worker.signals.result_ready.connect(on_done)
         worker.signals.error.connect(on_err)
-        # Keep alive until finished: without a reference the worker (and its
-        # signals object) can be collected as soon as run() returns, dropping
-        # the queued result before on_done runs — most likely on a quick,
-        # single-photo delete.
-        self._active_delete_workers.add(worker)
-        worker.signals.finished.connect(
-            lambda: self._active_delete_workers.discard(worker)
-        )
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _on_filter_changed(self) -> None:
         """Handle filter changes from the filter bar."""
@@ -2234,7 +2245,7 @@ class MainWindow(QMainWindow):
         )
         worker.signals.result_ready.connect(self._on_reset_identities_complete)
         worker.signals.error.connect(self._on_reset_identities_error)
-        QThreadPool.globalInstance().start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _on_reset_identities_progress(self, current: int, total: int) -> None:
         """Update the status bar with reset progress."""
@@ -2281,7 +2292,7 @@ class MainWindow(QMainWindow):
             lambda result: self._on_reindex_complete(result, file_path)
         )
         worker.signals.error.connect(self._on_reindex_error)
-        QThreadPool.globalInstance().start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _on_reindex_complete(self, result: object, file_path: str) -> None:
         """Called on the main thread when reindex_image finishes."""

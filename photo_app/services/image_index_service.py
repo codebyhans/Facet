@@ -13,6 +13,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from photo_app.domain.models import Image as ImageEntity
 from photo_app.domain.services import now_utc
 from photo_app.infrastructure.exif_handler import ExifMetadataHandler
+from photo_app.infrastructure.repositories import RAW_SUFFIXES
 from photo_app.services.import_service import read_xmp_info
 
 if TYPE_CHECKING:
@@ -43,6 +44,35 @@ class DeleteImagesResult:
 
     deleted: int
     failed: int
+    # Same-stem RAW / Live Photo MOV files removed along with the photos
+    companions_deleted: int = 0
+
+
+# Files that belong to a photo's shot: the camera's RAW and the Live Photo video
+_COMPANION_SUFFIXES = frozenset({*RAW_SUFFIXES, ".mov"})
+
+
+def find_companion_files(file_path: str) -> list[Path]:
+    """Same-folder, same-stem RAW / Live Photo MOV files of one photo.
+
+    RAWs and videos have no companions themselves: deleting a lone CR2 or a
+    clip must never take a JPEG with it.
+    """
+    path = Path(file_path)
+    if path.suffix.lower() in _COMPANION_SUFFIXES | _VIDEO_SUFFIXES:
+        return []
+    stem = path.stem.lower()
+    try:
+        siblings = list(path.parent.iterdir())
+    except OSError:
+        return []
+    return sorted(
+        sibling
+        for sibling in siblings
+        if sibling.stem.lower() == stem
+        and sibling.suffix.lower() in _COMPANION_SUFFIXES
+        and sibling.is_file()
+    )
 
 
 class ImageIndexService:
@@ -304,24 +334,41 @@ class ImageIndexService:
             self._query_cache_service.invalidate_all()
         return deleted
 
-    def delete_images(self, image_ids: list[int]) -> DeleteImagesResult:
-        """Permanently delete images from disk and remove their library records.
+    def count_companion_files(self, image_ids: list[int]) -> tuple[int, int]:
+        """(RAW files, Live Photo videos) that delete_images would also remove."""
+        raws = movs = 0
+        for image in self._image_repository.list_by_ids(image_ids):
+            for companion in find_companion_files(image.file_path):
+                if companion.suffix.lower() == ".mov":
+                    movs += 1
+                else:
+                    raws += 1
+        return raws, movs
 
-        Files that fail to delete (e.g. permission errors) are left on disk
-        and their database records are kept so the operation can be retried.
+    def delete_images(self, image_ids: list[int]) -> DeleteImagesResult:
+        """Permanently delete images, plus their RAW / Live Photo companions.
+
+        Companions go first; if one can't be deleted (e.g. permission
+        errors) the photo itself is kept, so the shot is never split and
+        the operation can be retried. Records of deleted companions (an
+        indexed lone-looking CR2) are removed along with the photo's.
         """
         if not image_ids:
             return DeleteImagesResult(deleted=0, failed=0)
 
         images = self._image_repository.list_by_ids(image_ids)
         deleted_paths: list[str] = []
+        companion_paths: list[str] = []
         failed = 0
         for image in images:
             path = Path(image.file_path)
             try:
+                for companion in find_companion_files(image.file_path):
+                    companion.unlink(missing_ok=True)
+                    companion_paths.append(str(companion))
                 path.unlink(missing_ok=True)
             except OSError:
-                LOGGER.exception("Could not delete %s", path)
+                LOGGER.exception("Could not delete %s or its companions", path)
                 failed += 1
                 continue
             deleted_paths.append(image.file_path)
@@ -331,10 +378,19 @@ class ImageIndexService:
             if deleted_paths
             else 0
         )
-        if self._query_cache_service is not None and deleted:
+        if companion_paths:
+            self._image_repository.delete_by_paths(companion_paths)
+        if self._query_cache_service is not None and (deleted or companion_paths):
             self._query_cache_service.invalidate_all()
-        LOGGER.info("Deleted %s image(s) permanently, %s failure(s)", deleted, failed)
-        return DeleteImagesResult(deleted=deleted, failed=failed)
+        LOGGER.info(
+            "Deleted %s image(s) and %s companion file(s) permanently, %s failure(s)",
+            deleted,
+            len(companion_paths),
+            failed,
+        )
+        return DeleteImagesResult(
+            deleted=deleted, failed=failed, companions_deleted=len(companion_paths)
+        )
 
     def set_thumbnail_max_size(self, max_size: int) -> None:
         """Apply runtime thumbnail size for future generations."""

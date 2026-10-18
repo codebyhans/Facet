@@ -177,6 +177,28 @@ class AlbumService:
         items = self._image_repository.list_paginated(offset=offset, limit=limit)
         return AlbumPage(items=items, offset=offset, limit=limit)
 
+    def list_view_capture_dates(
+        self,
+        album_id: int | None,
+        query_definition: dict[str, object] | None = None,
+    ) -> list[datetime | None]:
+        """Capture dates of every image in one album/library view, in grid order.
+
+        `album_id=None` means the library view. Mirrors the filtering of
+        list_album_images / list_library_images so row N here is row N there.
+        """
+        narrow_by = parse_album_query(query_definition) if query_definition else None
+        if album_id is None:
+            return self._image_repository.list_capture_dates_by_filters(
+                narrow_by or AlbumQuery()
+            )
+        album = self._album_repository.get(album_id)
+        if album is None:
+            return []
+        return self._image_repository.list_capture_dates_by_filters(
+            album.query_definition, narrow_by=narrow_by
+        )
+
     def get_image_repository(self) -> ImageRepository:
         """Get the image repository for accessing image data."""
         return self._image_repository

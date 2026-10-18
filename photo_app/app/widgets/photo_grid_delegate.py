@@ -2,9 +2,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, override
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QIcon, QMouseEvent, QPainter, QPen
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QPolygonF,
+)
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QWidget
+
+from photo_app.app.models.photo_grid_model import MediaKind, PhotoGridModel
 
 if TYPE_CHECKING:
     from PySide6.QtCore import QAbstractItemModel, QModelIndex, QPersistentModelIndex
@@ -22,6 +34,8 @@ class PhotoGridDelegate(QStyledItemDelegate):
         "undecided": QColor(117, 117, 117),  # Grey
     }
     CLEAR_BUTTON_COLOR: ClassVar[QColor] = QColor(200, 200, 200)
+    MEDIA_BADGE_BACKGROUND: ClassVar[QColor] = QColor(0, 0, 0, 150)
+    MEDIA_BADGE_SIZE = 20
 
     # Hover button properties
     BUTTON_SIZE = 24
@@ -92,6 +106,11 @@ class PhotoGridDelegate(QStyledItemDelegate):
 
         # Draw flag badge
         self._draw_flag_badge(painter, option, index, thumbnail_rect)
+
+        # Video / Live Photo badge (plain stills get none), RAW pill left of it
+        badge_left = self._draw_media_badge(painter, index, thumbnail_rect)
+        if index.data(PhotoGridModel.HasRawRole):
+            self._draw_raw_badge(painter, option, badge_left, thumbnail_rect.top() + 6)
 
         # Draw hover buttons if visible
         if self._should_show_hover_buttons(index):
@@ -185,6 +204,80 @@ class PhotoGridDelegate(QStyledItemDelegate):
         painter.setPen(QPen(QColor(255, 255, 255), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(badge_x, badge_y, badge_size, badge_size)
+
+    def _draw_media_badge(
+        self,
+        painter: QPainter,
+        index: QModelIndex | QPersistentModelIndex,
+        thumbnail_rect: QRect,
+    ) -> int:
+        """Draw a play triangle (video) or Live Photo rings in the top-right corner.
+
+        Returns the x where the next badge to the left should end.
+        """
+        right_edge = thumbnail_rect.right() - 6
+        kind = index.data(PhotoGridModel.MediaKindRole)
+        if kind not in (MediaKind.VIDEO, MediaKind.LIVE):
+            return right_edge
+
+        size = self.MEDIA_BADGE_SIZE
+        badge = QRectF(
+            thumbnail_rect.right() - size - 6, thumbnail_rect.top() + 6, size, size
+        )
+        center = badge.center()
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.MEDIA_BADGE_BACKGROUND))
+        painter.drawEllipse(badge)
+
+        white = QColor(255, 255, 255)
+        if kind == MediaKind.VIDEO:
+            # Play triangle, nudged right so it looks optically centred
+            r = size * 0.28
+            cx = center.x() + r * 0.2
+            painter.setBrush(QBrush(white))
+            painter.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(cx - r * 0.8, center.y() - r),
+                        QPointF(cx - r * 0.8, center.y() + r),
+                        QPointF(cx + r, center.y()),
+                    ]
+                )
+            )
+        else:
+            # Live Photo: solid dot inside a ring
+            painter.setBrush(QBrush(white))
+            painter.drawEllipse(center, size * 0.12, size * 0.12)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(white, 1.5))
+            painter.drawEllipse(center, size * 0.3, size * 0.3)
+        painter.restore()
+        return right_edge - size - 4
+
+    def _draw_raw_badge(
+        self, painter: QPainter, option: QStyleOptionViewItem, right: int, top: int
+    ) -> None:
+        """Draw a small "RAW" pill ending at `right`: a RAW file exists for this shot."""
+        font = QFont(option.font)
+        font.setPixelSize(10)
+        font.setBold(True)
+        text_width = QFontMetrics(font).horizontalAdvance("RAW")
+        size = self.MEDIA_BADGE_SIZE
+        width = text_width + 12
+        pill = QRectF(right - width, top, width, size)
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.MEDIA_BADGE_BACKGROUND))
+        painter.drawRoundedRect(pill, size / 2, size / 2)
+        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.setFont(font)
+        painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, "RAW")
+        painter.restore()
 
     def _draw_hover_buttons(
         self,

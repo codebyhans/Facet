@@ -69,6 +69,14 @@ class ImageRepository(Protocol):
         can only ever shrink what `query` selects.
         """
 
+    def list_capture_dates_by_filters(
+        self,
+        query: AlbumQuery,
+        *,
+        narrow_by: AlbumQuery | None = None,
+    ) -> list[datetime | None]:
+        """Capture dates of the matching images, in list_ids_by_filters order."""
+
     def count_by_filters(
         self,
         query: AlbumQuery,
@@ -319,6 +327,9 @@ class CollectionRepository(Protocol):
 
     def list_containing(self, image_ids: Sequence[int]) -> list[Collection]:
         """Return the collections that hold at least one of the given images."""
+
+    def names_by_image(self, image_ids: Sequence[int]) -> dict[int, list[str]]:
+        """Map each given image in any collection to its collection names."""
 
 
 class AlbumQueryParser(Protocol):

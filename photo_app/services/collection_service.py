@@ -76,6 +76,12 @@ class CollectionService:
         """Return the collections holding at least one of the given images."""
         return self._collection_repository.list_containing(image_ids)
 
+    def collection_names_by_image(
+        self, image_ids: Sequence[int]
+    ) -> dict[int, list[str]]:
+        """Collection names per image; images in no collection are left out."""
+        return self._collection_repository.names_by_image(image_ids)
+
     def _validated_name(self, name: str, *, own_id: int | None = None) -> str:
         cleaned = name.strip()
         if not cleaned:

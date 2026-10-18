@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_app.app.workers.chromecast_worker import ChromecastDiscoveryWorker
+from photo_app.app.workers.runner import start_worker
 
 if TYPE_CHECKING:
     from PySide6.QtGui import QCloseEvent
@@ -120,7 +121,7 @@ class ChromecastSlideshowDialog(QDialog):
         worker = ChromecastDiscoveryWorker(self._service)
         worker.signals.found.connect(self._on_chromecasts_found)
         worker.signals.error.connect(self._on_discovery_error)
-        QThreadPool.globalInstance().start(worker)
+        start_worker(worker)
 
     def _on_chromecasts_found(self, casts: list[object]) -> None:
         self._chromecasts = casts

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_app.app.workers.import_worker import ImportWorker
+from photo_app.app.workers.runner import start_worker
 from photo_app.services.import_service import (
     ImportOptions,
     ImportService,
@@ -54,7 +55,6 @@ class ImportDialog(QDialog):
         self._default_dest_path = default_dest_path
         self._thread_pool: QThreadPool | None = None  # Will be set by main window
         self._is_running = False
-        self._active_worker: ImportWorker | None = None
         self._last_summary: ImportSummary | None = None
 
         self.setWindowTitle("Import from Camera")
@@ -220,11 +220,9 @@ class ImportDialog(QDialog):
         self._summary_widget.hide()
         self._close_btn.setEnabled(False)
         self._is_running = True
-        self._active_worker = worker  # Keep the worker alive
 
-        # Start worker
         if self._thread_pool is not None:
-            self._thread_pool.start(worker)
+            start_worker(worker, self._thread_pool, done=worker.signals.done)
 
     def files_copied(self) -> int:
         """Return number of files copied in the last import, or 0 if none ran."""
@@ -247,7 +245,6 @@ class ImportDialog(QDialog):
         """Always called when the worker exits — guarantees Close is enabled."""
         self._close_btn.setEnabled(True)
         self._is_running = False
-        self._active_worker = None  # Release the reference
 
     def _show_error(self, message: str) -> None:
         """Show error message."""

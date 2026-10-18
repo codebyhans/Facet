@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import (
@@ -14,10 +16,22 @@ from PySide6.QtCore import (
     Signal,
 )
 
+from photo_app.infrastructure.repositories import RAW_SUFFIXES
+
 if TYPE_CHECKING:
     from datetime import datetime
 
     from PySide6.QtGui import QPixmap
+
+_VIDEO_SUFFIXES = frozenset({".mov", ".mp4", ".m4v", ".avi", ".mts", ".m2ts", ".3gp"})
+
+
+class MediaKind(StrEnum):
+    """What a grid row is, for the thumbnail badge."""
+
+    STILL = "still"
+    LIVE = "live"  # still image with a same-stem .mov sidecar (Live Photo)
+    VIDEO = "video"
 
 
 @dataclass(frozen=True)
@@ -40,6 +54,9 @@ class PhotoGridModel(QAbstractListModel):
     CaptureDateRole = Qt.ItemDataRole.UserRole + 2
     FilePathRole = Qt.ItemDataRole.UserRole + 3
     FlagRole = Qt.ItemDataRole.UserRole + 4
+    MediaKindRole = Qt.ItemDataRole.UserRole + 5
+    # True when a same-stem RAW sits next to the file (the RAW itself is hidden)
+    HasRawRole = Qt.ItemDataRole.UserRole + 6
 
     tileRequested = Signal(int)  # noqa: N815
     loadMoreRequested = Signal()  # noqa: N815
@@ -58,6 +75,8 @@ class PhotoGridModel(QAbstractListModel):
         self._has_more = False
         self._thumbnail_size = thumbnail_size
         self._tile_size = tile_size
+        # Lowercased file names per folder, to spot Live Photo MOVs and RAWs
+        self._folder_names: dict[str, frozenset[str]] = {}
 
     def rowCount(  # noqa: N802
         self,
@@ -89,6 +108,10 @@ class PhotoGridModel(QAbstractListModel):
             return role_values[role]
         if role == Qt.ItemDataRole.DecorationRole:
             return self._resolve_decoration(item)
+        if role == self.MediaKindRole:
+            return self._media_kind(item.file_path)
+        if role == self.HasRawRole:
+            return self._has_raw_sibling(item.file_path)
         return None
 
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
@@ -102,6 +125,7 @@ class PhotoGridModel(QAbstractListModel):
         self._items.clear()
         self._tiles.clear()
         self._pending_tiles.clear()
+        self._folder_names.clear()
         self._has_more = False
         self.endResetModel()
 
@@ -199,6 +223,34 @@ class PhotoGridModel(QAbstractListModel):
         x = col * self._thumbnail_size[0]
         y = line * self._thumbnail_size[1]
         return tile.copy(QRect(x, y, self._thumbnail_size[0], self._thumbnail_size[1]))
+
+    def _media_kind(self, file_path: str) -> MediaKind:
+        path = Path(file_path)
+        if path.suffix.lower() in _VIDEO_SUFFIXES:
+            return MediaKind.VIDEO
+        if f"{path.stem.lower()}.mov" in self._sibling_names(path):
+            return MediaKind.LIVE
+        return MediaKind.STILL
+
+    def _has_raw_sibling(self, file_path: str) -> bool:
+        path = Path(file_path)
+        if path.suffix.lower() not in {".jpg", ".jpeg"}:
+            return False
+        names = self._sibling_names(path)
+        stem = path.stem.lower()
+        return any(f"{stem}{suffix}" in names for suffix in RAW_SUFFIXES)
+
+    def _sibling_names(self, path: Path) -> frozenset[str]:
+        """Lowercased names in the file's folder, listed once per folder."""
+        folder = str(path.parent)
+        names = self._folder_names.get(folder)
+        if names is None:
+            try:
+                names = frozenset(p.name.lower() for p in path.parent.iterdir())
+            except OSError:
+                names = frozenset()
+            self._folder_names[folder] = names
+        return names
 
     def _format_capture_date(self, value: datetime | None) -> str:
         if value is None:

@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, override
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QContextMenuEvent,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from photo_app.app.image_loading import load_oriented_pixmap
 from photo_app.app.workers.face_crop_worker import FaceCropWorker
+from photo_app.app.workers.runner import start_worker
 
 if TYPE_CHECKING:
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
@@ -271,7 +272,7 @@ class PersonCardWidget(QWidget):
         self._face_crop_loading = True
         worker = FaceCropWorker(Path(self.stack.cover_image_path), bbox)
         worker.signals.result_ready.connect(self._on_face_crop_ready)
-        QThreadPool.globalInstance().start(worker)
+        start_worker(worker)
 
     def _on_face_crop_ready(self, png_bytes: bytes | None) -> None:
         self._face_crop_loading = False

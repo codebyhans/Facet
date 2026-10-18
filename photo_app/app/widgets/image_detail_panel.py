@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from photo_app.app.widgets.face_detection_widget import FaceDetectionWidget
 from photo_app.app.widgets.face_naming import suggestion_provider_for
 from photo_app.app.workers.detail_image_worker import DetailImageWorker
+from photo_app.app.workers.runner import start_worker
 
 if TYPE_CHECKING:
     from photo_app.app.models.photo_grid_model import PhotoGridItem
@@ -74,7 +75,6 @@ class ImageDetailPanel(QWidget):
         self._current_faces: list[FaceReviewItem] = []
         self._thread_pool = QThreadPool.globalInstance()
         self._request_epoch = 0
-        self._active_detail_worker: DetailImageWorker | None = None
         self._faces_dirty = False
 
         # Image display using FaceDetectionWidget
@@ -312,8 +312,7 @@ class ImageDetailPanel(QWidget):
             item.file_path, self._face_review_service, self._request_epoch
         )
         worker.signals.result_ready.connect(self._on_detail_image_ready)
-        self._active_detail_worker = worker  # keep alive until it finishes
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
         # Update navigation buttons
         self._prev_btn.setEnabled(self._current_index > 0)

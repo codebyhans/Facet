@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from photo_app.app.widgets.face_detection_widget import FaceDetectionWidget
 from photo_app.app.workers.image_inspect_worker import ImageInspectWorker
+from photo_app.app.workers.runner import start_worker
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -46,7 +47,6 @@ class ClusterImageInspectorWidget(QWidget):
         self._faces: list[FaceReviewItem] = []
         self._thread_pool = QThreadPool.globalInstance()
         self._request_epoch = 0
-        self._active_inspect_worker: ImageInspectWorker | None = None
         self._faces_dirty = False
 
         # Face detection widget
@@ -135,8 +135,7 @@ class ClusterImageInspectorWidget(QWidget):
             file_path, (viewport_width, viewport_height), self._request_epoch
         )
         worker.signals.result_ready.connect(self._on_inspect_result)
-        self._active_inspect_worker = worker  # keep alive until it finishes
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _on_inspect_result(
         self, file_path: str, png_bytes: bytes | None, scale: float, request_id: int

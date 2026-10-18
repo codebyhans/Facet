@@ -30,6 +30,7 @@ class ExcludedFacesWorkerSignals(QObject):
     # items, thumbnail_pngs (face_id -> bytes), total_found, request_id.
     result_ready = Signal(object, object, int, int)
     error = Signal(str)
+    finished = Signal()  # always emitted when run() exits
 
 
 class ExcludedFacesWorker(QRunnable):
@@ -66,6 +67,8 @@ class ExcludedFacesWorker(QRunnable):
             )
         except Exception as e:  # noqa: BLE001
             self.signals.error.emit(str(e))
+        finally:
+            self.signals.finished.emit()
 
     def _render_thumbnails(self, items: list[ExcludedFaceItem]) -> dict[int, bytes]:
         if not items:

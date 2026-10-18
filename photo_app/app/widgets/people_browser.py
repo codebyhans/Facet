@@ -35,6 +35,7 @@ from photo_app.app.widgets.person_card_widget import (
     PersonCardWidget,
 )
 from photo_app.app.workers.person_gallery_worker import PersonGalleryWorker
+from photo_app.app.workers.runner import start_worker
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -117,7 +118,6 @@ class PeopleBrowser(QWidget):
         self._selected_person_ids: set[int] = set()
         self._thread_pool = QThreadPool.globalInstance()
         self._gallery_request_epoch = 0
-        self._active_gallery_worker: PersonGalleryWorker | None = None
 
         self._setup_ui()
 
@@ -632,8 +632,7 @@ class PeopleBrowser(QWidget):
         worker.signals.error.connect(
             lambda msg: LOGGER.warning("Failed to load person gallery: %s", msg)
         )
-        self._active_gallery_worker = worker  # keep alive until it finishes
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _on_gallery_ready(
         self,

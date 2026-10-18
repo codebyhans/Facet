@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_app.app.workers.indexing_worker import IndexWorker
+from photo_app.app.workers.runner import start_worker
 
 if TYPE_CHECKING:
     from photo_app.domain.models import Image
@@ -68,6 +69,7 @@ _PRIMARY_BTN_STYLE = """
 
 
 _KB = 1024
+_WARN_LIST_MAX = 10  # files listed by name in the collection warning
 
 
 def _load_thumbnail(file_path: str, size: int = _THUMB_SIZE) -> QPixmap | None:
@@ -209,6 +211,8 @@ class _GroupWidget(QFrame):
             "color: #777777; font-size: 10px; background: transparent; border: none;"
         )
         info_vl.addWidget(meta_lbl)
+
+        self._add_collection_label(info_vl, image)
         hl.addLayout(info_vl)
 
         # Keep radio
@@ -222,6 +226,16 @@ class _GroupWidget(QFrame):
 
         return row
 
+    def _add_collection_label(self, layout: QVBoxLayout, image: Image) -> None:
+        names = self._group.collections.get(image.id or -1)
+        if not names:
+            return
+        label = QLabel("In collection: " + ", ".join(names))
+        label.setStyleSheet(
+            "color: #e0a030; font-size: 10px; background: transparent; border: none;"
+        )
+        layout.addWidget(label)
+
     def connect_changed(self, slot: object) -> None:
         for btn in self._btn_group.buttons():
             btn.toggled.connect(slot)
@@ -230,6 +244,15 @@ class _GroupWidget(QFrame):
         btn = self._btn_group.button(self._group.suggested_keeper_id)
         if btn:
             btn.setChecked(True)
+
+    def get_trashed_collection_members(self) -> list[tuple[Image, list[str]]]:
+        """Images marked for trash that belong to a collection, with its names."""
+        trash_ids = set(self.get_trash_ids())
+        return [
+            (img, self._group.collections[img.id])
+            for img in self._group.images
+            if img.id in trash_ids and img.id in self._group.collections
+        ]
 
     def get_trash_ids(self) -> list[int]:
         keeper = self._btn_group.checkedId()
@@ -254,7 +277,6 @@ class DuplicateReviewDialog(QDialog):
         self._service = service
         self._thread_pool = thread_pool
         self._group_widgets: list[_GroupWidget] = []
-        self._active_worker: IndexWorker | None = None
 
         self.setWindowTitle("Find Duplicates")
         self.setMinimumSize(720, 560)
@@ -434,7 +456,8 @@ class DuplicateReviewDialog(QDialog):
         reset_btn.setFixedHeight(32)
         reset_btn.setToolTip(
             "Reset all groups to the auto-suggested keeper\n"
-            "(prefers favorites, then highest rating, then earliest)"
+            "(prefers collection members, then favorites,\n"
+            "then highest rating, then earliest)"
         )
         reset_btn.clicked.connect(self._reset_to_suggested)
         hl.addWidget(reset_btn)
@@ -478,11 +501,9 @@ class DuplicateReviewDialog(QDialog):
         worker.signals.progress_detailed.connect(on_progress)
         worker.signals.result_ready.connect(self._on_scan_done)
         worker.signals.error.connect(self._on_scan_error)
-        self._active_worker = worker
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _on_scan_done(self, result: object) -> None:
-        self._active_worker = None
         self._scan_btn.setEnabled(True)
         self._progress_bar.setVisible(False)
         self._scan_status.setVisible(False)
@@ -510,7 +531,6 @@ class DuplicateReviewDialog(QDialog):
         self._refresh_move_btn()
 
     def _on_scan_error(self, msg: str) -> None:
-        self._active_worker = None
         self._scan_btn.setEnabled(True)
         self._progress_bar.setVisible(False)
         self._scan_status.setVisible(False)
@@ -566,6 +586,45 @@ class DuplicateReviewDialog(QDialog):
         if folder:
             self._trash_dir_edit.setText(folder)
 
+    def _confirm_trash(self, trash_ids: list[int], trash_dir: Path) -> bool:
+        message = (
+            f"Move {len(trash_ids)} file(s) to:\n\n{trash_dir}\n\n"
+            "Files will not be permanently deleted — "
+            "you can restore them from that folder."
+        )
+        members = [
+            member
+            for w in self._group_widgets
+            for member in w.get_trashed_collection_members()
+        ]
+        if not members:
+            reply = QMessageBox.question(
+                self,
+                "Move to Trash",
+                message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            return reply == QMessageBox.StandardButton.Yes
+
+        lines = [
+            f"  • {Path(img.file_path).name} — {', '.join(names)}"
+            for img, names in members[:_WARN_LIST_MAX]
+        ]
+        if len(members) > _WARN_LIST_MAX:
+            lines.append(f"  … and {len(members) - _WARN_LIST_MAX} more")
+        reply = QMessageBox.warning(
+            self,
+            "Collection Photos Will Be Removed",
+            f"{len(members)} of the files to trash belong to a collection and "
+            "will be removed from it:\n\n"
+            + "\n".join(lines)
+            + "\n\nThe copy you keep is not added to those collections.\n\n"
+            + message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
     def _move_to_trash(self) -> None:
         trash_ids: list[int] = []
         for w in self._group_widgets:
@@ -575,16 +634,7 @@ class DuplicateReviewDialog(QDialog):
             return
 
         trash_dir = Path(self._trash_dir_edit.text().strip())
-
-        reply = QMessageBox.question(
-            self,
-            "Move to Trash",
-            f"Move {len(trash_ids)} file(s) to:\n\n{trash_dir}\n\n"
-            "Files will not be permanently deleted — "
-            "you can restore them from that folder.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not self._confirm_trash(trash_ids, trash_dir):
             return
 
         self._move_btn.setEnabled(False)
@@ -611,4 +661,4 @@ class DuplicateReviewDialog(QDialog):
 
         worker.signals.result_ready.connect(on_done)
         worker.signals.error.connect(on_err)
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)

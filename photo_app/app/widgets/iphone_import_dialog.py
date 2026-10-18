@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from photo_app.app.widgets.import_dialog import ImportProgressWidget
 from photo_app.app.workers.iphone_import_worker import IPhoneImportWorker
+from photo_app.app.workers.runner import start_worker
 from photo_app.services.iphone_import_service import (
     IPhoneDevice,
     IPhoneImportService,
@@ -56,7 +57,6 @@ class IPhoneImportDialog(QDialog):
         self._default_dest_path = default_dest_path
         self._thread_pool: QThreadPool | None = None
         self._is_running = False
-        self._active_worker: IPhoneImportWorker | None = None
         self._devices: list[IPhoneDevice] = []
         self._import_service = IPhoneImportService()
         self._last_summary: IPhoneImportSummary | None = None
@@ -247,10 +247,9 @@ class IPhoneImportDialog(QDialog):
         self._summary_widget.hide()
         self._close_btn.setEnabled(False)
         self._is_running = True
-        self._active_worker = worker
 
         if self._thread_pool is not None:
-            self._thread_pool.start(worker)
+            start_worker(worker, self._thread_pool, done=worker.signals.done)
 
     def files_copied(self) -> int:
         """Return number of files copied in the last import, or 0 if none ran."""
@@ -271,7 +270,6 @@ class IPhoneImportDialog(QDialog):
     def _on_import_done(self) -> None:
         self._close_btn.setEnabled(True)
         self._is_running = False
-        self._active_worker = None
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "Error", message)

@@ -21,6 +21,7 @@ class PersonGalleryWorkerSignals(QObject):
     # other workers in this codebase (e.g. PeopleListWorkerSignals).
     result_ready = Signal(object, object, object, object, int)
     error = Signal(str)
+    finished = Signal()  # always emitted when run() exits
 
 
 class PersonGalleryWorker(QRunnable):
@@ -77,3 +78,5 @@ class PersonGalleryWorker(QRunnable):
             )
         except Exception as e:  # noqa: BLE001
             self.signals.error.emit(str(e))
+        finally:
+            self.signals.finished.emit()

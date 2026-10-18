@@ -9,6 +9,7 @@ from PySide6.QtGui import QPixmap
 
 from photo_app.app.models.photo_grid_model import PhotoGridItem
 from photo_app.app.workers.album_worker import AlbumQueryWorker
+from photo_app.app.workers.runner import start_worker
 from photo_app.app.workers.tile_build_worker import TileBuildWorker
 
 if TYPE_CHECKING:
@@ -39,6 +40,8 @@ class GalleryViewModel(QObject):
     tile_building_finished = Signal()
     # Emitted on each album/library load: whether the Dated/Undated tabs apply
     date_tabs_available = Signal(bool)
+    # Capture dates (datetime | None) of every image in the view, in grid order
+    timeline_ready = Signal(list)
 
     def __init__(
         self,
@@ -65,9 +68,10 @@ class GalleryViewModel(QObject):
         self._thread_pool = QThreadPool.globalInstance()
         self._tile_building = False
         self._active_operations = 0  # Track concurrent operations
-        # Strong references to prevent GC while workers are running
+        # Running tile build, guards against starting a second concurrent one
         self._active_tile_worker: TileBuildWorker | None = None
-        self._active_page_worker: AlbumQueryWorker | None = None
+        # Keep loading pages until this row is in the model (timeline jumps)
+        self._load_target_row: int | None = None
 
         # Operation queue management
         self._operation_queue: list[int] = []  # Queue of pending operations
@@ -223,6 +227,44 @@ class GalleryViewModel(QObject):
             return
         self._load_page(append=True)
 
+    def load_through(self, row: int) -> None:
+        """Load pages until `row` is in the model, in as few queries as possible."""
+        if self._load_target_row is None or row > self._load_target_row:
+            self._load_target_row = row
+        self._continue_load_through()
+
+    def _continue_load_through(self) -> None:
+        target = self._load_target_row
+        if target is None or self._loading_page:
+            return
+        if not self._has_more or self._offset > target:
+            self._load_target_row = None
+            return
+        # One page of slack past the target so the jump lands mid-content
+        self._load_page(append=True, limit=target - self._offset + 1 + self._page_size)
+
+    def _load_timeline(self) -> None:
+        """Fetch the capture dates of the whole view for the timeline ruler."""
+        album_id = None if self._library_mode else self._current_album_id
+        if not self._library_mode and album_id is None:
+            return
+        worker = AlbumQueryWorker(
+            self._album_view_model.resolve_view_capture_dates,
+            album_id,
+            query_definition=self._effective_query(),
+        )
+        current_epoch = self._epoch
+
+        def on_result(dates: object) -> None:
+            if current_epoch == self._epoch:
+                self.timeline_ready.emit(list(cast("list[object]", dates)))
+
+        worker.signals.result_ready.connect(on_result)
+        worker.signals.error.connect(
+            lambda message: logger.warning("Timeline query failed: %s", message)
+        )
+        start_worker(worker, self._thread_pool)
+
     def request_tile(self, tile_index: int) -> None:
         """Load one tile pixmap directly (fast I/O, safe on main thread)."""
         try:
@@ -260,7 +302,7 @@ class GalleryViewModel(QObject):
 
         worker.signals.finished.connect(on_tile_build_finished)
         self._active_tile_worker = worker
-        self._thread_pool.start(worker)
+        start_worker(worker, self._thread_pool)
 
     def _on_tile_build_result(self, result: object) -> None:
         built_images = int(getattr(result, "images_built", 0))
@@ -284,18 +326,20 @@ class GalleryViewModel(QObject):
             )
         self._tile_building = False
         self.tile_building_finished.emit()
-        self._offset = (
-            0  # Reload from the start so the tile-refresh replaces page 1, not page 2+
-        )
-        self._load_page(append=False)
+        # Reload from the start so the tile-refresh replaces page 1, not page 2+,
+        # but keep as many rows as were loaded (e.g. after a timeline jump)
+        loaded = self._offset
+        self._offset = 0
+        self._load_page(append=False, limit=max(self._page_size, loaded))
 
-    def _load_page(self, *, append: bool) -> None:
+    def _load_page(self, *, append: bool, limit: int | None = None) -> None:
+        limit = limit or self._page_size
         self._loading_page = True
         if self._library_mode:
             worker = AlbumQueryWorker(
                 self._album_view_model.resolve_library_images,
                 offset=self._offset,
-                limit=self._page_size,
+                limit=limit,
                 query_definition=self._effective_query(),
             )
         else:
@@ -307,7 +351,7 @@ class GalleryViewModel(QObject):
                 self._album_view_model.resolve_album_images,
                 album_id,
                 offset=self._offset,
-                limit=self._page_size,
+                limit=limit,
                 query_definition=self._effective_query(),
             )
 
@@ -319,21 +363,20 @@ class GalleryViewModel(QObject):
                 cast("AlbumPage", page),
                 append=append,
                 epoch=current_epoch,
+                limit=limit,
             )
 
-        def on_page_finished() -> None:  # ADD THIS
-            self._active_page_worker = None  # release reference when done
+        def on_page_finished() -> None:
             self._on_page_finished(epoch=current_epoch)
 
         worker.signals.result_ready.connect(on_page_result)
         worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(
-            on_page_finished
-        )  # CHANGE THIS (was self._on_page_finished)
-        self._active_page_worker = worker  # keep alive until finished
-        self._thread_pool.start(worker)
+        worker.signals.finished.connect(on_page_finished)
+        start_worker(worker, self._thread_pool)
 
-    def _on_page_result(self, page: AlbumPage, *, append: bool, epoch: int) -> None:
+    def _on_page_result(
+        self, page: AlbumPage, *, append: bool, epoch: int, limit: int
+    ) -> None:
         # Check for stale result - if epoch doesn't match current, discard
         if epoch != self._epoch:
             return
@@ -376,7 +419,7 @@ class GalleryViewModel(QObject):
             )
 
         self._offset += len(items)
-        self._has_more = len(items) >= self._page_size
+        self._has_more = len(items) >= limit
         self.page_ready.emit(items, append)
         # Update status with more specific information
         action = "Appended" if append else "Loaded"
@@ -388,6 +431,7 @@ class GalleryViewModel(QObject):
         self._loading_page = False
         self._current_operation_id = None
         self.loading_finished.emit()
+        self._continue_load_through()
 
     def _on_error(self, message: str) -> None:
         self._loading_page = False
@@ -453,12 +497,14 @@ class GalleryViewModel(QObject):
         # Reset pagination state for new operation
         self._offset = 0
         self._has_more = True
+        self._load_target_row = None
 
         try:
             if (
                 operation_type == "album" and album_id is not None
             ) or operation_type == "library":
                 self._ensure_tiles_then_load()
+                self._load_timeline()
         except Exception as exc:
             logger.exception("Operation %s failed", operation_id)
             self._on_error(f"Failed to load {operation_type}: {exc}")
@@ -480,8 +526,8 @@ class GalleryViewModel(QObject):
             if self._loading_page:
                 self._loading_page = False
             # Do NOT null _active_tile_worker here — let the worker's finished
-            # handler release it so the guard above stays effective.
-            self._active_page_worker = None  # release GC reference
+            # handler release it so the guard above stays effective. Stale
+            # page results are dropped by the epoch check.
             self._current_operation_id = None
 
     def _on_flag_changed(self, _index: object, _flag_value: str | None) -> None:

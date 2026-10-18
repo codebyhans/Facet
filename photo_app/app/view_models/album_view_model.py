@@ -11,6 +11,7 @@ from photo_app.domain.services import album_query_to_dict
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import datetime
     from pathlib import Path
 
     from photo_app.domain.models import Album, Person
@@ -171,6 +172,15 @@ class AlbumViewModel(QObject):
         return self._album_service.list_library_images(
             offset=offset, limit=limit, query_definition=query_definition
         )
+
+    def resolve_view_capture_dates(
+        self,
+        album_id: int | None,
+        *,
+        query_definition: dict[str, object] | None = None,
+    ) -> list[datetime | None]:
+        """Fetch capture dates for a whole album (or the library when None)."""
+        return self._album_service.list_view_capture_dates(album_id, query_definition)
 
     def count_album_images(self, album_id: int) -> int | None:
         """Return the album's image count, or None if it could not be computed."""

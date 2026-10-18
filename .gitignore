@@ -30,7 +30,7 @@ photo_app_data*/
 
 # === User config / settings ===
 # Contains window state, last-opened album, album tree — machine-specific
-config/settings.json
+config/settings*.json
 
 # === Demo / personal photos ===
 demo_images/
