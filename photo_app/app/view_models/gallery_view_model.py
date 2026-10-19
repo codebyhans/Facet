@@ -90,6 +90,10 @@ class GalleryViewModel(QObject):
 
         # Stale result protection
         self._epoch = 0  # Increment on each new album/library selection
+        # Increment on each page request: only the newest one may touch the
+        # model, so overlapping loads (e.g. a tile-refresh reload racing the
+        # first page) can't double-count the offset and skip rows
+        self._page_request = 0
 
         # Filter state management
         self._filter_query_definition: dict[str, object] | None = None
@@ -153,10 +157,7 @@ class GalleryViewModel(QObject):
 
     def select_collection(self, collection_id: int) -> None:
         """Show one collection, keeping the active filter-bar query."""
-        self.select_library(
-            query_definition=self._filter_query_definition,
-            collection_id=collection_id,
-        )
+        self.select_library(collection_id=collection_id)
 
     def get_current_collection_id(self) -> int | None:
         """Return the collection currently shown, if the view is scoped to one."""
@@ -164,18 +165,10 @@ class GalleryViewModel(QObject):
 
     def update_filter_query(self, query_definition: dict[str, object] | None) -> None:
         """Update the current filter query and reload the current view."""
+        # Kept apart from the album's own query so it survives album switches
+        # and a cleared filter really drops out (see _effective_query)
         self._filter_query_definition = query_definition
-        # Combine filter with current album query if we're in album mode
-        combined_query = self._combine_queries(
-            self._current_query_definition, query_definition
-        )
-        if self._library_mode:
-            self.select_library(
-                query_definition=query_definition,
-                collection_id=self._library_collection_id,
-            )
-        elif self._current_album_id is not None:
-            self.select_album(self._current_album_id, combined_query)
+        self.refresh_current()
 
     def set_date_tab(self, *, has_date: bool) -> None:
         """Switch between the Dated (True) and Undated (False) library tabs."""
@@ -186,15 +179,18 @@ class GalleryViewModel(QObject):
             self.refresh_current()
 
     def _effective_query(self) -> dict[str, object] | None:
+        base = self._combine_queries(
+            self._current_query_definition, self._filter_query_definition
+        )
         if self._library_mode and self._library_collection_id is not None:
             return {
-                **(self._current_query_definition or {}),
+                **(base or {}),
                 "collection_ids": [self._library_collection_id],
             }
         if not self._date_tabs_active:
-            return self._current_query_definition
+            return base
         return {
-            **(self._current_query_definition or {}),
+            **(base or {}),
             "has_date": self._date_tab_has_date,
         }
 
@@ -355,19 +351,19 @@ class GalleryViewModel(QObject):
                 query_definition=self._effective_query(),
             )
 
-        # Create a closure that captures the append parameter and current epoch
-        current_epoch = self._epoch
+        self._page_request += 1
+        request = self._page_request
 
         def on_page_result(page: object) -> None:
             self._on_page_result(
                 cast("AlbumPage", page),
                 append=append,
-                epoch=current_epoch,
+                request=request,
                 limit=limit,
             )
 
         def on_page_finished() -> None:
-            self._on_page_finished(epoch=current_epoch)
+            self._on_page_finished(request=request)
 
         worker.signals.result_ready.connect(on_page_result)
         worker.signals.error.connect(self._on_error)
@@ -375,10 +371,10 @@ class GalleryViewModel(QObject):
         start_worker(worker, self._thread_pool)
 
     def _on_page_result(
-        self, page: AlbumPage, *, append: bool, epoch: int, limit: int
+        self, page: AlbumPage, *, append: bool, request: int, limit: int
     ) -> None:
-        # Check for stale result - if epoch doesn't match current, discard
-        if epoch != self._epoch:
+        # Superseded by a newer page request (or a new selection): discard
+        if request != self._page_request:
             return
 
         items: list[PhotoGridItem] = []
@@ -418,15 +414,15 @@ class GalleryViewModel(QObject):
                 )
             )
 
-        self._offset += len(items)
+        self._offset = self._offset + len(items) if append else len(items)
         self._has_more = len(items) >= limit
         self.page_ready.emit(items, append)
         # Update status with more specific information
         action = "Appended" if append else "Loaded"
         self.status.emit(f"{action} {len(items)} photos (total: {self._offset})")
 
-    def _on_page_finished(self, *, epoch: int) -> None:
-        if epoch != self._epoch:
+    def _on_page_finished(self, *, request: int) -> None:
+        if request != self._page_request:
             return
         self._loading_page = False
         self._current_operation_id = None
