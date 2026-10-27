@@ -18,7 +18,14 @@ from PySide6.QtCore import (
     Qt,
     QThreadPool,
 )
-from PySide6.QtGui import QCloseEvent, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QKeySequence,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -65,6 +72,7 @@ from photo_app.app.widgets.slideshow_window import (
     SlideshowWindow,
 )
 from photo_app.app.widgets.timeline_ruler import TimelineRuler
+from photo_app.app.workers.album_worker import AlbumQueryWorker
 from photo_app.app.workers.indexing_worker import IndexWorker
 from photo_app.app.workers.people_list_worker import PeopleListWorker
 from photo_app.app.workers.runner import start_worker
@@ -74,8 +82,11 @@ from photo_app.services.face_index_service import FaceIndexResult
 from photo_app.services.face_review_service import PersonStackSummary
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from photo_app.app.models.photo_grid_model import PhotoGridItem
     from photo_app.domain.models import Collection, Image
+    from photo_app.domain.repositories import ImageRepository
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
     from photo_app.services.album_service import AlbumService
     from photo_app.services.chromecast_service import ChromecastService
@@ -90,6 +101,41 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 WINDOW_SIZE_VALUES = 2
 SPLITTER_SIZE_VALUES = 3
+
+
+def _ids_matching_face_mode(
+    image_repo: ImageRepository, image_ids: list[int], face_mode: str
+) -> set[int]:
+    """Ids whose named-people presence matches face_mode ("with"/"without").
+
+    Photos not face-indexed yet match neither option.
+    """
+    presence = image_repo.named_face_presence(image_ids)
+    wanted = face_mode == "with"
+    return {image_id for image_id in image_ids if presence.get(image_id) is wanted}
+
+
+def _count_slideshow_photos(
+    image_repo: ImageRepository,
+    image_ids: list[int],
+    *,
+    skip_flagged: bool,
+    face_mode: str,
+) -> int:
+    """How many of image_ids a slideshow with these options would show.
+
+    Repository calls only, so it can run on a worker thread.
+    """
+    candidates = [
+        image.id
+        for image in image_repo.list_by_ids(image_ids)
+        if image.id is not None
+        and not is_video_path(image.file_path)
+        and not (skip_flagged and image.flag is not None)
+    ]
+    if face_mode == "all":
+        return len(candidates)
+    return len(_ids_matching_face_mode(image_repo, candidates, face_mode))
 
 
 class CreateFolderDialog(QDialog):
@@ -322,9 +368,11 @@ class MainWindow(QMainWindow):
             }
         """)
         slideshow_menu = QMenu(self._slideshow_options_btn)
-        slideshow_menu.addAction("Start Slideshow\tF5").triggered.connect(
-            self._on_start_slideshow
-        )
+        self._start_slideshow_action = slideshow_menu.addAction("Start Slideshow\tF5")
+        self._start_slideshow_action.triggered.connect(self._on_start_slideshow)
+        # Each opening recounts the photos the current settings would show.
+        slideshow_menu.aboutToShow.connect(self._count_slideshow_photos)
+        self._slideshow_count_request = 0
         slideshow_menu.addSeparator()
         self._seconds_action = slideshow_menu.addAction("")
         self._seconds_action.triggered.connect(self._on_choose_slideshow_seconds)
@@ -359,6 +407,27 @@ class MainWindow(QMainWindow):
         self._skip_flagged_action.toggled.connect(
             self._on_slideshow_skip_flagged_changed
         )
+        # Only faces tagged with a named person count; strangers and
+        # "Not of Interest" faces count as no face.
+        faces_menu = slideshow_menu.addMenu("Named People")
+        faces_group = QActionGroup(faces_menu)
+        saved_face_mode = self._ui_state.get("slideshow_faces", "all")
+        self._face_mode_actions: dict[str, QAction] = {}
+        for mode, label in (
+            ("all", "All Photos"),
+            ("with", "Only Photos With Named People"),
+            ("without", "Only Photos Without Named People"),
+        ):
+            action = faces_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(mode == saved_face_mode)
+            action.setActionGroup(faces_group)
+            action.triggered.connect(
+                lambda _checked=False, m=mode: self._on_slideshow_face_mode_changed(m)
+            )
+            self._face_mode_actions[mode] = action
+        if not faces_group.checkedAction():
+            self._face_mode_actions["all"].setChecked(True)
         self._slideshow_options_btn.setMenu(slideshow_menu)
         self._slideshow: SlideshowWindow | None = None
         # True when the slideshow runs over the album gallery, which can
@@ -2080,13 +2149,17 @@ class MainWindow(QMainWindow):
         start_index = next(
             (i for i, item in enumerate(items) if item.image_id == start_id), 0
         )
-        if self._skip_flagged_action.isChecked():
-            # Begin at the first unflagged photo at or after the start point.
-            start_index = sum(1 for item in items[:start_index] if item.flag is None)
-            items = [item for item in items if item.flag is None]
+        filtered = self._filter_slideshow_items(items)
+        if len(filtered) != len(items):
+            # Begin at the first remaining photo at or after the start point.
+            kept_ids = {item.image_id for item in filtered}
+            start_index = sum(
+                1 for item in items[:start_index] if item.image_id in kept_ids
+            )
+            items = filtered
             if not items:
                 self.statusBar().showMessage(
-                    "Every photo in this view is already flagged."
+                    "No photos in this view match the slideshow options."
                 )
                 return
         slideshow = SlideshowWindow(
@@ -2177,11 +2250,9 @@ class MainWindow(QMainWindow):
             and self._slideshow_from_gallery
             and not self._newest_first_action.isChecked()
         ):
-            new_items = self._slideshow_items(items)
-            if self._skip_flagged_action.isChecked():
-                new_items = [item for item in new_items if item.flag is None]
+            new_items = self._filter_slideshow_items(self._slideshow_items(items))
             if not new_items:
-                # A page of only flagged photos: keep looking further on.
+                # Nothing on this page matches the options: keep looking.
                 self._album_gallery_vm.load_next_page()
                 return
             self._slideshow.append_items(new_items)
@@ -2232,6 +2303,91 @@ class MainWindow(QMainWindow):
     def _on_slideshow_seconds_changed(self, seconds: int) -> None:
         self._ui_state["slideshow_seconds"] = seconds
         self._update_seconds_action()
+
+    def _filter_slideshow_items(
+        self, items: list[SlideshowItem]
+    ) -> list[SlideshowItem]:
+        """Apply the slideshow menu's flag and face options."""
+        if self._skip_flagged_action.isChecked():
+            items = [item for item in items if item.flag is None]
+        mode = self._slideshow_face_mode()
+        image_repo = self._album_vm.get_image_repository()
+        if mode == "all" or not items or image_repo is None:
+            return items
+        try:
+            keep = _ids_matching_face_mode(
+                image_repo, [item.image_id for item in items], mode
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Failed to check faces: {exc}")
+            return items
+        return [item for item in items if item.image_id in keep]
+
+    def _slideshow_face_mode(self) -> str:
+        return next(
+            (m for m, a in self._face_mode_actions.items() if a.isChecked()), "all"
+        )
+
+    def _count_slideshow_photos(self) -> None:
+        """Show on the menu how many photos the current settings would show.
+
+        Counts the whole view (not just the pages loaded into the grid) on
+        a worker thread, since that can mean loading every image record.
+        """
+        self._slideshow_count_request += 1
+        request = self._slideshow_count_request
+        image_repo = self._album_vm.get_image_repository()
+        resolve_ids: Callable[[], list[int]] | None
+        if self._mode_stack.currentIndex() == 1:
+            source = self._people_browser.slideshow_source()
+            person_ids = [image_id for image_id, _ in source[0]] if source else None
+            resolve_ids = None if person_ids is None else lambda: person_ids
+        else:
+            resolve_ids = self._album_gallery_vm.view_image_ids_resolver()
+        if resolve_ids is None or image_repo is None:
+            self._set_start_slideshow_count(None)
+            return
+
+        self._start_slideshow_action.setText("Start Slideshow — counting…\tF5")
+        skip_flagged = self._skip_flagged_action.isChecked()
+        face_mode = self._slideshow_face_mode()
+        worker = AlbumQueryWorker(
+            lambda: _count_slideshow_photos(
+                image_repo,
+                resolve_ids(),
+                skip_flagged=skip_flagged,
+                face_mode=face_mode,
+            )
+        )
+
+        def on_result(count: object) -> None:
+            if request == self._slideshow_count_request:
+                self._set_start_slideshow_count(
+                    count if isinstance(count, int) else None
+                )
+
+        def on_error(message: str) -> None:
+            LOGGER.warning("Slideshow count failed: %s", message)
+            if request == self._slideshow_count_request:
+                self._set_start_slideshow_count(None)
+
+        worker.signals.result_ready.connect(on_result)
+        worker.signals.error.connect(on_error)
+        start_worker(worker, self._thread_pool)
+
+    def _set_start_slideshow_count(self, count: int | None) -> None:
+        if count is None:
+            text = "Start Slideshow"
+        elif count == 0:
+            text = "Start Slideshow — no matching photos"
+        else:
+            text = f"Start Slideshow — {count:,} photo{'s' if count != 1 else ''}"
+        self._start_slideshow_action.setText(f"{text}\tF5")
+
+    def _on_slideshow_face_mode_changed(self, mode: str) -> None:
+        self._ui_state["slideshow_faces"] = mode
+        if self._slideshow is None:
+            self._save_ui_state()
 
     def _on_slideshow_skip_flagged_changed(self, enabled: bool) -> None:  # noqa: FBT001
         self._ui_state["slideshow_skip_flagged"] = enabled

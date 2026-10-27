@@ -94,6 +94,9 @@ class ImageRepository(Protocol):
     def update_flag(self, image_id: int, flag: str | None) -> None:
         """Update the flag for an image."""
 
+    def named_face_presence(self, image_ids: Sequence[int]) -> dict[int, bool | None]:
+        """Per image: shows a named person, or None if not face-indexed yet."""
+
     def list_all_paths(self) -> list[str]:
         """Return all indexed file paths in a single query."""
 

@@ -13,6 +13,8 @@ from photo_app.app.workers.runner import start_worker
 from photo_app.app.workers.tile_build_worker import TileBuildWorker
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from photo_app.app.view_models.album_view_model import AlbumViewModel
     from photo_app.infrastructure.thumbnail_tiles import ThumbnailTileStore
     from photo_app.services.album_service import AlbumPage
@@ -229,6 +231,20 @@ class GalleryViewModel(QObject):
     def has_more(self) -> bool:
         """True while the view has photos not loaded into the grid yet."""
         return self._has_more
+
+    def view_image_ids_resolver(self) -> Callable[[], list[int]] | None:
+        """A call fetching every image id in the current view, in grid order.
+
+        Binds the view as it is now, so it is safe to run on a worker thread.
+        None when no view is selected.
+        """
+        album_id = None if self._library_mode else self._current_album_id
+        if not self._library_mode and album_id is None:
+            return None
+        query_definition = self._effective_query()
+        return lambda: self._album_view_model.resolve_view_image_ids(
+            album_id, query_definition=query_definition
+        )
 
     def load_all(self) -> None:
         """Load the rest of the view in one query (e.g. to show it newest first)."""

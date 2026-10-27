@@ -182,6 +182,15 @@ class AlbumViewModel(QObject):
         """Fetch capture dates for a whole album (or the library when None)."""
         return self._album_service.list_view_capture_dates(album_id, query_definition)
 
+    def resolve_view_image_ids(
+        self,
+        album_id: int | None,
+        *,
+        query_definition: dict[str, object] | None = None,
+    ) -> list[int]:
+        """Fetch image ids for a whole album (or the library when None)."""
+        return self._album_service.list_view_image_ids(album_id, query_definition)
+
     def count_album_images(self, album_id: int) -> int | None:
         """Return the album's image count, or None if it could not be computed."""
         try:

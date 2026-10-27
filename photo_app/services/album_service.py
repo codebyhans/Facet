@@ -199,6 +199,25 @@ class AlbumService:
             album.query_definition, narrow_by=narrow_by
         )
 
+    def list_view_image_ids(
+        self,
+        album_id: int | None,
+        query_definition: dict[str, object] | None = None,
+    ) -> list[int]:
+        """Ids of every image in one album/library view, in grid order.
+
+        Same view resolution as list_view_capture_dates.
+        """
+        narrow_by = parse_album_query(query_definition) if query_definition else None
+        if album_id is None:
+            return self._image_repository.list_ids_by_filters(narrow_by or AlbumQuery())
+        album = self._album_repository.get(album_id)
+        if album is None:
+            return []
+        return self._image_repository.list_ids_by_filters(
+            album.query_definition, narrow_by=narrow_by
+        )
+
     def get_image_repository(self) -> ImageRepository:
         """Get the image repository for accessing image data."""
         return self._image_repository

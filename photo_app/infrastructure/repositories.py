@@ -461,6 +461,37 @@ class SqlAlchemyImageRepository:
                 row.flag = flag
                 session.commit()
 
+    def named_face_presence(self, image_ids: Sequence[int]) -> dict[int, bool | None]:
+        """Per image: shows a named person, or None if not face-indexed yet.
+
+        A face counts only when it is tagged with a person that has a name
+        and is not excluded ("Not of Interest" / removed). Unnamed faces —
+        strangers, unreviewed clusters — count as no face. Uses the face
+        rows rather than `face_count`, which is only set at indexing time.
+        """
+        result: dict[int, bool | None] = {}
+        with Session(self._engine) as session:
+            for chunk in _chunked(image_ids):
+                has_face = (
+                    exists()
+                    .where(
+                        FaceModel.image_id == ImageModel.id,
+                        FaceModel.excluded.is_(False),
+                        FaceModel.person_id == PersonModel.id,
+                        PersonModel.name.is_not(None),
+                        func.trim(PersonModel.name) != "",
+                    )
+                    .label("has_face")
+                )
+                stmt = select(ImageModel.id, ImageModel.face_count, has_face).where(
+                    ImageModel.id.in_(chunk)
+                )
+                for image_id, face_count, face in session.execute(stmt):
+                    result[image_id] = (
+                        True if face else (None if face_count is None else False)
+                    )
+        return result
+
     def update_face_count(self, image_id: int, count: int) -> None:
         with Session(self._engine) as session:
             stmt = select(ImageModel).where(ImageModel.id == image_id)

@@ -195,3 +195,51 @@ def test_newest_first_reverses_dated_and_keeps_undated_last() -> None:
     grid = [item(1, 2019), item(2, 2020), item(3, 2021), item(4, None), item(5, None)]
     ordered = MainWindow._newest_first(grid)
     assert [i.image_id for i in ordered] == [3, 2, 1, 4, 5]
+
+
+class _FakeImageRepo:
+    def __init__(self, rows: list[tuple[int, str, str | None, bool | None]]) -> None:
+        self._rows = rows  # image_id, file_path, flag, has named face
+
+    def list_by_ids(self, image_ids: list[int]) -> list[object]:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        wanted = set(image_ids)
+        return [
+            SimpleNamespace(id=image_id, file_path=path, flag=flag)
+            for image_id, path, flag, _ in self._rows
+            if image_id in wanted
+        ]
+
+    def named_face_presence(self, image_ids: list[int]) -> dict[int, bool | None]:
+        wanted = set(image_ids)
+        return {row[0]: row[3] for row in self._rows if row[0] in wanted}
+
+
+def test_count_applies_videos_flags_and_named_people() -> None:
+    from photo_app.app.main_window import _count_slideshow_photos  # noqa: PLC0415
+
+    repo = _FakeImageRepo(
+        [
+            (1, "a.jpg", None, True),
+            (2, "b.jpg", "keep", True),
+            (3, "c.jpg", None, False),
+            (4, "d.mov", None, None),  # video: never shown
+            (5, "e.jpg", None, None),  # not face-indexed yet
+        ]
+    )
+    ids = [1, 2, 3, 4, 5]
+
+    def count(*, skip_flagged: bool, face_mode: str) -> int:
+        return _count_slideshow_photos(
+            repo,  # type: ignore[arg-type]
+            ids,
+            skip_flagged=skip_flagged,
+            face_mode=face_mode,
+        )
+
+    assert count(skip_flagged=False, face_mode="all") == 4  # noqa: PLR2004
+    assert count(skip_flagged=True, face_mode="all") == 3  # noqa: PLR2004
+    assert count(skip_flagged=False, face_mode="with") == 2  # noqa: PLR2004
+    assert count(skip_flagged=True, face_mode="with") == 1
+    assert count(skip_flagged=False, face_mode="without") == 1
