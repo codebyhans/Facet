@@ -55,7 +55,6 @@ from photo_app.app.widgets.iphone_import_dialog import IPhoneImportDialog
 from photo_app.app.widgets.metadata_editor import MetadataEditorPanel
 from photo_app.app.widgets.people_browser import PeopleBrowser
 from photo_app.app.widgets.photo_grid import PhotoGridWidget
-from photo_app.app.widgets.photo_viewer import PhotoViewerWidget
 from photo_app.app.widgets.timeline_ruler import TimelineRuler
 from photo_app.app.workers.indexing_worker import IndexWorker
 from photo_app.app.workers.people_list_worker import PeopleListWorker
@@ -359,7 +358,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._mode_stack)  # Use mode stack instead of direct splitter
         self.setCentralWidget(root)
 
-        self._current_viewer: PhotoViewerWidget | None = None
         self._wire_signals()
         self._wire_timeline()
         self._wire_grid_selection()
@@ -1461,18 +1459,6 @@ class MainWindow(QMainWindow):
                     self._refresh_people_list()
         except Exception as exc:  # noqa: BLE001
             self._show_error(f"Failed to save threshold setting: {exc}")
-
-    def _open_photo_viewer(self, image_id: int) -> None:
-        """Open photo viewer window for the selected image."""
-        rows = self._album_photo_model.items
-        pairs = [(item.image_id, item.file_path) for item in rows]
-        start_row = 0
-        for idx, item in enumerate(rows):
-            if item.image_id == image_id:
-                start_row = idx
-                break
-        self._current_viewer = PhotoViewerWidget(pairs, start_row, self)
-        self._current_viewer.show()
 
     def _run_image_index(self) -> None:
         root = Path(str(getattr(self._runtime_settings, "photo_root_dir", ".")))

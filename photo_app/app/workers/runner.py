@@ -27,17 +27,19 @@ def start_worker(
     pool: QThreadPool | None = None,
     *,
     done: SignalInstance | None = None,
+    priority: int = 0,
 ) -> None:
     """Run `worker` on `pool`, holding a reference until it has finished.
 
     `done` is the signal the worker always emits when `run()` exits; it
-    defaults to `worker.signals.finished`.
+    defaults to `worker.signals.finished`. Queued workers with a higher
+    `priority` start before lower ones.
     """
     if done is None:
         done = worker.signals.finished  # type: ignore[attr-defined]
     _running.add(worker)
     done.connect(lambda *_: _running.discard(worker))
-    (pool or QThreadPool.globalInstance()).start(worker)
+    (pool or QThreadPool.globalInstance()).start(worker, priority)
 
 
 def running_worker_count() -> int:

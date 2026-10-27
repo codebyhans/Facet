@@ -1,4 +1,4 @@
-"""Background worker for decoding the image-detail panel's full-size image."""
+"""Background worker for decoding the image-detail panel's images."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
-from photo_app.app.image_loading import render_oriented_png
+from photo_app.app.image_loading import decode_oriented_image
 
 if TYPE_CHECKING:
     from photo_app.services.face_review_service import (
@@ -19,41 +19,44 @@ if TYPE_CHECKING:
 class DetailImageWorkerSignals(QObject):
     """Signals for the DetailImageWorker."""
 
-    # file_path, png_bytes|None, faces, request_id
-    result_ready = Signal(str, object, object, int)
+    # file_path, DecodedImage|None, faces, full_res, generation
+    result_ready = Signal(str, object, object, bool, int)
     finished = Signal()
 
 
 class DetailImageWorker(QRunnable):
-    """Decode one full-resolution detail-panel image, off the main thread.
+    """Decode one detail-panel image, off the main thread.
 
     `QPixmap(path)` can't decode HEIC at all (and spends real time failing
     to before giving up), and even a successful full-resolution JPEG decode
     is enough to make clicking through the gallery feel like it's freezing —
-    the same reasoning as `ImageInspectWorker`, but this view needs the true
-    full-resolution image (not a size-capped decode) since it supports
-    zooming past "fit". Also fetches this image's faces here, since that was
-    previously a second synchronous DB round-trip on the same UI-thread
-    click path.
+    the same reasoning as `ImageInspectWorker`. Normally decodes to fit
+    `max_size` (the screen), which is all "fit" view needs; `max_size=None`
+    decodes full resolution, for zooming in past that. Used both for the
+    shown image and for prefetching its neighbours. Also fetches this
+    image's faces here, since that was previously a second synchronous DB
+    round-trip on the same UI-thread click path.
     """
 
     def __init__(
         self,
         file_path: str,
         face_review_service: FaceReviewService | None,
-        request_id: int,
+        max_size: tuple[int, int] | None,
+        generation: int,
     ) -> None:
         super().__init__()
         self._file_path = file_path
         self._face_review_service = face_review_service
-        self._request_id = request_id
+        self._max_size = max_size
+        self._generation = generation
         self.signals = DetailImageWorkerSignals()
 
     @Slot()
     def run(self) -> None:
         """Run the worker in a background thread."""
         try:
-            png_bytes = render_oriented_png(Path(self._file_path))
+            decoded = decode_oriented_image(Path(self._file_path), self._max_size)
 
             faces: list[FaceReviewItem] = []
             if self._face_review_service is not None:
@@ -65,7 +68,11 @@ class DetailImageWorker(QRunnable):
                     faces = []
 
             self.signals.result_ready.emit(
-                self._file_path, png_bytes, faces, self._request_id
+                self._file_path,
+                decoded,
+                faces,
+                self._max_size is None,
+                self._generation,
             )
         finally:
             self.signals.finished.emit()

@@ -8,6 +8,7 @@ from PIL import Image as PILImage
 from sqlalchemy import create_engine
 
 from photo_app.app.image_loading import (
+    decode_oriented_image,
     get_or_render_face_highlight_png,
     render_face_highlight_from_tile,
     render_face_highlight_png,
@@ -224,3 +225,42 @@ def test_render_face_highlight_from_tile_places_box_at_correct_scaled_position(
     assert not _has_box_color(pixels[far_x, far_y]), (
         "box color found far from the expected position — scale/offset is wrong"
     )
+
+
+def test_decode_oriented_image_fits_screen_and_reports_source_size(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "large.jpg"
+    PILImage.new("RGB", (3000, 2000), color=(10, 20, 30)).save(
+        image_path, format="JPEG"
+    )
+
+    decoded = decode_oriented_image(image_path, (400, 300))
+    assert decoded is not None
+    assert (decoded.width, decoded.height) == (400, 267)
+    assert (decoded.source_width, decoded.source_height) == (3000, 2000)
+    assert not decoded.has_alpha
+    assert len(decoded.data) == decoded.width * decoded.height * 3
+
+
+def test_decode_oriented_image_without_max_size_keeps_full_resolution(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "large.jpg"
+    PILImage.new("RGB", (3000, 2000), color=(10, 20, 30)).save(
+        image_path, format="JPEG"
+    )
+
+    decoded = decode_oriented_image(image_path)
+    assert decoded is not None
+    assert (decoded.width, decoded.height) == (3000, 2000)
+
+
+def test_decode_oriented_image_keeps_transparency(tmp_path: Path) -> None:
+    image_path = tmp_path / "screenshot.png"
+    PILImage.new("RGBA", (50, 40), color=(10, 20, 30, 0)).save(image_path)
+
+    decoded = decode_oriented_image(image_path, (400, 300))
+    assert decoded is not None
+    assert decoded.has_alpha
+    assert len(decoded.data) == decoded.width * decoded.height * 4

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from PIL import Image
 
 from photo_app.app.image_loading import (
+    decode_oriented_image,
     render_face_highlight_png,
     render_fit_to_size_png,
 )
@@ -131,3 +132,14 @@ def test_render_face_highlight_png_box_lands_on_the_real_marker(
     # And the marker itself should be inside (or touching) the drawn box.
     assert outline_bbox.x <= marker_bbox.x + POSITION_TOLERANCE_PX
     assert outline_bbox.y <= marker_bbox.y + POSITION_TOLERANCE_PX
+
+
+def test_decode_oriented_image_reports_rotated_source_size(tmp_path: Path) -> None:
+    path = tmp_path / "rotated.jpg"
+    _make_rotated_marker_jpeg(path)
+
+    decoded = decode_oriented_image(path, MAX_SIZE)
+    assert decoded is not None
+    # Orientation 6 swaps width and height for display.
+    assert (decoded.source_width, decoded.source_height) == (RAW_HEIGHT, RAW_WIDTH)
+    assert (decoded.width, decoded.height) == (RAW_HEIGHT, RAW_WIDTH)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from PIL import Image, ImageDraw, ImageOps
@@ -58,25 +59,62 @@ def load_oriented_pixmap(path: Path) -> QPixmap:
     return QPixmap(str(path))
 
 
-def render_oriented_png(path: Path) -> bytes | None:
-    """Decode `path` at full resolution with EXIF orientation applied, as PNG bytes.
+@dataclass(frozen=True)
+class DecodedImage:
+    """Raw decoded pixels plus the photo's full (EXIF-corrected) size."""
 
-    PIL-only (no Qt objects), so this is safe to call from a background
-    thread — mirrors `load_oriented_pixmap` but returns encoded bytes
-    instead of constructing a `QPixmap` (which must happen on the main
-    thread). Used by viewers that need true full resolution (e.g. a
-    100%/zoomed-in detail view) rather than a size-capped decode.
+    data: bytes  # tightly packed RGB, or RGBA when has_alpha
+    width: int
+    height: int
+    has_alpha: bool
+    source_width: int
+    source_height: int
+
+
+def decode_oriented_image(
+    path: Path, max_size: tuple[int, int] | None = None
+) -> DecodedImage | None:
+    """Decode `path` with EXIF orientation applied, as raw pixel bytes.
+
+    PIL-only (no Qt objects), so safe to call from a background thread;
+    the caller wraps the bytes in a QImage on the main thread, which is a
+    plain copy — no PNG encode/decode round-trip, which for a large photo
+    cost as much as the decode itself. With `max_size`, the image is
+    scaled down to fit (never up), using draft() so JPEGs decode at a
+    reduced DCT scale instead of full resolution; without it, the full
+    resolution is kept (for zooming in past the screen size).
     """
     try:
-        with Image.open(path) as img:
-            oriented = ImageOps.exif_transpose(img)
-            if oriented.mode not in ("RGB", "RGBA"):
-                oriented = oriented.convert("RGB")
-            buf = io.BytesIO()
-            oriented.save(buf, format="PNG")
-        return buf.getvalue()
+        with Image.open(path) as source:
+            # See render_face_highlight_png: orientation/size must be read
+            # before draft() (which mutates source.size) and before
+            # exif_transpose() (which forces a full decode).
+            orientation = _read_exif_orientation(source)
+            raw_width, raw_height = source.size
+            source_width = _corrected_width(orientation, raw_width, raw_height)
+            source_height = _corrected_width(orientation, raw_height, raw_width)
+            if source_width == 0 or source_height == 0:
+                return None
+            has_alpha = (
+                source.mode in ("RGBA", "LA", "PA") or "transparency" in source.info
+            )
+            if max_size is not None:
+                source.draft("RGB", max_size)
+            oriented = ImageOps.exif_transpose(source).convert(
+                "RGBA" if has_alpha else "RGB"
+            )
+        if max_size is not None:
+            oriented.thumbnail(max_size, Image.Resampling.LANCZOS)
+        return DecodedImage(
+            data=oriented.tobytes(),
+            width=oriented.width,
+            height=oriented.height,
+            has_alpha=has_alpha,
+            source_width=source_width,
+            source_height=source_height,
+        )
     except Exception:
-        LOGGER.exception("Failed to render oriented PNG for %s", path)
+        LOGGER.exception("Failed to decode %s", path)
         return None
 
 

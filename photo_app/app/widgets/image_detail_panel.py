@@ -1,11 +1,13 @@
 """Image detail viewer panel - integrated into main window."""
 
 import logging
+from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QThreadPool, QUrl, Signal
-from PySide6.QtGui import QKeyEvent, QPixmap, QWheelEvent
+from PySide6.QtGui import QImage, QKeyEvent, QPixmap, QWheelEvent
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
@@ -26,6 +28,7 @@ from photo_app.app.workers.detail_image_worker import DetailImageWorker
 from photo_app.app.workers.runner import start_worker
 
 if TYPE_CHECKING:
+    from photo_app.app.image_loading import DecodedImage
     from photo_app.app.models.photo_grid_model import PhotoGridItem
     from photo_app.config.settings import AppSettings
     from photo_app.services.face_review_service import (
@@ -35,6 +38,55 @@ if TYPE_CHECKING:
     from photo_app.services.settings_service import RuntimeSettings
 
 LOGGER = logging.getLogger(__name__)
+
+# Decoded photos kept in memory: the shown one plus prefetched neighbours,
+# and any full-resolution decodes made for zooming in.
+_CACHE_BYTE_BUDGET = 200 * 1024 * 1024
+# Stop queueing prefetches while this many decodes are still in flight
+# (e.g. while holding an arrow key), so they don't pile up.
+_MAX_PENDING_DECODES = 6
+# Fit zoom may exceed the screen-size decode's scale by rounding only.
+_SCALE_TOLERANCE = 1.01
+
+
+@dataclass
+class _CachedImage:
+    """A decoded photo ready to show, plus its faces."""
+
+    pixmap: QPixmap
+    source_width: int
+    source_height: int
+    faces: list[FaceReviewItem]
+
+    @property
+    def scale(self) -> float:
+        """Decoded width relative to the photo's full resolution."""
+        return self.pixmap.width() / self.source_width
+
+    @property
+    def is_full(self) -> bool:
+        return self.pixmap.width() >= self.source_width
+
+    @property
+    def nbytes(self) -> int:
+        return self.pixmap.width() * self.pixmap.height() * 4
+
+
+def _to_pixmap(decoded: DecodedImage) -> QPixmap:
+    channels = 4 if decoded.has_alpha else 3
+    image_format = (
+        QImage.Format.Format_RGBA8888
+        if decoded.has_alpha
+        else QImage.Format.Format_RGB888
+    )
+    image = QImage(
+        decoded.data,
+        decoded.width,
+        decoded.height,
+        decoded.width * channels,
+        image_format,
+    )
+    return QPixmap.fromImage(image)
 
 
 class ImageDetailPanel(QWidget):
@@ -69,12 +121,18 @@ class ImageDetailPanel(QWidget):
         self._zoom = 1.0
         self._zoom_mode = "fit"  # "fit" or "100%"
 
-        # Full-resolution decode of the currently-shown item, cached so
-        # zoom changes just rescale it instead of re-decoding from disk.
-        self._current_pixmap: QPixmap | None = None
+        # Decoded photos keyed by file path (least recently used first):
+        # the shown one plus a few prefetched neighbours in the browsing
+        # direction, so stepping through a gallery usually shows the next
+        # photo without waiting. Zoom changes just rescale the shown entry.
+        self._cache: OrderedDict[str, _CachedImage] = OrderedDict()
+        self._cache_bytes = 0
+        self._pending: set[tuple[str, bool]] = set()  # (file_path, full_res)
+        self._generation = 0  # bumped to discard results from before a reload
+        self._direction = 1  # +1 browsing forward, -1 backward
+        self._current_image: _CachedImage | None = None
         self._current_faces: list[FaceReviewItem] = []
         self._thread_pool = QThreadPool.globalInstance()
-        self._request_epoch = 0
         self._faces_dirty = False
 
         # Image display using FaceDetectionWidget
@@ -202,6 +260,9 @@ class ImageDetailPanel(QWidget):
         """
         self._items = items
         self._current_index = max(0, min(selected_index, len(items) - 1))
+        # A (re)load may follow edits (e.g. re-indexed faces), so start fresh.
+        self._clear_cache()
+        self._direction = 1
         # Reset zoom based on mode
         if self._zoom_mode == "100%":
             self._zoom = 1.0
@@ -221,17 +282,18 @@ class ImageDetailPanel(QWidget):
         """Get the reindex button for enabling/disabling."""
         return self._reindex_btn
 
-    def _calculate_zoom_for_mode(self, pixmap: QPixmap | None = None) -> float:
+    def _calculate_zoom_for_mode(self, image: _CachedImage | None = None) -> float:
         """Calculate zoom level based on current zoom mode.
 
         Args:
-            pixmap: Already-loaded pixmap to use for dimension calculation.
-                    If None, returns 1.0 (used as a sentinel for non-fit modes).
+            image: Already-decoded image to use for dimension calculation.
+                   If None, returns 1.0 (used as a sentinel for non-fit modes).
 
         Returns:
-            Zoom factor (1.0 = 100%, 0.5 = 50%, 2.0 = 200%, etc.)
+            Zoom factor relative to the photo's full resolution
+            (1.0 = 100%, 0.5 = 50%, 2.0 = 200%, etc.)
         """
-        if self._zoom_mode != "fit" or pixmap is None or pixmap.isNull():
+        if self._zoom_mode != "fit" or image is None:
             return 1.0
 
         viewport = self._scroll_area.viewport()
@@ -241,9 +303,9 @@ class ImageDetailPanel(QWidget):
         if viewport_width <= 0 or viewport_height <= 0:
             return 1.0
 
-        width_ratio = viewport_width / pixmap.width()
-        height_ratio = viewport_height / pixmap.height()
-        return max(0.2, min(3.0, width_ratio, height_ratio))
+        width_ratio = viewport_width / image.source_width
+        height_ratio = viewport_height / image.source_height
+        return min(3.0, width_ratio, height_ratio)
 
     def _set_zoom_fit(self) -> None:
         """Set zoom mode to fit entire image in viewport."""
@@ -271,16 +333,16 @@ class ImageDetailPanel(QWidget):
             self._zoom_100_btn.setStyleSheet(active_style)
 
     def _render_current(self) -> None:
-        """Show the item at the current index, decoding it off the UI thread.
+        """Show the item at the current index and prefetch its neighbours.
 
-        `QPixmap(path)` can't decode HEIC at all (it spends real time
-        probing formats before giving up), and even a full-resolution JPEG
-        decode is enough to make clicking through the gallery feel like the
-        app is freezing — so the decode (and this image's face lookup, a
-        second DB round-trip the click path used to pay for synchronously
-        too) both run on a thread-pool worker instead. Only this initial
-        load re-decodes from disk; zoom changes reuse the cached pixmap via
-        `_apply_zoom_to_current_pixmap()`.
+        Decoding runs on thread-pool workers: `QPixmap(path)` can't decode
+        HEIC at all, and even a full-resolution JPEG decode is enough to
+        make clicking through the gallery feel like the app is freezing.
+        Images are decoded to screen size (all "fit" view needs) and kept
+        in a small cache, with the next two in the browsing direction and
+        one behind decoded ahead of time. A photo not decoded yet shows a
+        plain "Loading image…" — never a thumbnail stand-in — so a soft
+        image on screen is always the real pixels, not a pending load.
         """
         if not self._items:
             self._image_label.setText("No images available")
@@ -292,8 +354,6 @@ class ImageDetailPanel(QWidget):
         self._image_label.stop_naming()
         item = self._items[self._current_index]
         self._current_item = item
-        self._current_pixmap = None
-        self._current_faces = []
 
         # Stop any playing video and return to still image page
         self._stop_live(restore_live_btn=False)
@@ -305,80 +365,191 @@ class ImageDetailPanel(QWidget):
             "_live_mov_path", str(live_mov) if live_mov else None
         )
 
-        self._image_label.setText("Loading image…")
-
-        self._request_epoch += 1
-        worker = DetailImageWorker(
-            item.file_path, self._face_review_service, self._request_epoch
-        )
-        worker.signals.result_ready.connect(self._on_detail_image_ready)
-        start_worker(worker, self._thread_pool)
+        cached = self._cache.get(item.file_path)
+        if cached is not None:
+            self._cache.move_to_end(item.file_path)
+            self._show_image(cached)
+        else:
+            self._current_image = None
+            self._current_faces = []
+            self._image_label.set_faces([])
+            self._image_label.set_image(None)
+            self._image_label.setText("Loading image…")
+            self._update_info(item, None)
+            self._request_decode(item.file_path, full_res=False, current=True)
+        self._prefetch_neighbours()
 
         # Update navigation buttons
         self._prev_btn.setEnabled(self._current_index > 0)
         self._next_btn.setEnabled(self._current_index < len(self._items) - 1)
 
+    def _prefetch_neighbours(self) -> None:
+        """Decode the next two images in the browsing direction and one behind."""
+        step = self._direction
+        for offset in (step, 2 * step, -step):
+            index = self._current_index + offset
+            if not 0 <= index < len(self._items):
+                continue
+            file_path = self._items[index].file_path
+            if file_path in self._cache:
+                self._cache.move_to_end(file_path)  # keep it from eviction
+            elif len(self._pending) < _MAX_PENDING_DECODES:
+                self._request_decode(file_path, full_res=False, current=False)
+
+    def _display_size(self) -> tuple[int, int]:
+        """Size to decode to — "fit" view is never larger than this.
+
+        The screen rather than the viewport, so cached decodes stay valid
+        when the window is resized; the viewport only matters if it is
+        somehow larger (e.g. a window spanning two monitors).
+        """
+        screen = self.screen().size()
+        viewport = self._scroll_area.viewport().size()
+        return (
+            max(screen.width(), viewport.width()),
+            max(screen.height(), viewport.height()),
+        )
+
+    def _request_decode(self, file_path: str, *, full_res: bool, current: bool) -> None:
+        key = (file_path, full_res)
+        if key in self._pending:
+            return
+        self._pending.add(key)
+        worker = DetailImageWorker(
+            file_path,
+            self._face_review_service,
+            None if full_res else self._display_size(),
+            self._generation,
+        )
+        worker.signals.result_ready.connect(self._on_detail_image_ready)
+        # The shown image goes ahead of queued prefetches.
+        start_worker(worker, self._thread_pool, priority=1 if current else 0)
+
     def _on_detail_image_ready(
         self,
         file_path: str,
-        png_bytes: bytes | None,
+        decoded: DecodedImage | None,
         faces: list[FaceReviewItem],
-        request_id: int,
+        full_res: bool,  # noqa: FBT001
+        generation: int,
     ) -> None:
-        """Apply a decoded detail image, discarding stale/superseded results."""
-        if (
-            request_id != self._request_epoch
-            or self._current_item is None
-            or self._current_item.file_path != file_path
+        """Cache a decoded image, and show it if it's the one being waited on."""
+        if generation != self._generation:
+            return  # panel was reloaded or closed since this was requested
+        self._pending.discard((file_path, full_res))
+        is_current = (
+            self._current_item is not None and self._current_item.file_path == file_path
+        )
+
+        if decoded is None:
+            if is_current and self._current_image is None:
+                self._image_label.setText("Could not load image")
+                self._info_label.setText(f"Error: Failed to load {file_path}")
+            return
+
+        image = _CachedImage(
+            _to_pixmap(decoded), decoded.source_width, decoded.source_height, faces
+        )
+        existing = self._cache.get(file_path)
+        if existing is not None and existing.is_full and not image.is_full:
+            return  # never replace a full-resolution decode with a smaller one
+        self._store(file_path, image)
+
+        if is_current and (
+            self._current_image is None
+            or (image.is_full and not self._current_image.is_full)
         ):
-            return  # user has since navigated to a different image
+            self._show_image(image)
 
-        if png_bytes is None:
-            self._image_label.setText("Could not load image")
-            self._info_label.setText(f"Error: Failed to load {file_path}")
-            return
+    def _store(self, file_path: str, image: _CachedImage) -> None:
+        """Add to the cache, evicting least recently used entries over budget."""
+        previous = self._cache.pop(file_path, None)
+        if previous is not None:
+            self._cache_bytes -= previous.nbytes
+        self._cache[file_path] = image
+        self._cache_bytes += image.nbytes
 
-        pixmap = QPixmap()
-        if not pixmap.loadFromData(png_bytes) or pixmap.isNull():
-            self._image_label.setText("Could not load image")
-            self._info_label.setText(f"Error: Failed to load {file_path}")
-            return
+        current_path = self._current_item.file_path if self._current_item else None
+        while self._cache_bytes > _CACHE_BYTE_BUDGET and len(self._cache) > 1:
+            oldest_path = next(iter(self._cache))
+            if oldest_path == current_path:
+                self._cache.move_to_end(oldest_path)
+                continue
+            self._cache_bytes -= self._cache.pop(oldest_path).nbytes
 
-        self._current_pixmap = pixmap
-        self._current_faces = faces
+    def _clear_cache(self) -> None:
+        self._generation += 1
+        self._cache.clear()
+        self._cache_bytes = 0
+        self._pending.clear()
+        self._current_image = None
+
+    def _show_image(self, image: _CachedImage) -> None:
+        """Swap the shown photo in one step — no fade or thumbnail stage."""
+        self._current_image = image
+        self._current_faces = image.faces
         self._apply_zoom_to_current_pixmap()
 
     def _apply_zoom_to_current_pixmap(self) -> None:
-        """Rescale the already-decoded current pixmap to the active zoom.
+        """Rescale the already-decoded current image to the active zoom.
 
         Cheap (no disk I/O or PIL decode) — safe to call on every zoom-mode
-        toggle, +/- keypress, or scroll-wheel step.
+        toggle, +/- keypress, or scroll-wheel step. In "fit" view the decode
+        already matches the screen, so there is little or no rescaling.
+        Zooming in past the decoded size fetches the full resolution and
+        keeps the current view until it arrives, rather than upscaling,
+        which would make a sharp photo look soft.
         """
-        pixmap = self._current_pixmap
+        image = self._current_image
         item = self._current_item
-        if pixmap is None or item is None:
+        if image is None or item is None:
             return
 
         if self._zoom_mode == "fit":
-            self._zoom = self._calculate_zoom_for_mode(pixmap)
+            self._zoom = self._calculate_zoom_for_mode(image)
 
-        scaled = pixmap.scaled(
-            int(pixmap.width() * self._zoom),
-            int(pixmap.height() * self._zoom),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._image_label.set_image(scaled, zoom_factor=self._zoom)
+        if not image.is_full and self._zoom > image.scale * _SCALE_TOLERANCE:
+            self._request_decode(item.file_path, full_res=True, current=True)
+            self._update_info(item, image, loading_full=True)
+            return
+
+        pixmap = image.pixmap
+        relative = self._zoom / image.scale
+        if abs(relative - 1.0) > 1e-3:  # noqa: PLR2004
+            pixmap = pixmap.scaled(
+                round(pixmap.width() * relative),
+                round(pixmap.height() * relative),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        self._image_label.set_image(pixmap, zoom_factor=self._zoom)
         self._image_label.set_faces(self._current_faces)
+        self._update_info(item, image)
 
-        filename = Path(item.file_path).name
-        dimensions = f"{pixmap.width()}x{pixmap.height()}"
-        date_str = (
+    def _update_info(
+        self,
+        item: PhotoGridItem,
+        image: _CachedImage | None,
+        *,
+        loading_full: bool = False,
+    ) -> None:
+        parts = [Path(item.file_path).name]
+        if image is not None:
+            parts.append(f"{image.source_width}x{image.source_height}")
+        parts.append(
             item.capture_date.strftime("%Y-%m-%d %H:%M")
             if item.capture_date
             else "Unknown date"
         )
-        self._info_label.setText(f"{filename} • {dimensions} • {date_str}")
+        if loading_full:
+            parts.append("loading full resolution…")
+        self._info_label.setText(" • ".join(parts))
+
+    def _set_current_faces(self, faces: list[FaceReviewItem]) -> None:
+        """Record edited faces, keeping the cached copy in step."""
+        self._current_faces = faces
+        if self._current_image is not None:
+            self._current_image.faces = faces
 
     def _find_live_mov(self, image_path: str) -> Path | None:
         """Return path to matching Live Photo MOV sidecar, or None."""
@@ -423,6 +594,7 @@ class ImageDetailPanel(QWidget):
     def _show_previous(self) -> None:
         """Show previous image."""
         if self._current_index > 0:
+            self._direction = -1
             self._current_index -= 1
             self._render_current()
             if self._current_item:
@@ -431,6 +603,7 @@ class ImageDetailPanel(QWidget):
     def _show_next(self) -> None:
         """Show next image."""
         if self._current_index < len(self._items) - 1:
+            self._direction = 1
             self._current_index += 1
             self._render_current()
             if self._current_item:
@@ -440,6 +613,7 @@ class ImageDetailPanel(QWidget):
         """Return to gallery view."""
         self._image_label.stop_naming()
         self._stop_live(restore_live_btn=False)
+        self._clear_cache()  # free the decoded images while in the gallery
         self.closed.emit()
 
     def _on_bbox_toggle(self, _state: int) -> None:
@@ -465,7 +639,7 @@ class ImageDetailPanel(QWidget):
                 "Failed to load faces for %s", self._current_item.file_path
             )
             faces = []
-        self._current_faces = faces
+        self._set_current_faces(faces)
         self._image_label.set_faces(faces)
 
     def start_naming(self) -> None:
@@ -496,7 +670,7 @@ class ImageDetailPanel(QWidget):
         self._image_label.set_known_names(sorted(p.name for p in people if p.name))
 
     def _on_face_name_committed(self, face_id: int, name: str) -> None:
-        self._current_faces = self._image_label.get_faces()
+        self._set_current_faces(self._image_label.get_faces())
         if self._face_review_service is None:
             return
         try:
@@ -507,7 +681,7 @@ class ImageDetailPanel(QWidget):
             QMessageBox.warning(self, "Name face", f"Could not save name: {exc}")
 
     def _on_face_ignored(self, face_id: int) -> None:
-        self._current_faces = self._image_label.get_faces()
+        self._set_current_faces(self._image_label.get_faces())
         if self._face_review_service is None:
             return
         try:
