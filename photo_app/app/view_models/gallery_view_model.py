@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from photo_app.services.album_service import AlbumPage
 
 logger = logging.getLogger(__name__)
+# A row past the end of any real view: "load through" it loads everything.
+_LOAD_ALL_ROWS = 2**31
 
 
 @dataclass
@@ -222,6 +224,15 @@ class GalleryViewModel(QObject):
         if not self._has_more or self._loading_page:
             return
         self._load_page(append=True)
+
+    @property
+    def has_more(self) -> bool:
+        """True while the view has photos not loaded into the grid yet."""
+        return self._has_more
+
+    def load_all(self) -> None:
+        """Load the rest of the view in one query (e.g. to show it newest first)."""
+        self.load_through(_LOAD_ALL_ROWS)
 
     def load_through(self, row: int) -> None:
         """Load pages until `row` is in the model, in as few queries as possible."""

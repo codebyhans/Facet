@@ -46,6 +46,8 @@ class KeyboardShortcuts(NamedTuple):
     ZOOM_IN: str = "Ctrl++"  # Zoom in
     ZOOM_OUT: str = "Ctrl+-"  # Zoom out
     FIT_TO_WINDOW: str = "Ctrl+0"  # Fit to window
+    SLIDESHOW: str = "F5"  # Start slideshow from the current view
+    SLIDESHOW_PAUSE: str = "Space"  # Pause/resume the slideshow
 
     # Application
     QUIT: str = "Ctrl+Q"  # Quit app
@@ -98,6 +100,8 @@ def describe_shortcuts() -> dict[str, str]:
         "Zoom In": shortcuts.ZOOM_IN,
         "Zoom Out": shortcuts.ZOOM_OUT,
         "Fit to Window": shortcuts.FIT_TO_WINDOW,
+        "Start Slideshow": shortcuts.SLIDESHOW,
+        "Pause/Resume Slideshow": shortcuts.SLIDESHOW_PAUSE,
         "Quit": shortcuts.QUIT,
         "Settings": shortcuts.SETTINGS,
         "Index Images": shortcuts.INDEX_IMAGES,

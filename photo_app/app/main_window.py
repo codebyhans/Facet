@@ -29,18 +29,20 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
     QStackedWidget,
     QStatusBar,
     QTabBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from photo_app.app.models.album_tree_model import AlbumTreeModel, AlbumTreeNode
-from photo_app.app.models.photo_grid_model import PhotoGridModel
+from photo_app.app.models.photo_grid_model import PhotoGridModel, is_video_path
 from photo_app.app.view_models.album_view_model import AlbumViewModel
 from photo_app.app.view_models.gallery_view_model import GalleryViewModel
 from photo_app.app.widgets.advanced_filter_editor import AdvancedFilterEditorDialog
@@ -55,6 +57,13 @@ from photo_app.app.widgets.iphone_import_dialog import IPhoneImportDialog
 from photo_app.app.widgets.metadata_editor import MetadataEditorPanel
 from photo_app.app.widgets.people_browser import PeopleBrowser
 from photo_app.app.widgets.photo_grid import PhotoGridWidget
+from photo_app.app.widgets.slideshow_window import (
+    DEFAULT_SECONDS,
+    MAX_SECONDS,
+    MIN_SECONDS,
+    SlideshowItem,
+    SlideshowWindow,
+)
 from photo_app.app.widgets.timeline_ruler import TimelineRuler
 from photo_app.app.workers.indexing_worker import IndexWorker
 from photo_app.app.workers.people_list_worker import PeopleListWorker
@@ -276,9 +285,94 @@ class MainWindow(QMainWindow):
             None  # created lazily on first cast
         )
 
+        self._slideshow_btn = QPushButton("Slideshow")
+        self._slideshow_btn.setFixedHeight(32)
+        self._slideshow_btn.setToolTip(
+            "Fullscreen slideshow of the current view (F5)\n"
+            "Space pause/resume · ←/→ skip · ↑/↓ time per photo\n"
+            "P/X/U flag · Backspace clear flag · A toggle next photo after flagging"
+            " · Esc exit"
+        )
+        self._slideshow_btn.setStyleSheet(self._cast_btn.styleSheet())
+        self._slideshow_btn.clicked.connect(self._on_start_slideshow)
+
+        # Separate small button for the slideshow options menu.
+        self._slideshow_options_btn = QToolButton()
+        self._slideshow_options_btn.setText("▾")
+        self._slideshow_options_btn.setFixedSize(28, 32)
+        self._slideshow_options_btn.setToolTip("Slideshow options")
+        self._slideshow_options_btn.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self._slideshow_options_btn.setStyleSheet("""
+            QToolButton {
+                background-color: #2d2d30;
+                color: #ffffff;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                font-size: 18px;
+                padding: 0px;
+            }
+            QToolButton:hover {
+                background-color: #3e3e42;
+            }
+            QToolButton::menu-indicator {
+                image: none;
+                width: 0px;
+            }
+        """)
+        slideshow_menu = QMenu(self._slideshow_options_btn)
+        slideshow_menu.addAction("Start Slideshow\tF5").triggered.connect(
+            self._on_start_slideshow
+        )
+        slideshow_menu.addSeparator()
+        self._seconds_action = slideshow_menu.addAction("")
+        self._seconds_action.triggered.connect(self._on_choose_slideshow_seconds)
+        self._update_seconds_action()
+        self._advance_on_flag_action = slideshow_menu.addAction(
+            "Next Photo After Flagging (P/X/U)"
+        )
+        self._advance_on_flag_action.setCheckable(True)
+        self._advance_on_flag_action.setChecked(
+            self._ui_state.get("slideshow_advance_on_flag") is True
+        )
+        self._advance_on_flag_action.toggled.connect(
+            self._on_slideshow_advance_on_flag_changed
+        )
+        self._newest_first_action = slideshow_menu.addAction(
+            "Newest First (Backwards in Time)"
+        )
+        self._newest_first_action.setCheckable(True)
+        self._newest_first_action.setChecked(
+            self._ui_state.get("slideshow_newest_first") is True
+        )
+        self._newest_first_action.toggled.connect(
+            self._on_slideshow_newest_first_changed
+        )
+        self._skip_flagged_action = slideshow_menu.addAction(
+            "Skip Already-Flagged Photos"
+        )
+        self._skip_flagged_action.setCheckable(True)
+        self._skip_flagged_action.setChecked(
+            self._ui_state.get("slideshow_skip_flagged") is True
+        )
+        self._skip_flagged_action.toggled.connect(
+            self._on_slideshow_skip_flagged_changed
+        )
+        self._slideshow_options_btn.setMenu(slideshow_menu)
+        self._slideshow: SlideshowWindow | None = None
+        # True when the slideshow runs over the album gallery, which can
+        # page in more photos; False for a person's (complete) gallery.
+        self._slideshow_from_gallery = False
+        # Newest-first needs the whole view: set while it is being loaded.
+        self._slideshow_waiting_for_all = False
+
         nav_layout.addWidget(self._albums_btn)
         nav_layout.addWidget(self._people_btn)
         nav_layout.addStretch()
+        nav_layout.addWidget(self._slideshow_btn)
+        nav_layout.addWidget(self._slideshow_options_btn)
+        nav_layout.addSpacing(8)
         nav_layout.addWidget(self._cast_btn)
 
         # Create left panel for albums tree only (no people browser)
@@ -360,6 +454,7 @@ class MainWindow(QMainWindow):
 
         self._wire_signals()
         self._wire_timeline()
+        self._wire_slideshow()
         self._wire_grid_selection()
         self._build_menu()
         self._setup_keyboard_shortcuts()
@@ -429,6 +524,10 @@ class MainWindow(QMainWindow):
         self._album_photo_grid.loadThroughRequested.connect(
             self._album_gallery_vm.load_through
         )
+
+    def _wire_slideshow(self) -> None:
+        """Feed newly paged-in gallery photos to a running slideshow."""
+        self._album_gallery_vm.page_ready.connect(self._on_page_for_slideshow)
 
     def _wire_signals(self) -> None:
         self._album_vm.error.connect(self._show_error)
@@ -648,6 +747,7 @@ class MainWindow(QMainWindow):
         )
 
         # Application
+        QShortcut(QKeySequence(shortcuts.SLIDESHOW), self, self._on_start_slideshow)
         QShortcut(QKeySequence(shortcuts.INDEX_IMAGES), self, self._run_image_index)
         QShortcut(QKeySequence(shortcuts.INDEX_FACES), self, self._run_face_index)
 
@@ -1939,6 +2039,234 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dialog.exec()
+
+    def _on_start_slideshow(self) -> None:
+        """Start a fullscreen slideshow of whatever the current view shows."""
+        if self._slideshow is not None:
+            self._slideshow.activateWindow()
+            return
+
+        newest_first = self._newest_first_action.isChecked()
+        if self._mode_stack.currentIndex() == 1:
+            source = self._people_browser.slideshow_source()
+            if source is None:
+                self.statusBar().showMessage("Open a person to start a slideshow.")
+                return
+            entries, start_row = source
+            items = self._person_slideshow_items(entries, newest_first=newest_first)
+            start_id = entries[start_row][0] if 0 <= start_row < len(entries) else None
+            self._slideshow_from_gallery = False
+        else:
+            if newest_first and self._album_gallery_vm.has_more:
+                # The newest photos may not be paged in yet; start once they are.
+                self._slideshow_waiting_for_all = True
+                self.statusBar().showMessage("Loading all photos for the slideshow…")
+                self._album_gallery_vm.load_all()
+                return
+            grid_items = self._album_photo_model.items
+            if newest_first:
+                grid_items = self._newest_first(grid_items)
+            items = self._slideshow_items(grid_items)
+            start_id = self._current_album_image_id()
+            self._slideshow_from_gallery = True
+
+        if newest_first:
+            start_id = None  # always begin with the newest photo
+
+        if not items:
+            self.statusBar().showMessage("No photos in this view to show.")
+            return
+
+        start_index = next(
+            (i for i, item in enumerate(items) if item.image_id == start_id), 0
+        )
+        if self._skip_flagged_action.isChecked():
+            # Begin at the first unflagged photo at or after the start point.
+            start_index = sum(1 for item in items[:start_index] if item.flag is None)
+            items = [item for item in items if item.flag is None]
+            if not items:
+                self.statusBar().showMessage(
+                    "Every photo in this view is already flagged."
+                )
+                return
+        slideshow = SlideshowWindow(
+            items,
+            start_index,
+            seconds=self._slideshow_seconds(),
+            advance_on_flag=self._advance_on_flag_action.isChecked(),
+            parent=self,
+        )
+        slideshow.flag_requested.connect(self._on_slideshow_flag)
+        slideshow.more_requested.connect(self._on_slideshow_more_requested)
+        slideshow.seconds_changed.connect(self._on_slideshow_seconds_changed)
+        # The A key in the slideshow flips the same option as the menu.
+        slideshow.advance_on_flag_changed.connect(
+            self._advance_on_flag_action.setChecked
+        )
+        slideshow.finished.connect(self._on_slideshow_finished)
+        self._slideshow = slideshow
+        slideshow.start()
+
+    @staticmethod
+    def _slideshow_items(grid_items: list[PhotoGridItem]) -> list[SlideshowItem]:
+        """Stills only — videos are skipped (Live Photos show their still)."""
+        return [
+            SlideshowItem(item.image_id, item.file_path, item.flag)
+            for item in grid_items
+            if not is_video_path(item.file_path)
+        ]
+
+    @staticmethod
+    def _newest_first(grid_items: list[PhotoGridItem]) -> list[PhotoGridItem]:
+        """Reverse the grid's oldest-first order, keeping undated photos last."""
+        dated = [item for item in grid_items if item.capture_date is not None]
+        undated = [item for item in grid_items if item.capture_date is None]
+        return dated[::-1] + undated
+
+    def _person_slideshow_items(
+        self, entries: list[tuple[int, str]], *, newest_first: bool
+    ) -> list[SlideshowItem]:
+        images: list[Image] = []
+        image_repo = self._album_vm.get_image_repository()
+        if image_repo is not None:
+            try:
+                images = image_repo.list_by_ids([image_id for image_id, _ in entries])
+            except Exception:  # noqa: BLE001
+                images = []
+        by_id = {image.id: image for image in images if image.id is not None}
+        flags = {image_id: image.flag for image_id, image in by_id.items()}
+        if newest_first:
+            dates = {i: image.capture_date for i, image in by_id.items()}
+            dated = [e for e in entries if dates.get(e[0]) is not None]
+            undated = [e for e in entries if dates.get(e[0]) is None]
+            dated.sort(key=lambda e: dates[e[0]], reverse=True)
+            entries = dated + undated
+        return [
+            SlideshowItem(image_id, file_path, flags.get(image_id))
+            for image_id, file_path in entries
+            if not is_video_path(file_path)
+        ]
+
+    def _current_album_image_id(self) -> int | None:
+        """The photo open in the detail view, else the grid's current photo."""
+        if self._viewing_mode == "detail":
+            items = self._image_detail_panel.get_items()
+            index = self._image_detail_panel.get_current_index()
+            return items[index].image_id if 0 <= index < len(items) else None
+        current = self._album_photo_grid.currentIndex()
+        if not current.isValid():
+            return None
+        image_id = self._album_photo_model.data(current, PhotoGridModel.ImageIdRole)
+        return image_id if isinstance(image_id, int) else None
+
+    def _on_page_for_slideshow(
+        self,
+        items: list[PhotoGridItem],
+        append: bool,  # noqa: FBT001
+    ) -> None:
+        if not append:
+            self._slideshow_waiting_for_all = False  # the view changed meanwhile
+            return
+        if self._slideshow_waiting_for_all:
+            if not self._album_gallery_vm.has_more:
+                self._slideshow_waiting_for_all = False
+                self._on_start_slideshow()
+            return
+        if (
+            self._slideshow is not None
+            and self._slideshow_from_gallery
+            and not self._newest_first_action.isChecked()
+        ):
+            new_items = self._slideshow_items(items)
+            if self._skip_flagged_action.isChecked():
+                new_items = [item for item in new_items if item.flag is None]
+            if not new_items:
+                # A page of only flagged photos: keep looking further on.
+                self._album_gallery_vm.load_next_page()
+                return
+            self._slideshow.append_items(new_items)
+
+    def _on_slideshow_more_requested(self) -> None:
+        # Newest-first already holds the whole view.
+        if self._slideshow_from_gallery and not self._newest_first_action.isChecked():
+            self._album_gallery_vm.load_next_page()
+
+    def _on_slideshow_flag(self, image_id: int, flag_value: str | None) -> None:
+        """Save a flag set in the slideshow and update the grid's badge."""
+        try:
+            image_repo = self._album_vm.get_image_repository()
+            if image_repo is None:
+                self._show_error("Image repository not available")
+                return
+            image_repo.update_flag(image_id, flag_value)
+        except Exception as exc:  # noqa: BLE001
+            self._show_error(f"Failed to update flag: {exc}")
+            return
+        for row, item in enumerate(self._album_photo_model.items):
+            if item.image_id == image_id:
+                self._album_photo_model.update_flag(row, flag_value)
+                break
+
+    def _slideshow_seconds(self) -> int:
+        seconds = self._ui_state.get("slideshow_seconds", DEFAULT_SECONDS)
+        return seconds if isinstance(seconds, int) else DEFAULT_SECONDS
+
+    def _update_seconds_action(self) -> None:
+        self._seconds_action.setText(
+            f"Seconds per Photo: {self._slideshow_seconds()}…\t↑/↓ while running"
+        )
+
+    def _on_choose_slideshow_seconds(self) -> None:
+        seconds, ok = QInputDialog.getInt(
+            self,
+            "Slideshow Speed",
+            "Seconds per photo:",
+            self._slideshow_seconds(),
+            MIN_SECONDS,
+            MAX_SECONDS,
+        )
+        if ok:
+            self._on_slideshow_seconds_changed(seconds)
+            self._save_ui_state()
+
+    def _on_slideshow_seconds_changed(self, seconds: int) -> None:
+        self._ui_state["slideshow_seconds"] = seconds
+        self._update_seconds_action()
+
+    def _on_slideshow_skip_flagged_changed(self, enabled: bool) -> None:  # noqa: FBT001
+        self._ui_state["slideshow_skip_flagged"] = enabled
+        if self._slideshow is None:
+            self._save_ui_state()
+
+    def _on_slideshow_newest_first_changed(self, enabled: bool) -> None:  # noqa: FBT001
+        self._ui_state["slideshow_newest_first"] = enabled
+        if self._slideshow is None:
+            self._save_ui_state()
+
+    def _on_slideshow_advance_on_flag_changed(self, enabled: bool) -> None:  # noqa: FBT001
+        self._ui_state["slideshow_advance_on_flag"] = enabled
+        if self._slideshow is None:
+            self._save_ui_state()  # saved on close while a slideshow runs
+
+    def _on_slideshow_finished(self, image_id: int) -> None:
+        """Land on the photo the slideshow ended on."""
+        self._slideshow = None
+        self._save_ui_state()
+        if image_id < 0 or not self._slideshow_from_gallery:
+            return
+        items = self._album_photo_model.items
+        row = next(
+            (i for i, item in enumerate(items) if item.image_id == image_id), None
+        )
+        if row is None:
+            return
+        if self._viewing_mode == "detail":
+            self._image_detail_panel.load_image(items, row)
+        else:
+            index = self._album_photo_model.index(row, 0)
+            self._album_photo_grid.setCurrentIndex(index)
+            self._album_photo_grid.scrollTo(index)
+        self._on_detail_image_selected(image_id)
 
     def _open_iphone_import_dialog(self) -> None:
         """Open the iPhone import dialog."""

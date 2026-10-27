@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from photo_app.app.models.cluster_image_model import ClusterImageModel
 from photo_app.app.widgets.cluster_image_grid import ClusterImageGridWidget
 from photo_app.app.widgets.cluster_image_inspector import ClusterImageInspectorWidget
 from photo_app.app.widgets.face_naming import suggestion_provider_for
@@ -554,6 +555,19 @@ class PeopleBrowser(QWidget):
     def get_current_person_id(self) -> int | None:
         """Return the person id currently shown in the detail view, if any."""
         return self._current_person_id
+
+    def slideshow_source(self) -> tuple[list[tuple[int, str]], int] | None:
+        """The open person's photos as (image_id, file_path) and the current row.
+
+        None while the stacks overview is shown — it isn't a set of photos.
+        """
+        if self._stacked_widget.currentIndex() != 1:
+            return None
+        model = self._cluster_image_grid.model()
+        if not isinstance(model, ClusterImageModel):
+            return None
+        current = self._cluster_image_grid.currentIndex()
+        return model.entries(), current.row() if current.isValid() else 0
 
     def remove_images_from_current_gallery(self, image_ids: list[int]) -> None:
         """Drop the given images from the open detail view's grid immediately.

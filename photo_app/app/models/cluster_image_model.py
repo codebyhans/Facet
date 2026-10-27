@@ -86,6 +86,10 @@ class ClusterImageModel(QAbstractListModel):
             return None
         return self._image_ids[row]
 
+    def entries(self) -> list[tuple[int, str]]:
+        """(image_id, file_path) for every row, in display order."""
+        return list(zip(self._image_ids, self._image_paths, strict=False))
+
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
         if not index.isValid():
             return Qt.ItemFlag.ItemIsEnabled

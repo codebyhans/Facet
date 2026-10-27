@@ -26,6 +26,11 @@ if TYPE_CHECKING:
 _VIDEO_SUFFIXES = frozenset({".mov", ".mp4", ".m4v", ".avi", ".mts", ".m2ts", ".3gp"})
 
 
+def is_video_path(file_path: str) -> bool:
+    """True for video files (not stills, nor Live Photo stills)."""
+    return Path(file_path).suffix.lower() in _VIDEO_SUFFIXES
+
+
 class MediaKind(StrEnum):
     """What a grid row is, for the thumbnail badge."""
 
@@ -226,7 +231,7 @@ class PhotoGridModel(QAbstractListModel):
 
     def _media_kind(self, file_path: str) -> MediaKind:
         path = Path(file_path)
-        if path.suffix.lower() in _VIDEO_SUFFIXES:
+        if is_video_path(file_path):
             return MediaKind.VIDEO
         if f"{path.stem.lower()}.mov" in self._sibling_names(path):
             return MediaKind.LIVE
